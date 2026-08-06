@@ -80,8 +80,36 @@ final class SourcePIDCache {
 
     /// State for the cache.
     private struct State {
+        /// Minimum time before retrying a failed source-PID lookup.
+        static let failedLookupTTL: TimeInterval = 30
+
+        /// Upper bound for negative entries if window IDs churn without a
+        /// running-applications update resetting the state.
+        static let maximumFailedLookupCount = 256
+
         var apps = [CachedApplication]()
         var pids = [CGWindowID: pid_t]()
+        var failedLookups = [CGWindowID: Date]()
+
+        /// Records a bounded negative lookup for the given window.
+        mutating func recordFailedLookup(for windowID: CGWindowID) {
+            let now = Date()
+
+            if failedLookups.count >= Self.maximumFailedLookupCount {
+                failedLookups = failedLookups.filter {
+                    now.timeIntervalSince($0.value) < Self.failedLookupTTL
+                }
+            }
+
+            if
+                failedLookups.count >= Self.maximumFailedLookupCount,
+                let oldest = failedLookups.min(by: { $0.value < $1.value })?.key
+            {
+                failedLookups.removeValue(forKey: oldest)
+            }
+
+            failedLookups[windowID] = now
+        }
 
         /// Returns the latest bounds of the given window after ensuring
         /// that the bounds are stable (a.k.a. not currently changing).
@@ -151,9 +179,15 @@ final class SourcePIDCache {
                         continue
                     }
                     pids[window.windowID] = app.processIdentifier
+                    failedLookups.removeValue(forKey: window.windowID)
                     return
                 }
             }
+
+            // Some apps never expose a matching extras menu bar. Remember the
+            // miss briefly instead of scanning every running app again on the
+            // next menu bar cache refresh.
+            recordFailedLookup(for: window.windowID)
         }
     }
 
@@ -223,6 +257,14 @@ final class SourcePIDCache {
             if let pid = state.pids[window.windowID] {
                 return pid
             }
+
+            if let failedAt = state.failedLookups[window.windowID] {
+                guard Date().timeIntervalSince(failedAt) >= State.failedLookupTTL else {
+                    return nil
+                }
+                state.failedLookups.removeValue(forKey: window.windowID)
+            }
+
             state.updatePID(for: window)
             return state.pids[window.windowID]
         }

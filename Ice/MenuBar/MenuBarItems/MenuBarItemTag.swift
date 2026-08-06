@@ -45,20 +45,7 @@ struct MenuBarItemTag: Hashable, CustomStringConvertible {
     /// by this tag is a system-created clone of an actual item,
     /// and therefore invalid for management.
     var isSystemClone: Bool {
-        guard namespace.isUUID else {
-            return false
-        }
-        if title == "System Status Item Clone" {
-            return true
-        }
-        if #available(macOS 26.0, *) {
-            // Tahoe reparents status items to Control Center and can expose
-            // an unmapped per-display replica as `Item-0`. With no source
-            // process, the replica cannot be managed reliably and repeatedly
-            // invalidating the cache will not make the mapping recover.
-            return title == "Item-0"
-        }
-        return false
+        namespace.isUUID && title == "System Status Item Clone"
     }
 
     /// A textual representation of the tag.

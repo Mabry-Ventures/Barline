@@ -340,7 +340,12 @@ extension MenuBarItemManager {
         for item in items where context.isValidForCaching(item) {
             if item.sourcePID == nil {
                 logger.warning("Missing sourcePID for \(item.logString, privacy: .public)")
-                context.shouldClearCachedItemWindowIDs = true
+                // A few status items do not expose an extras menu bar through
+                // Accessibility and can never be mapped back to a source PID.
+                // Invalidating the window-ID cache here creates a feedback
+                // loop that repeats the expensive lookup on every refresh.
+                // Keep the UUID-tagged item stable instead; SourcePIDCache
+                // throttles negative lookups and retries after its TTL.
             }
 
             if let temp = temporarilyShownItemContexts.first(where: { $0.tag == item.tag }) {
