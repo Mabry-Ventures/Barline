@@ -14,6 +14,7 @@ final class IceBarPanel: NSPanel {
     struct PresentationRequest {
         fileprivate let section: MenuBarSection.Name
         fileprivate let generation: UInt
+        fileprivate let start: ContinuousClock.Instant
     }
 
     /// The shared app state.
@@ -179,7 +180,11 @@ final class IceBarPanel: NSPanel {
         }
 
         presentationGeneration &+= 1
-        let request = PresentationRequest(section: section, generation: presentationGeneration)
+        let request = PresentationRequest(
+            section: section,
+            generation: presentationGeneration,
+            start: .now
+        )
 
         // IMPORTANT: We must set the navigation state and current section
         // before updating the caches.
@@ -202,6 +207,36 @@ final class IceBarPanel: NSPanel {
             return false
         }
 
+        // Present the last known-good cache immediately. Refreshing menu bar
+        // items and capturing their images can take hundreds of milliseconds,
+        // especially while Control Center is relaying out status items. That
+        // work must not block the first visible frame after a user click.
+        let needsLoadingState = appState.itemManager.itemCache.managedItems.isEmpty ||
+            appState.imageCache.cacheFailed(for: request.section)
+        let hostingView = IceBarHostingView(
+            appState: appState,
+            colorManager: colorManager,
+            screen: screen,
+            section: request.section,
+            isPreparing: needsLoadingState
+        )
+        contentView = hostingView
+
+        updateOrigin(for: screen)
+
+        // Color manager must be updated after updating the panel's origin,
+        // but before it is shown.
+        //
+        // Color manager handles frame changes automatically, but does so on
+        // the main queue, so we need to update manually once before showing
+        // the panel to prevent the color from flashing.
+        colorManager.updateAllProperties(with: frame, screen: screen)
+
+        orderFrontRegardless()
+
+        let firstFrameLatency = request.start.duration(to: .now)
+        Logger.default.debug("Ordered IceBarPanel front after \(firstFrameLatency)")
+
         let cacheTask = Task(timeout: .seconds(1)) {
             await appState.itemManager.cacheItemsIfNeeded()
             await appState.imageCache.updateCache()
@@ -222,24 +257,10 @@ final class IceBarPanel: NSPanel {
             return false
         }
 
-        contentView = IceBarHostingView(
-            appState: appState,
-            colorManager: colorManager,
-            screen: screen,
-            section: request.section
-        )
+        if needsLoadingState {
+            hostingView.finishPreparing()
+        }
 
-        updateOrigin(for: screen)
-
-        // Color manager must be updated after updating the panel's origin,
-        // but before it is shown.
-        //
-        // Color manager handles frame changes automatically, but does so on
-        // the main queue, so we need to update manually once before showing
-        // the panel to prevent the color from flashing.
-        colorManager.updateAllProperties(with: frame, screen: screen)
-
-        orderFrontRegardless()
         return true
     }
 
@@ -272,7 +293,8 @@ private final class IceBarHostingView: NSHostingView<IceBarContentView> {
         appState: AppState,
         colorManager: IceBarColorManager,
         screen: NSScreen,
-        section: MenuBarSection.Name
+        section: MenuBarSection.Name,
+        isPreparing: Bool
     ) {
         let rootView = IceBarContentView(
             appState: appState,
@@ -281,9 +303,17 @@ private final class IceBarHostingView: NSHostingView<IceBarContentView> {
             imageCache: appState.imageCache,
             menuBarManager: appState.menuBarManager,
             screen: screen,
-            section: section
+            section: section,
+            isPreparing: isPreparing
         )
         super.init(rootView: rootView)
+    }
+
+    /// Replaces the transient loading state after the first cache refresh.
+    func finishPreparing() {
+        var updatedRootView = rootView
+        updatedRootView.isPreparing = false
+        rootView = updatedRootView
     }
 
     @available(*, unavailable)
@@ -314,6 +344,7 @@ private struct IceBarContentView: View {
 
     let screen: NSScreen
     let section: MenuBarSection.Name
+    var isPreparing: Bool
 
     private var items: [MenuBarItem] {
         itemManager.itemCache.managedItems(for: section)
@@ -406,7 +437,7 @@ private struct IceBarContentView: View {
         } else if menuBarManager.isMenuBarHiddenBySystemUserDefaults {
             Text("Ice cannot display menu bar items for automatically hidden menu bars")
                 .padding(.horizontal, 10)
-        } else if itemManager.itemCache.managedItems.isEmpty {
+        } else if isPreparing || itemManager.itemCache.managedItems.isEmpty {
             HStack {
                 Text("Loading menu bar items…")
                 ProgressView()

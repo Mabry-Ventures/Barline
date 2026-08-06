@@ -429,9 +429,11 @@ extension MenuBarItemManager {
             }
 
             guard let controlItems = ControlItemPair(items: &items) else {
-                // ???: Is clearing the cache the best thing to do here?
-                logger.warning("Missing control item for hidden section, clearing menu bar item cache")
-                itemCache = ItemCache(displayID: nil)
+                // Menu bar windows can disappear briefly while Control Center
+                // reparents or relayouts status items. Keep the last known-good
+                // cache so the Ice Bar remains usable, but force a later retry.
+                logger.warning("Missing control item for hidden section, keeping previous menu bar item cache")
+                _ = await cacheActor.clearCachedItemWindowIDs(for: requestID)
                 return
             }
 
