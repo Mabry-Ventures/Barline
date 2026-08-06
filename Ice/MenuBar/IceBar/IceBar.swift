@@ -256,10 +256,10 @@ final class IceBarPanel: NSPanel {
             "Ordered IceBarPanel front after \(String(describing: firstFrameLatency), privacy: .public)"
         )
 
-        // Let AppKit commit the ordered window before starting cache work on
-        // the main actor. Merely ordering the panel is not enough: immediately
-        // entering item discovery can prevent WindowServer from producing the
-        // first visible frame until that work suspends.
+        // Give AppKit and WindowServer a short commit runway before starting
+        // cache work on the main actor. Merely ordering the panel is not
+        // enough: entering item discovery within one display frame can still
+        // postpone the first visible frame until that work suspends.
         cacheRefreshTask = Task { [weak self, weak hostingView] in
             guard let self, let hostingView else {
                 return
@@ -281,7 +281,7 @@ final class IceBarPanel: NSPanel {
         needsLoadingState: Bool
     ) async {
         do {
-            try await Task.sleep(for: .milliseconds(16))
+            try await Task.sleep(for: .milliseconds(100))
         } catch {
             return
         }
