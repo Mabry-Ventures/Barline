@@ -218,14 +218,26 @@ final class IceBarPanel: NSPanel {
         // work must not block the first visible frame after a user click.
         let needsLoadingState = appState.itemManager.itemCache.managedItems.isEmpty ||
             appState.imageCache.cacheFailed(for: request.section)
-        let hostingView = IceBarHostingView(
-            appState: appState,
-            colorManager: colorManager,
-            screen: screen,
-            section: request.section,
-            isPreparing: needsLoadingState
-        )
-        contentView = hostingView
+        let hostingView: IceBarHostingView
+        if
+            let reusableView = contentView as? IceBarHostingView,
+            reusableView.matches(screen: screen, section: request.section)
+        {
+            reusableView.setPreparing(needsLoadingState)
+            hostingView = reusableView
+        } else {
+            // A loading-only first render avoids constructing every item image
+            // before AppKit can order the window. The cached content replaces
+            // it immediately after the first frame commits.
+            hostingView = IceBarHostingView(
+                appState: appState,
+                colorManager: colorManager,
+                screen: screen,
+                section: request.section,
+                isPreparing: true
+            )
+            contentView = hostingView
+        }
 
         updateOrigin(for: screen)
 
@@ -284,6 +296,10 @@ final class IceBarPanel: NSPanel {
             return
         }
 
+        if !needsLoadingState {
+            hostingView.finishPreparing()
+        }
+
         let cacheTask = Task(timeout: .seconds(1)) {
             await appState.itemManager.cacheItemsIfNeeded()
             await appState.imageCache.updateCache()
@@ -333,7 +349,6 @@ final class IceBarPanel: NSPanel {
         cacheRefreshTask = nil
         presentationGeneration &+= 1
         super.close()
-        contentView = nil
         currentSection = nil
         appState?.navigationState.isIceBarPresented = false
     }
@@ -344,6 +359,9 @@ final class IceBarPanel: NSPanel {
 private final class IceBarHostingView: NSHostingView<IceBarContentView> {
     override var safeAreaInsets: NSEdgeInsets { NSEdgeInsets() }
 
+    private let displayID: CGDirectDisplayID
+    private let section: MenuBarSection.Name
+
     init(
         appState: AppState,
         colorManager: IceBarColorManager,
@@ -351,6 +369,8 @@ private final class IceBarHostingView: NSHostingView<IceBarContentView> {
         section: MenuBarSection.Name,
         isPreparing: Bool
     ) {
+        self.displayID = screen.displayID
+        self.section = section
         let rootView = IceBarContentView(
             appState: appState,
             colorManager: colorManager,
@@ -364,11 +384,24 @@ private final class IceBarHostingView: NSHostingView<IceBarContentView> {
         super.init(rootView: rootView)
     }
 
+    /// Returns whether the view can be reused for a new presentation.
+    func matches(screen: NSScreen, section: MenuBarSection.Name) -> Bool {
+        displayID == screen.displayID && self.section == section
+    }
+
+    /// Updates the transient loading state without replacing the hosting view.
+    func setPreparing(_ isPreparing: Bool) {
+        guard rootView.isPreparing != isPreparing else {
+            return
+        }
+        var updatedRootView = rootView
+        updatedRootView.isPreparing = isPreparing
+        rootView = updatedRootView
+    }
+
     /// Replaces the transient loading state after the first cache refresh.
     func finishPreparing() {
-        var updatedRootView = rootView
-        updatedRootView.isPreparing = false
-        rootView = updatedRootView
+        setPreparing(false)
     }
 
     @available(*, unavailable)
@@ -447,6 +480,12 @@ private struct IceBarContentView: View {
         configuration.current.hasShadow ? 0.5 : 0.33
     }
 
+    private var cachedContentWidth: CGFloat {
+        items.reduce(into: 0) { width, item in
+            width += imageCache.images[item.tag]?.scaledSize.width ?? 0
+        }
+    }
+
     var body: some View {
         ZStack {
             content
@@ -498,6 +537,7 @@ private struct IceBarContentView: View {
                 ProgressView()
                     .controlSize(.small)
             }
+            .frame(minWidth: cachedContentWidth)
             .padding(.horizontal, 10)
         } else if imageCache.cacheFailed(for: section) {
             Text("Unable to display menu bar items")
