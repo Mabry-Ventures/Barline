@@ -32,6 +32,9 @@ final class IceBarPanel: NSPanel {
     /// show request can finish after `close` and reopen the panel.
     private var presentationGeneration: UInt = 0
 
+    /// The cache refresh associated with the active presentation.
+    private var cacheRefreshTask: Task<Void, Never>?
+
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
 
@@ -179,6 +182,8 @@ final class IceBarPanel: NSPanel {
             return nil
         }
 
+        cacheRefreshTask?.cancel()
+        cacheRefreshTask = nil
         presentationGeneration &+= 1
         let request = PresentationRequest(
             section: section,
@@ -235,7 +240,49 @@ final class IceBarPanel: NSPanel {
         orderFrontRegardless()
 
         let firstFrameLatency = request.start.duration(to: .now)
-        Logger.default.debug("Ordered IceBarPanel front after \(firstFrameLatency)")
+        Logger.default.debug(
+            "Ordered IceBarPanel front after \(String(describing: firstFrameLatency), privacy: .public)"
+        )
+
+        // Let AppKit commit the ordered window before starting cache work on
+        // the main actor. Merely ordering the panel is not enough: immediately
+        // entering item discovery can prevent WindowServer from producing the
+        // first visible frame until that work suspends.
+        cacheRefreshTask = Task { [weak self, weak hostingView] in
+            guard let self, let hostingView else {
+                return
+            }
+            await refreshCache(
+                for: request,
+                hostingView: hostingView,
+                needsLoadingState: needsLoadingState
+            )
+        }
+
+        return true
+    }
+
+    /// Refreshes the caches after allowing the first panel frame to commit.
+    private func refreshCache(
+        for request: PresentationRequest,
+        hostingView: IceBarHostingView,
+        needsLoadingState: Bool
+    ) async {
+        do {
+            try await Task.sleep(for: .milliseconds(16))
+        } catch {
+            return
+        }
+
+        guard
+            let appState,
+            !Task.isCancelled,
+            request.generation == presentationGeneration,
+            currentSection == request.section,
+            appState.navigationState.isIceBarPresented
+        else {
+            return
+        }
 
         let cacheTask = Task(timeout: .seconds(1)) {
             await appState.itemManager.cacheItemsIfNeeded()
@@ -243,7 +290,13 @@ final class IceBarPanel: NSPanel {
         }
 
         do {
-            try await cacheTask.value
+            try await withTaskCancellationHandler {
+                try await cacheTask.value
+            } onCancel: {
+                cacheTask.cancel()
+            }
+        } catch is CancellationError {
+            return
         } catch {
             Logger.default.error("Cache update failed when showing IceBarPanel - \(error)")
         }
@@ -254,14 +307,14 @@ final class IceBarPanel: NSPanel {
             currentSection == request.section,
             appState.navigationState.isIceBarPresented
         else {
-            return false
+            return
         }
 
         if needsLoadingState {
             hostingView.finishPreparing()
         }
 
-        return true
+        cacheRefreshTask = nil
     }
 
     /// Hides the panel.
@@ -276,6 +329,8 @@ final class IceBarPanel: NSPanel {
     }
 
     override func close() {
+        cacheRefreshTask?.cancel()
+        cacheRefreshTask = nil
         presentationGeneration &+= 1
         super.close()
         contentView = nil
