@@ -14,6 +14,7 @@ final class IceBarPanel: NSPanel {
     struct PresentationRequest {
         fileprivate let section: MenuBarSection.Name
         fileprivate let generation: UInt
+        fileprivate let start: ContinuousClock.Instant
     }
 
     /// The shared app state.
@@ -30,6 +31,9 @@ final class IceBarPanel: NSPanel {
     /// Cache updates in `show` suspend. Without an ownership token, an older
     /// show request can finish after `close` and reopen the panel.
     private var presentationGeneration: UInt = 0
+
+    /// The cache refresh associated with the active presentation.
+    private var cacheRefreshTask: Task<Void, Never>?
 
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
@@ -178,8 +182,14 @@ final class IceBarPanel: NSPanel {
             return nil
         }
 
+        cacheRefreshTask?.cancel()
+        cacheRefreshTask = nil
         presentationGeneration &+= 1
-        let request = PresentationRequest(section: section, generation: presentationGeneration)
+        let request = PresentationRequest(
+            section: section,
+            generation: presentationGeneration,
+            start: .now
+        )
 
         // IMPORTANT: We must set the navigation state and current section
         // before updating the caches.
@@ -202,32 +212,32 @@ final class IceBarPanel: NSPanel {
             return false
         }
 
-        let cacheTask = Task(timeout: .seconds(1)) {
-            await appState.itemManager.cacheItemsIfNeeded()
-            await appState.imageCache.updateCache()
+        // Present the last known-good cache immediately. Refreshing menu bar
+        // items and capturing their images can take hundreds of milliseconds,
+        // especially while Control Center is relaying out status items. That
+        // work must not block the first visible frame after a user click.
+        let needsLoadingState = appState.itemManager.itemCache.managedItems.isEmpty ||
+            appState.imageCache.cacheFailed(for: request.section)
+        let hostingView: IceBarHostingView
+        if
+            let reusableView = contentView as? IceBarHostingView,
+            reusableView.matches(screen: screen, section: request.section)
+        {
+            reusableView.setPreparing(needsLoadingState)
+            hostingView = reusableView
+        } else {
+            // A loading-only first render avoids constructing every item image
+            // before AppKit can order the window. The cached content replaces
+            // it immediately after the first frame commits.
+            hostingView = IceBarHostingView(
+                appState: appState,
+                colorManager: colorManager,
+                screen: screen,
+                section: request.section,
+                isPreparing: true
+            )
+            contentView = hostingView
         }
-
-        do {
-            try await cacheTask.value
-        } catch {
-            Logger.default.error("Cache update failed when showing IceBarPanel - \(error)")
-        }
-
-        guard
-            !Task.isCancelled,
-            request.generation == presentationGeneration,
-            currentSection == request.section,
-            appState.navigationState.isIceBarPresented
-        else {
-            return false
-        }
-
-        contentView = IceBarHostingView(
-            appState: appState,
-            colorManager: colorManager,
-            screen: screen,
-            section: request.section
-        )
 
         updateOrigin(for: screen)
 
@@ -240,7 +250,87 @@ final class IceBarPanel: NSPanel {
         colorManager.updateAllProperties(with: frame, screen: screen)
 
         orderFrontRegardless()
+
+        let firstFrameLatency = request.start.duration(to: .now)
+        Logger.default.debug(
+            "Ordered IceBarPanel front after \(String(describing: firstFrameLatency), privacy: .public)"
+        )
+
+        // Give AppKit and WindowServer a short commit runway before starting
+        // cache work on the main actor. Merely ordering the panel is not
+        // enough: entering item discovery within one display frame can still
+        // postpone the first visible frame until that work suspends.
+        cacheRefreshTask = Task { [weak self, weak hostingView] in
+            guard let self, let hostingView else {
+                return
+            }
+            await refreshCache(
+                for: request,
+                hostingView: hostingView,
+                needsLoadingState: needsLoadingState
+            )
+        }
+
         return true
+    }
+
+    /// Refreshes the caches after allowing the first panel frame to commit.
+    private func refreshCache(
+        for request: PresentationRequest,
+        hostingView: IceBarHostingView,
+        needsLoadingState: Bool
+    ) async {
+        do {
+            try await Task.sleep(for: .milliseconds(100))
+        } catch {
+            return
+        }
+
+        guard
+            let appState,
+            !Task.isCancelled,
+            request.generation == presentationGeneration,
+            currentSection == request.section,
+            appState.navigationState.isIceBarPresented
+        else {
+            return
+        }
+
+        if !needsLoadingState {
+            hostingView.finishPreparing()
+        }
+
+        let cacheTask = Task(timeout: .seconds(1)) {
+            await appState.itemManager.cacheItemsIfNeeded()
+            await appState.imageCache.updateCache()
+        }
+
+        do {
+            try await withTaskCancellationHandler {
+                try await cacheTask.value
+            } onCancel: {
+                cacheTask.cancel()
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            Logger.default.error("Cache update failed when showing IceBarPanel - \(error)")
+        }
+
+        guard
+            !Task.isCancelled,
+            request.generation == presentationGeneration,
+            currentSection == request.section,
+            appState.navigationState.isIceBarPresented
+        else {
+            return
+        }
+
+        if needsLoadingState {
+            hostingView.finishPreparing()
+        }
+
+        cacheRefreshTask = nil
     }
 
     /// Hides the panel.
@@ -255,9 +345,10 @@ final class IceBarPanel: NSPanel {
     }
 
     override func close() {
+        cacheRefreshTask?.cancel()
+        cacheRefreshTask = nil
         presentationGeneration &+= 1
         super.close()
-        contentView = nil
         currentSection = nil
         appState?.navigationState.isIceBarPresented = false
     }
@@ -268,12 +359,18 @@ final class IceBarPanel: NSPanel {
 private final class IceBarHostingView: NSHostingView<IceBarContentView> {
     override var safeAreaInsets: NSEdgeInsets { NSEdgeInsets() }
 
+    private let displayID: CGDirectDisplayID
+    private let section: MenuBarSection.Name
+
     init(
         appState: AppState,
         colorManager: IceBarColorManager,
         screen: NSScreen,
-        section: MenuBarSection.Name
+        section: MenuBarSection.Name,
+        isPreparing: Bool
     ) {
+        self.displayID = screen.displayID
+        self.section = section
         let rootView = IceBarContentView(
             appState: appState,
             colorManager: colorManager,
@@ -281,9 +378,30 @@ private final class IceBarHostingView: NSHostingView<IceBarContentView> {
             imageCache: appState.imageCache,
             menuBarManager: appState.menuBarManager,
             screen: screen,
-            section: section
+            section: section,
+            isPreparing: isPreparing
         )
         super.init(rootView: rootView)
+    }
+
+    /// Returns whether the view can be reused for a new presentation.
+    func matches(screen: NSScreen, section: MenuBarSection.Name) -> Bool {
+        displayID == screen.displayID && self.section == section
+    }
+
+    /// Updates the transient loading state without replacing the hosting view.
+    func setPreparing(_ isPreparing: Bool) {
+        guard rootView.isPreparing != isPreparing else {
+            return
+        }
+        var updatedRootView = rootView
+        updatedRootView.isPreparing = isPreparing
+        rootView = updatedRootView
+    }
+
+    /// Replaces the transient loading state after the first cache refresh.
+    func finishPreparing() {
+        setPreparing(false)
     }
 
     @available(*, unavailable)
@@ -314,6 +432,7 @@ private struct IceBarContentView: View {
 
     let screen: NSScreen
     let section: MenuBarSection.Name
+    var isPreparing: Bool
 
     private var items: [MenuBarItem] {
         itemManager.itemCache.managedItems(for: section)
@@ -361,6 +480,12 @@ private struct IceBarContentView: View {
         configuration.current.hasShadow ? 0.5 : 0.33
     }
 
+    private var cachedContentWidth: CGFloat {
+        items.reduce(into: 0) { width, item in
+            width += imageCache.images[item.tag]?.scaledSize.width ?? 0
+        }
+    }
+
     var body: some View {
         ZStack {
             content
@@ -406,12 +531,13 @@ private struct IceBarContentView: View {
         } else if menuBarManager.isMenuBarHiddenBySystemUserDefaults {
             Text("Ice cannot display menu bar items for automatically hidden menu bars")
                 .padding(.horizontal, 10)
-        } else if itemManager.itemCache.managedItems.isEmpty {
+        } else if isPreparing || itemManager.itemCache.managedItems.isEmpty {
             HStack {
                 Text("Loading menu bar items…")
                 ProgressView()
                     .controlSize(.small)
             }
+            .frame(minWidth: cachedContentWidth)
             .padding(.horizontal, 10)
         } else if imageCache.cacheFailed(for: section) {
             Text("Unable to display menu bar items")

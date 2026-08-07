@@ -340,7 +340,12 @@ extension MenuBarItemManager {
         for item in items where context.isValidForCaching(item) {
             if item.sourcePID == nil {
                 logger.warning("Missing sourcePID for \(item.logString, privacy: .public)")
-                context.shouldClearCachedItemWindowIDs = true
+                // A few status items do not expose an extras menu bar through
+                // Accessibility and can never be mapped back to a source PID.
+                // Invalidating the window-ID cache here creates a feedback
+                // loop that repeats the expensive lookup on every refresh.
+                // Keep the UUID-tagged item stable instead; SourcePIDCache
+                // throttles negative lookups and retries after its TTL.
             }
 
             if let temp = temporarilyShownItemContexts.first(where: { $0.tag == item.tag }) {
@@ -429,9 +434,11 @@ extension MenuBarItemManager {
             }
 
             guard let controlItems = ControlItemPair(items: &items) else {
-                // ???: Is clearing the cache the best thing to do here?
-                logger.warning("Missing control item for hidden section, clearing menu bar item cache")
-                itemCache = ItemCache(displayID: nil)
+                // Menu bar windows can disappear briefly while Control Center
+                // reparents or relayouts status items. Keep the last known-good
+                // cache so the Ice Bar remains usable, but force a later retry.
+                logger.warning("Missing control item for hidden section, keeping previous menu bar item cache")
+                _ = await cacheActor.clearCachedItemWindowIDs(for: requestID)
                 return
             }
 
