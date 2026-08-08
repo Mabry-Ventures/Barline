@@ -435,7 +435,7 @@ private struct IceBarContentView: View {
     var isPreparing: Bool
 
     private var items: [MenuBarItem] {
-        itemManager.itemCache.managedItems(for: section)
+        itemManager.itemsForIceBar(in: section, on: screen)
     }
 
     private var configuration: MenuBarAppearanceConfigurationV2 {
