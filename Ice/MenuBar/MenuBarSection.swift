@@ -72,7 +72,7 @@ final class MenuBarSection {
         if appState.activeSpace.isFullscreen {
             return NSScreen.screenWithMouse ?? NSScreen.main
         } else {
-            return NSScreen.main
+            return NSScreen.screenWithActiveMenuBar ?? NSScreen.main ?? NSScreen.screenWithMouse
         }
     }
 
@@ -162,6 +162,10 @@ final class MenuBarSection {
         }
 
         if useIceBar {
+            guard let screen = screenForIceBar else {
+                return
+            }
+
             // Make sure hidden and always-hidden control items are collapsed.
             // Still update the visible control item (Ice icon) state to show
             // its alternate icon.
@@ -174,24 +178,22 @@ final class MenuBarSection {
                 }
             }
 
-            if let screen = screenForIceBar {
-                let panel = menuBarManager.iceBarPanel
-                let section: Name = switch name {
-                case .visible, .hidden:
-                    .hidden
-                case .alwaysHidden:
-                    .alwaysHidden
-                }
+            let panel = menuBarManager.iceBarPanel
+            let section: Name = switch name {
+            case .visible, .hidden:
+                .hidden
+            case .alwaysHidden:
+                .alwaysHidden
+            }
 
-                guard let presentation = panel.beginPresentation(for: section) else {
-                    return
-                }
+            guard let presentation = panel.beginPresentation(for: section) else {
+                return
+            }
 
-                Task {
-                    let didShow = await panel.show(presentation, on: screen)
-                    if didShow {
-                        startRehideChecks()
-                    }
+            Task {
+                let didShow = await panel.show(presentation, on: screen)
+                if didShow {
+                    startRehideChecks()
                 }
             }
 
