@@ -101,14 +101,13 @@ final class IceBarPanel: NSPanel {
                         return
                     }
 
-                    guard let frame, let screen else {
-                        hide()
-                        return
-                    }
-
-                    // Icon is not vertically visible. We can infer that the
-                    // menu bar is hidden.
-                    if frame.maxY > screen.frame.maxY {
+                    // Missing geometry is common while AppKit rebuilds screens
+                    // after wake. Only hide when the available geometry proves
+                    // that the control item is vertically offscreen.
+                    if MenuBarRecoveryPolicy.shouldHidePanel(
+                        controlItemFrame: frame,
+                        screenFrame: screen?.frame
+                    ) {
                         hide()
                     }
                 }

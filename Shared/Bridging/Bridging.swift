@@ -113,17 +113,29 @@ extension Bridging {
 
     /// Returns the identifier of the display with the active menu bar.
     static func getActiveMenuBarDisplayID() -> CGDirectDisplayID? {
-        guard let string = CGSCopyActiveMenuBarDisplayIdentifier(getMainConnection()) else {
-            logger.error("CGSCopyActiveMenuBarDisplayIdentifier returned nil")
-            return nil
+        var resolvedDisplayID: CGDirectDisplayID?
+
+        if
+            let string = CGSCopyActiveMenuBarDisplayIdentifier(getMainConnection()),
+            let uuid = CFUUIDCreateFromString(nil, string.takeRetainedValue())
+        {
+            resolvedDisplayID = getActiveDisplayList().first { displayID in
+                getDisplayUUID(for: displayID) == uuid
+            }
         }
-        guard let uuid = CFUUIDCreateFromString(nil, string.takeRetainedValue()) else {
-            logger.error("CFUUIDCreateFromString returned nil")
-            return nil
+
+        let displayID = MenuBarRecoveryPolicy.resolvedDisplayID(
+            resolvedDisplayID,
+            fallback: CGMainDisplayID()
+        )
+
+        if resolvedDisplayID == nil {
+            logger.warning(
+                "Active menu bar display lookup unavailable, using displayID=\(displayID, privacy: .public)"
+            )
         }
-        return getActiveDisplayList().first { displayID in
-            getDisplayUUID(for: displayID) == uuid
-        }
+
+        return displayID
     }
 }
 

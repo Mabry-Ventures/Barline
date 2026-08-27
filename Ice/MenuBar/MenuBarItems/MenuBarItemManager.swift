@@ -55,6 +55,16 @@ final class MenuBarItemManager: ObservableObject {
         var c = Set<AnyCancellable>()
 
         NSWorkspace.shared.publisher(for: \.runningApplications)
+            .discardMerge(
+                NSWorkspace.shared.notificationCenter.publisher(
+                    for: NSWorkspace.didWakeNotification
+                )
+            )
+            .discardMerge(
+                NotificationCenter.default.publisher(
+                    for: NSApplication.didChangeScreenParametersNotification
+                )
+            )
             .delay(for: 0.25, scheduler: DispatchQueue.main)
             .discardMerge(Timer.publish(every: 5, on: .main, in: .default).autoconnect())
             .debounce(for: 1, scheduler: DispatchQueue.main)
@@ -428,7 +438,7 @@ extension MenuBarItemManager {
         let requestID = cacheRequestSequence
 
         await cacheActor.runCacheTask(requestID: requestID) { [weak self] requestID in
-            guard let self else {
+            guard let self, let settings = self.appState?.settings else {
                 return
             }
 
@@ -445,6 +455,9 @@ extension MenuBarItemManager {
             }
 
             let displayID = Bridging.getActiveMenuBarDisplayID()
+            let reportedItemWindowIDs = currentItemWindowIDs ?? Bridging.getMenuBarWindowList(
+                option: [.itemsOnly, .activeSpace]
+            )
             var items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
 
             guard
@@ -454,20 +467,48 @@ extension MenuBarItemManager {
                 return
             }
 
-            let itemWindowIDs = currentItemWindowIDs ?? items.reversed().map { $0.windowID }
+            let resolvedItemWindowIDs = items.reversed().map(\.windowID)
             guard
-                await cacheActor.updateCachedItemWindowIDs(itemWindowIDs, for: requestID),
-                requestID == cacheRequestSequence
+                MenuBarRecoveryPolicy.snapshotIsComplete(
+                    reportedWindowIDs: reportedItemWindowIDs,
+                    resolvedWindowIDs: resolvedItemWindowIDs
+                )
             else {
+                logger.warning(
+                    "Incomplete menu bar snapshot (reported: \(reportedItemWindowIDs.count, privacy: .public), resolved: \(resolvedItemWindowIDs.count, privacy: .public)); keeping previous cache"
+                )
+                _ = await cacheActor.clearCachedItemWindowIDs(for: requestID)
                 return
             }
 
+            let hasVisibleControlItem = items.contains { $0.tag == .visibleControlItem }
             guard let controlItems = ControlItemPair(items: &items) else {
                 // Menu bar windows can disappear briefly while Control Center
                 // reparents or relayouts status items. Keep the last known-good
                 // cache so the Ice Bar remains usable, but force a later retry.
                 logger.warning("Missing control item for hidden section, keeping previous menu bar item cache")
                 _ = await cacheActor.clearCachedItemWindowIDs(for: requestID)
+                return
+            }
+
+            guard MenuBarRecoveryPolicy.hasRequiredControlItems(
+                hasVisibleControlItem: hasVisibleControlItem,
+                hasAlwaysHiddenControlItem: controlItems.alwaysHidden != nil,
+                requiresVisibleControlItem: settings.general.showIceIcon,
+                requiresAlwaysHiddenControlItem: settings.advanced.enableAlwaysHiddenSection
+            ) else {
+                logger.warning("Missing required control item, keeping previous menu bar item cache")
+                _ = await cacheActor.clearCachedItemWindowIDs(for: requestID)
+                return
+            }
+
+            guard
+                await cacheActor.updateCachedItemWindowIDs(
+                    reportedItemWindowIDs,
+                    for: requestID
+                ),
+                requestID == cacheRequestSequence
+            else {
                 return
             }
 
@@ -497,7 +538,11 @@ extension MenuBarItemManager {
     /// arranging them into valid positions if needed.
     func cacheItemsIfNeeded() async {
         let itemWindowIDs = Bridging.getMenuBarWindowList(option: [.itemsOnly, .activeSpace])
-        if await cacheActor.cachedItemWindowIDs != itemWindowIDs {
+        let displayID = Bridging.getActiveMenuBarDisplayID()
+        if
+            await cacheActor.cachedItemWindowIDs != itemWindowIDs ||
+            itemCache.displayID != displayID
+        {
             await cacheItemsRegardless(itemWindowIDs)
         }
     }
