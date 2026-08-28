@@ -152,7 +152,7 @@ public actor MenuBarStateCoordinator {
     }
 
     @discardableResult
-    public func refresh(now: Date = Date()) async throws -> MenuBarSnapshot {
+    public func refresh(now: Date? = nil) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
@@ -165,7 +165,7 @@ public actor MenuBarStateCoordinator {
     @discardableResult
     public func refreshAuthority(
         expectedGeneration: UInt64,
-        now: Date = Date()
+        now: Date? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
@@ -174,14 +174,14 @@ public actor MenuBarStateCoordinator {
         return try await refreshAssumingMutationTurn(now: now)
     }
 
-    private func refreshAssumingMutationTurn(now: Date) async throws -> MenuBarSnapshot {
+    private func refreshAssumingMutationTurn(now: Date?) async throws -> MenuBarSnapshot {
         var mostRecentError: (any Error)?
 
         for attempt in 0 ..< retryPolicy.maximumAttempts {
             try Task.checkCancellation()
             do {
                 let candidate = try await normalizedBackendSnapshot()
-                switch validator.validate(candidate, previous: currentSnapshot, now: now) {
+                switch validator.validate(candidate, previous: currentSnapshot, now: now ?? Date()) {
                 case let .success(snapshot):
                     if let currentSnapshot,
                        logicalLayout(of: currentSnapshot) != logicalLayout(of: snapshot)
@@ -225,7 +225,7 @@ public actor MenuBarStateCoordinator {
     }
 
     @discardableResult
-    public func perform(_ mutation: MenuBarMutation, now: Date = Date()) async throws -> MenuBarSnapshot {
+    public func perform(_ mutation: MenuBarMutation, now: Date? = nil) async throws -> MenuBarSnapshot {
         try await perform(mutation, expectedGeneration: nil, now: now)
     }
 
@@ -235,7 +235,7 @@ public actor MenuBarStateCoordinator {
     public func perform(
         _ mutation: MenuBarMutation,
         expectedGeneration: UInt64,
-        now: Date = Date()
+        now: Date? = nil
     ) async throws -> MenuBarSnapshot {
         try await perform(mutation, expectedGeneration: expectedGeneration as UInt64?, now: now)
     }
@@ -243,7 +243,7 @@ public actor MenuBarStateCoordinator {
     private func perform(
         _ mutation: MenuBarMutation,
         expectedGeneration: UInt64?,
-        now: Date
+        now: Date?
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
@@ -270,7 +270,7 @@ public actor MenuBarStateCoordinator {
             try await apply(mutation)
             try Task.checkCancellation()
             let candidate = try await normalizedBackendSnapshot()
-            switch validator.validate(candidate, previous: before, now: now) {
+            switch validator.validate(candidate, previous: before, now: now ?? Date()) {
             case let .success(snapshot):
                 guard generation == mutationGeneration else {
                     throw CancellationError()
@@ -320,7 +320,7 @@ public actor MenuBarStateCoordinator {
                 _ = try await backend.restore(before)
                 let rollbackCandidate = try await normalizedBackendSnapshot()
                 let rollbackSnapshot: MenuBarSnapshot
-                switch validator.validate(rollbackCandidate, previous: nil, now: now) {
+                switch validator.validate(rollbackCandidate, previous: nil, now: now ?? Date()) {
                 case let .success(snapshot):
                     try validateHistoryResult(snapshot, matches: before)
                     rollbackSnapshot = snapshot
@@ -371,7 +371,7 @@ public actor MenuBarStateCoordinator {
     public func activate(
         profile: BarlineProfile,
         on displayID: MenuBarDisplayID? = nil,
-        now: Date = Date(),
+        now: Date? = nil,
         expectedGeneration: UInt64? = nil,
         workspaceTransaction: MenuBarWorkspaceTransaction? = nil,
         prepareCheckpoint: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = nil
@@ -474,7 +474,7 @@ public actor MenuBarStateCoordinator {
 
             try Task.checkCancellation()
             let candidate = try await normalizedBackendSnapshot()
-            switch validator.validate(candidate, previous: before, now: now) {
+            switch validator.validate(candidate, previous: before, now: now ?? Date()) {
             case let .success(snapshot):
                 guard generation == mutationGeneration else {
                     throw CancellationError()
@@ -511,7 +511,7 @@ public actor MenuBarStateCoordinator {
                     do {
                         _ = try await backend.restore(before)
                         let candidate = try await normalizedBackendSnapshot()
-                        switch validator.validate(candidate, previous: nil, now: now) {
+                        switch validator.validate(candidate, previous: nil, now: now ?? Date()) {
                         case let .success(snapshot):
                             try validateHistoryResult(snapshot, matches: before)
                             verifiedRollbackSnapshot = snapshot
@@ -654,7 +654,7 @@ public actor MenuBarStateCoordinator {
 
     public func captureWorkspaceCheckpoint(
         workspaceTransaction: MenuBarWorkspaceTransaction,
-        now: Date = Date()
+        now: Date? = nil
     ) async throws -> MenuBarWorkspaceCheckpoint {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
@@ -680,7 +680,7 @@ public actor MenuBarStateCoordinator {
     public func restoreWorkspaceCheckpoint(
         _ checkpoint: MenuBarWorkspaceCheckpoint,
         workspaceTransaction: MenuBarWorkspaceTransaction,
-        now: Date = Date()
+        now: Date? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
@@ -720,7 +720,7 @@ public actor MenuBarStateCoordinator {
 
     @discardableResult
     public func undo(
-        now: Date = Date(),
+        now: Date? = nil,
         workspaceTransaction: MenuBarWorkspaceTransaction? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
@@ -747,7 +747,7 @@ public actor MenuBarStateCoordinator {
 
     @discardableResult
     public func redo(
-        now: Date = Date(),
+        now: Date? = nil,
         workspaceTransaction: MenuBarWorkspaceTransaction? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
@@ -775,7 +775,7 @@ public actor MenuBarStateCoordinator {
     private func restoreHistoryCheckpoint(
         _ target: HistoryCheckpoint,
         previous: HistoryCheckpoint,
-        now: Date,
+        now: Date?,
         workspaceTransaction: MenuBarWorkspaceTransaction? = nil
     ) async throws -> MenuBarSnapshot {
         guard await backend.capabilities.canRestore else {
@@ -796,7 +796,7 @@ public actor MenuBarStateCoordinator {
             // History restoration intentionally targets an older logical layout;
             // structural validation remains strict, but monotonic comparison with
             // the newer pre-undo snapshot would reject a correct restore.
-            switch validator.validate(candidate, previous: nil, now: now) {
+            switch validator.validate(candidate, previous: nil, now: now ?? Date()) {
             case let .success(snapshot):
                 try validateHistoryResult(snapshot, matches: target.snapshot)
                 currentSnapshot = snapshot
@@ -817,7 +817,7 @@ public actor MenuBarStateCoordinator {
                 _ = try await backend.restore(previous.snapshot)
                 let rollbackCandidate = try await normalizedBackendSnapshot()
                 let rollbackSnapshot: MenuBarSnapshot
-                switch validator.validate(rollbackCandidate, previous: nil, now: now) {
+                switch validator.validate(rollbackCandidate, previous: nil, now: now ?? Date()) {
                 case let .success(snapshot):
                     try validateHistoryResult(snapshot, matches: previous.snapshot)
                     rollbackSnapshot = snapshot
@@ -910,7 +910,7 @@ public actor MenuBarStateCoordinator {
         }
     }
 
-    private func validatedStartingSnapshot(now: Date) async throws -> MenuBarSnapshot {
+    private func validatedStartingSnapshot(now: Date?) async throws -> MenuBarSnapshot {
         if let currentSnapshot {
             return currentSnapshot
         }
@@ -919,7 +919,7 @@ public actor MenuBarStateCoordinator {
 
     private func refreshedHistoryStartingCheckpoint(
         workspace: ProfileWorkspaceState?,
-        now: Date
+        now: Date?
     ) async throws -> HistoryCheckpoint {
         let cached = currentSnapshot
         let live = try await refreshAssumingMutationTurn(now: now)

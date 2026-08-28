@@ -354,6 +354,82 @@ struct StateCoordinatorTests {
         #expect(await backend.restartCount == 1)
     }
 
+    @Test("Queued refresh validates against time after acquiring its turn")
+    func queuedRefreshUsesPostWaitValidationTime() async throws {
+        let startedAt = Date()
+        let before = makeSnapshot(generation: 1, count: 2, capturedAt: startedAt)
+        let afterMutation = makeSnapshot(
+            generation: 2,
+            count: 2,
+            capturedAt: startedAt.addingTimeInterval(0.01)
+        )
+        let queuedRefresh = makeSnapshot(
+            generation: 3,
+            count: 2,
+            capturedAt: startedAt.addingTimeInterval(0.05)
+        )
+        let backend = FakeBackend(
+            snapshots: [before, afterMutation, queuedRefresh],
+            mutationDelay: .milliseconds(100)
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            validator: SnapshotValidator(
+                policy: SnapshotValidationPolicy(maximumFutureClockSkew: 0)
+            ),
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        async let mutation = coordinator.perform(
+            .reveal(before.items[0].id),
+            now: afterMutation.capturedAt
+        )
+        await backend.waitUntilMutationStarted()
+        async let refresh = coordinator.refresh()
+
+        _ = try await mutation
+        let result = try await refresh
+        #expect(result == queuedRefresh)
+    }
+
+    @Test("Refresh retries preserve replacement-generation recovery signal")
+    func refreshRetriesPreserveReplacementGenerationError() async throws {
+        let startedAt = Date()
+        let before = makeSnapshot(generation: 50, count: 2, capturedAt: startedAt)
+        let replacementCapturedAt = startedAt.addingTimeInterval(0.05)
+        let backend = FakeBackend(
+            snapshots: [
+                before,
+                makeSnapshot(generation: 1, count: 2, capturedAt: replacementCapturedAt),
+                makeSnapshot(generation: 2, count: 2, capturedAt: replacementCapturedAt),
+                makeSnapshot(generation: 3, count: 2, capturedAt: replacementCapturedAt),
+                makeSnapshot(generation: 4, count: 2, capturedAt: replacementCapturedAt),
+            ]
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            validator: SnapshotValidator(
+                policy: SnapshotValidationPolicy(maximumFutureClockSkew: 0)
+            ),
+            retryPolicy: RetryPolicy(
+                maximumAttempts: 4,
+                baseDelay: .milliseconds(100),
+                maximumDelay: .milliseconds(100),
+                maximumJitterPermille: 0
+            )
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(
+            throws: MenuBarBackendError.invalidSnapshot(
+                .nonMonotonicGeneration(previous: 50, candidate: 4)
+            )
+        ) {
+            try await coordinator.refresh()
+        }
+    }
+
     @Test("Replacement helper generations are rebased monotonically")
     func rebasesReplacementHelperGeneration() async throws {
         let before = makeSnapshot(generation: 50, count: 2)
