@@ -135,7 +135,7 @@ struct ProfilePersistenceTests {
                 "ShowOnScroll": true,
                 "AutoRehide": true,
                 "RehideInterval": 2.5,
-                "ItemSpacingOffset": 6.0,
+                "ItemSpacingOffset": -6.0,
                 "HideApplicationMenus": false,
                 "MenuBarAppearanceConfigurationV2": Data([1]),
                 "Hotkeys": Data([2]),
@@ -158,7 +158,7 @@ struct ProfilePersistenceTests {
         #expect(preview.profile.revealTriggers.hover)
         #expect(preview.profile.revealTriggers.scroll)
         #expect(preview.profile.autoRehide.delaySeconds == 2.5)
-        #expect(preview.profile.appearance.itemSpacing == 6)
+        #expect(preview.profile.appearance.itemSpacing == -6)
         #expect(preview.profile.applicationMenuOverlapBehavior == .leaveVisible)
         #expect(preview.warnings.contains(.appearanceRequiresManualReview))
         #expect(preview.warnings.contains(.hotkeysRequireManualReview))

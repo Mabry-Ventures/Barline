@@ -260,24 +260,50 @@ private struct MenuBarSearchContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
             .accessibilityIdentifier("search-command-interpreting")
-        case let .validated(command):
-            HStack {
-                Label(commandSummary(command), systemImage: "sparkles")
-                Spacer()
-                Button("Run") { executeValidatedCommand(command) }
-            }
-            .padding(8)
-            .accessibilityIdentifier("search-command-validated")
-        case let .previewRequired(command):
-            HStack {
-                Label(commandSummary(command), systemImage: "exclamationmark.shield")
-                Spacer()
-                Button("Review") { openReview(for: command) }
-            }
-            .padding(8)
-            .accessibilityIdentifier("search-command-preview")
+        case let .validated(command), let .previewRequired(command):
+            commandAction(for: command)
         case .idle, .deterministicOnly, .unavailable, .fallback:
             EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func commandAction(for command: ValidatedMenuBarCommand) -> some View {
+        let disposition = SearchCommandExecutionPolicy().disposition(for: command)
+        HStack {
+            Label(
+                commandActionSummary(command, disposition: disposition),
+                systemImage: disposition == .executableImmediately ? "sparkles" : "exclamationmark.shield"
+            )
+            Spacer()
+            switch disposition {
+            case .executableImmediately:
+                Button("Run") {
+                    executeValidatedCommand(command, confirmationGranted: false)
+                }
+            case .explicitConfirmationRequired:
+                Button("Confirm") {
+                    executeValidatedCommand(command, confirmationGranted: true)
+                }
+            case .nonRunnable:
+                Button("Edit Manually") { openManualEditor(for: command) }
+            }
+        }
+        .padding(8)
+        .accessibilityIdentifier("search-command-action")
+    }
+
+    private func commandActionSummary(
+        _ command: ValidatedMenuBarCommand,
+        disposition: SearchCommandExecutionDisposition
+    ) -> String {
+        let summary = commandSummary(command)
+        guard case let .nonRunnable(reason) = disposition else { return summary }
+        return switch reason {
+        case .atomicBatchMutationUnavailable:
+            "Cannot run this batch atomically. \(summary) manually in Layout Settings."
+        case .missingArrangementDestination, .missingGroupDefinition:
+            summary
         }
     }
 
@@ -497,20 +523,46 @@ private struct MenuBarSearchContentView: View {
 
     private func commandSummary(_ command: ValidatedMenuBarCommand) -> String {
         let count = command.targetItemIDs.count
+        let itemNames = command.targetItemIDs.compactMap { itemID in
+            itemManager.itemCache.managedItems.first(where: { $0.stableID == itemID })?.displayName
+        }
+        let itemDescription = itemNames.isEmpty
+            ? "\(count) item\(count == 1 ? "" : "s")"
+            : itemNames.prefix(3).joined(separator: ", ")
         return switch command.operation {
-        case .activateProfile: "Switch to the suggested profile"
-        case .replaceWithProfile: "Review the suggested profile replacement"
-        case .reveal: "Reveal the suggested menu bar item"
-        case .activate: "Open the suggested menu bar item"
-        case .show: "Show \(count) suggested item\(count == 1 ? "" : "s")"
-        case .hide: "Hide \(count) suggested item\(count == 1 ? "" : "s")"
-        case .rearrange: "Rearrange \(count) suggested items"
-        case .group: "Group \(count) suggested items"
+        case .activateProfile: "Switch to \(profileName(for: command) ?? "the suggested profile")"
+        case .replaceWithProfile: "Replace the layout with \(profileName(for: command) ?? "the suggested profile")"
+        case .reveal: "Reveal \(itemDescription)"
+        case .activate: "Open \(itemDescription)"
+        case .show: "Show \(itemDescription)"
+        case .hide: "Hide \(itemDescription)"
+        case .rearrange: "Cannot run: choose positions for \(itemDescription) in Layout Settings"
+        case .group: "Cannot run: name and configure the group in Layout Settings"
         }
     }
 
-    private func executeValidatedCommand(_ command: ValidatedMenuBarCommand) {
+    private func profileName(for command: ValidatedMenuBarCommand) -> String? {
+        guard let profileID = command.targetProfileID else { return nil }
+        return profileManager.profiles.first {
+            ProfileID($0.id.uuidString) == profileID
+        }?.name
+    }
+
+    private func executeValidatedCommand(
+        _ command: ValidatedMenuBarCommand,
+        confirmationGranted: Bool
+    ) {
         guard requireAccessibilityForAction() else { return }
+        let disposition = SearchCommandExecutionPolicy().disposition(for: command)
+        switch disposition {
+        case .executableImmediately:
+            break
+        case .explicitConfirmationRequired where confirmationGranted:
+            break
+        case .explicitConfirmationRequired, .nonRunnable:
+            return
+        }
+
         Task {
             do {
                 let snapshot = await appState.compatibilityCoordinator.currentSnapshot
@@ -525,15 +577,44 @@ private struct MenuBarSearchContentView: View {
                 case .activate:
                     guard let itemID = command.targetItemIDs.first else { return }
                     _ = try await appState.compatibilityCoordinator.perform(.activate(itemID, .left))
-                case .activateProfile:
+                case .show, .hide:
+                    guard
+                        command.targetItemIDs.count == 1,
+                        let itemID = command.targetItemIDs.first,
+                        let item = snapshot?.items.first(where: { $0.id == itemID })
+                    else {
+                        return
+                    }
+                    let targetSection: BarlineCore.MenuBarSection = command.operation == .show
+                        ? .visible
+                        : .hidden
+                    guard item.section != targetSection else {
+                        closePanel()
+                        return
+                    }
+                    let targetIndex = snapshot?.items.count(where: {
+                        $0.section == targetSection && $0.displayID == item.displayID
+                    }) ?? 0
+                    _ = try await appState.compatibilityCoordinator.perform(
+                        .move(
+                            MenuBarMoveOperation(
+                                itemID: itemID,
+                                section: targetSection,
+                                index: targetIndex
+                            )
+                        )
+                    )
+                case .activateProfile, .replaceWithProfile:
                     guard let profileID = command.targetProfileID,
                           let profile = profileManager.profiles.first(where: {
                               ProfileID($0.id.uuidString) == profileID
                           })
                     else { return }
-                    await profileManager.activate(profile)
-                case .show, .hide, .rearrange, .group, .replaceWithProfile:
-                    openReview(for: command)
+                    guard await profileManager.activate(profile) else {
+                        model.resetCommandInterpretation()
+                        return
+                    }
+                case .rearrange, .group:
                     return
                 }
                 closePanel()
@@ -543,7 +624,7 @@ private struct MenuBarSearchContentView: View {
         }
     }
 
-    private func openReview(for command: ValidatedMenuBarCommand) {
+    private func openManualEditor(for command: ValidatedMenuBarCommand) {
         closePanel()
         appState.navigationState.settingsNavigationIdentifier = command.targetProfileID == nil
             ? .menuBarLayout

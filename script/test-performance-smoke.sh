@@ -10,14 +10,20 @@ PREFERENCE_KEY="UseBarlineShelf"
 ORIGINAL_PREFERENCE="__missing__"
 REUSE_RUNNING=false
 OUTPUT_PATH=""
+PROBE="${BARLINE_PERFORMANCE_PROBE:-runtime-smoke}"
 
 usage() {
-    printf 'usage: %s [--reuse-running] [--output PATH]\n' "$0" >&2
+    printf 'usage: %s [--reuse-running] [--probe runtime-smoke|status-observation] [--output PATH]\n' "$0" >&2
 }
 
 while (($#)); do
     case "$1" in
         --reuse-running) REUSE_RUNNING=true ;;
+        --probe)
+            (($# >= 2)) || { usage; exit 2; }
+            PROBE="$2"
+            shift
+            ;;
         --output)
             (($# >= 2)) || { usage; exit 2; }
             OUTPUT_PATH="$2"
@@ -28,6 +34,8 @@ while (($#)); do
     esac
     shift
 done
+
+[[ "$PROBE" == runtime-smoke || "$PROBE" == status-observation ]] || { usage; exit 2; }
 
 if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" 2>/dev/null)"; then
     ORIGINAL_PREFERENCE="$ORIGINAL_PREFERENCE_VALUE"
@@ -65,7 +73,7 @@ xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     "$ROOT/script/measure-barline-shelf-responsiveness.swift" -o "$BINARY"
 if [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
-    "$BINARY" | tee -a "$OUTPUT_PATH"
+    BARLINE_PERFORMANCE_PROBE="$PROBE" "$BINARY" | tee -a "$OUTPUT_PATH"
 else
-    "$BINARY"
+    BARLINE_PERFORMANCE_PROBE="$PROBE" "$BINARY"
 fi

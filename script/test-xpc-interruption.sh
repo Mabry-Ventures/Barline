@@ -6,16 +6,34 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME=Barline
 HELPER_NAME=BarlineMenuService
 REUSE_RUNNING=false
+RECOVERY_PROBE="runtime-smoke"
+RELAUNCH_APP=""
 
-case "${1:-}" in
-    "") ;;
-    --reuse-running) REUSE_RUNNING=true ;;
-    -h|--help)
-        printf 'usage: %s [--reuse-running]\n' "$0"
-        exit 0
-        ;;
-    *) printf 'usage: %s [--reuse-running]\n' "$0" >&2; exit 2 ;;
-esac
+usage() {
+    printf 'usage: %s [--reuse-running] [--recovery-probe runtime-smoke] [--relaunch-app PATH]\n' "$0"
+}
+
+while (($#)); do
+    case "$1" in
+        --reuse-running) REUSE_RUNNING=true ;;
+        --recovery-probe)
+            (($# >= 2)) || { usage >&2; exit 2; }
+            RECOVERY_PROBE="$2"
+            shift
+            ;;
+        --relaunch-app)
+            (($# >= 2)) || { usage >&2; exit 2; }
+            RELAUNCH_APP="$2"
+            shift
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+[[ "$RECOVERY_PROBE" == runtime-smoke ]] || { usage >&2; exit 2; }
+[[ -z "$RELAUNCH_APP" || -d "$RELAUNCH_APP" ]] || { printf 'error: release app bundle not found: %s\n' "$RELAUNCH_APP" >&2; exit 2; }
 
 cleanup() {
     if ! "$REUSE_RUNNING"; then
@@ -54,6 +72,28 @@ if /bin/kill -0 "$helper_pid" >/dev/null 2>&1; then
     printf 'error: XPC helper did not terminate for the forced interruption probe\n' >&2
     exit 1
 fi
+if [[ -n "$RELAUNCH_APP" ]]; then
+    old_app_pid="$(/usr/bin/pgrep -x "$APP_NAME" | head -1 || true)"
+    [[ -n "$old_app_pid" ]] || { printf 'error: Barline was not running before the release lifecycle probe\n' >&2; exit 1; }
+    /bin/kill -TERM "$old_app_pid"
+    for _ in {1..40}; do
+        /bin/kill -0 "$old_app_pid" >/dev/null 2>&1 || break
+        /bin/sleep 0.1
+    done
+    /usr/bin/open -n "$RELAUNCH_APP"
+    for _ in {1..80}; do
+        replacement_app_pid="$(/usr/bin/pgrep -x "$APP_NAME" | head -1 || true)"
+        replacement_pid="$(/usr/bin/pgrep -x "$HELPER_NAME" | head -1 || true)"
+        if [[ -n "$replacement_app_pid" && "$replacement_app_pid" != "$old_app_pid" && -n "$replacement_pid" && "$replacement_pid" != "$helper_pid" ]]; then
+            printf 'PASS: production Release lifecycle produced replacement app and XPC helper processes\n'
+            exit 0
+        fi
+        /bin/sleep 0.25
+    done
+    printf 'error: Release relaunch did not produce replacement app and helper processes\n' >&2
+    exit 1
+fi
+
 /usr/bin/pgrep -x "$APP_NAME" >/dev/null || {
     printf 'error: Barline terminated when its XPC helper was interrupted\n' >&2
     exit 1

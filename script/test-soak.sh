@@ -98,6 +98,11 @@ ORIGINAL_PREFERENCE="__missing__"
 CYCLES=0
 XPC_CYCLES=0
 PERFORMANCE_CYCLES=0
+BUILD_CONFIGURATION=Release
+PRODUCTION_PROBE=status-observation
+XPC_RECOVERY_STRATEGY=release-app-relaunch
+RUN_ROOT="${BARLINE_RUN_ROOT:-/private/tmp/barline-run-$(id -u)}"
+RELEASE_APP="$RUN_ROOT/DerivedData/Build/Products/Release/Barline.app"
 
 mkdir -p "$ARTIFACT_DIR"
 printf 'timestamp_utc,elapsed_seconds,cycle,app_pid,helper_pid,app_rss_kb,helper_rss_kb,total_rss_kb,app_cpu_percent,helper_cpu_percent,cache_kb\n' > "$CSV"
@@ -176,6 +181,7 @@ write_summary() {
     RSS_LIMIT_VALUE="$RSS_GROWTH_LIMIT_KB" CACHE_LIMIT_VALUE="$CACHE_GROWTH_LIMIT_KB" CSV_VALUE="$CSV" \
     CORE_LOG_VALUE="$CORE_LOG" XPC_LOG_VALUE="$XPC_LOG" PERFORMANCE_LOG_VALUE="$PERFORMANCE_LOG" \
     SUMMARY_VALUE="$SUMMARY" ARTIFACT_VALUE="$ARTIFACT_DIR" \
+    CONFIGURATION_VALUE="$BUILD_CONFIGURATION" PROBE_VALUE="$PRODUCTION_PROBE" XPC_STRATEGY_VALUE="$XPC_RECOVERY_STRATEGY" \
     ruby -rcsv -rjson -e '
       rows = CSV.read(ENV.fetch("CSV_VALUE"), headers: true)
       integers = ->(name) { rows.map { |row| row[name].to_i } }
@@ -202,7 +208,10 @@ write_summary() {
       guards = {
         exact_candidate: exact,
         workload_cycles_completed: cycle_counts.all?(&:positive?) && cycle_counts.uniq.length == 1,
-        shelf_workload_passed: shelf_workload_passed,
+        production_probe_passed: shelf_workload_passed,
+        release_execution_path: ENV.fetch("CONFIGURATION_VALUE") == "Release" &&
+          ENV.fetch("PROBE_VALUE") == "status-observation" &&
+          ENV.fetch("XPC_STRATEGY_VALUE") == "release-app-relaunch",
         rss_growth_within_limit: rss_growth <= ENV.fetch("RSS_LIMIT_VALUE").to_i,
         cache_growth_within_limit: cache_growth <= ENV.fetch("CACHE_LIMIT_VALUE").to_i,
         sufficient_samples: rows.length >= (complete_duration ? 10 : 2)
@@ -212,6 +221,9 @@ write_summary() {
       document = {
         schema_version: 1,
         mode: "release",
+        build_configuration: ENV.fetch("CONFIGURATION_VALUE"),
+        production_probe: ENV.fetch("PROBE_VALUE"),
+        xpc_recovery_strategy: ENV.fetch("XPC_STRATEGY_VALUE"),
         commit_sha: ENV.fetch("SHA_VALUE"),
         end_commit_sha: ENV.fetch("END_SHA_VALUE"),
         clean_at_end: ENV.fetch("DIRTY_VALUE") == "false",
@@ -222,7 +234,8 @@ write_summary() {
         harness_validation: harness,
         candidate_evidence: candidate_pass,
         sample_interval_seconds: ENV.fetch("INTERVAL_VALUE").to_i,
-        cycles: {core: ENV.fetch("CYCLES_VALUE").to_i, xpc_restart: ENV.fetch("XPC_VALUE").to_i, shelf: ENV.fetch("PERFORMANCE_VALUE").to_i},
+        cycles: {core: ENV.fetch("CYCLES_VALUE").to_i, xpc_restart: ENV.fetch("XPC_VALUE").to_i, production_probe: ENV.fetch("PERFORMANCE_VALUE").to_i},
+        app_process_continuity: false,
         resources: {
           samples: rows.length,
           rss_kb: {initial: initial_rss, final: final_rss, minimum: rss.min || 0, maximum: rss.max || 0, growth: rss_growth, growth_limit: ENV.fetch("RSS_LIMIT_VALUE").to_i},
@@ -234,7 +247,7 @@ write_summary() {
             helper_maximum: helper_cpu.max || 0
           }
         },
-        shelf_performance: {
+        production_probe_performance: {
           runs: performance_results.length,
           samples: performance_results.sum { |result| result[0].to_i },
           timeouts: performance_results.sum { |result| result[1].to_i },
@@ -283,9 +296,9 @@ finish() {
 trap finish EXIT
 
 # Warm dependencies and build outside the timed interval.
-swift build --package-path BarlineCore >/dev/null
+swift build --package-path BarlineCore --configuration release >/dev/null
 /usr/bin/defaults write "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" -bool true
-BARLINE_RUNTIME_SMOKE=1 "$ROOT/script/build_and_run.sh" --verify
+"$ROOT/script/build_and_run.sh" --release --verify
 
 runtime_ready=false
 for _ in {1..80}; do
@@ -311,11 +324,13 @@ while (( $(date +%s) < DEADLINE )); do
     cycle_started="$(date +%s)"
     CYCLES=$((CYCLES + 1))
     printf 'Release soak cycle %d\n' "$CYCLES" | tee -a "$CORE_LOG"
-    run_core_cycle 2>&1 | tee -a "$CORE_LOG"
-    ./script/test-xpc-interruption.sh --reuse-running 2>&1 | tee -a "$XPC_LOG"
+    swift test --package-path BarlineCore --configuration release \
+        --filter 'BarlineCoreTests\.(StateCoordinatorTests|ProfileTests|DeterministicSearchIndexTests|SnapshotValidationTests)/' \
+        2>&1 | tee -a "$CORE_LOG"
+    ./script/test-xpc-interruption.sh --reuse-running --relaunch-app "$RELEASE_APP" 2>&1 | tee -a "$XPC_LOG"
     XPC_CYCLES=$((XPC_CYCLES + 1))
     BARLINE_PERFORMANCE_CYCLES=5 BARLINE_PERFORMANCE_WARMUPS=1 \
-        ./script/test-performance-smoke.sh --reuse-running --output "$PERFORMANCE_LOG"
+        ./script/test-performance-smoke.sh --reuse-running --probe status-observation --output "$PERFORMANCE_LOG"
     PERFORMANCE_CYCLES=$((PERFORMANCE_CYCLES + 1))
     sample_resources
     now="$(date +%s)"
@@ -335,5 +350,5 @@ if [[ "$HARNESS_VALIDATION" != 1 && -n "$(git status --porcelain=v1)" ]]; then
     exit 1
 fi
 
-printf 'PASS: release soak completed %d Core, %d XPC restart, and %d shelf cycles\n' \
+printf 'PASS: release soak completed %d Core, %d XPC lifecycle, and %d production status-observation cycles\n' \
     "$CYCLES" "$XPC_CYCLES" "$PERFORMANCE_CYCLES"

@@ -84,6 +84,8 @@ public struct DisplayProfileOverride: Codable, Hashable, Sendable {
 public struct ProfileAppearance: Codable, Hashable, Sendable {
     public enum Shape: String, Codable, Sendable { case standard, rounded, split }
 
+    public static let itemSpacingRange: ClosedRange<Double> = -16 ... 16
+
     public var tintHex: String?
     public var gradientHex: [String]
     public var showsBorder: Bool
@@ -282,12 +284,17 @@ public struct PresentationProfileTemplate: Codable, Hashable, Sendable {
 }
 
 public struct PresentationProfileTemplateBuilder: Sendable {
+    public static let profileID = UUID(uuid: (
+        0xBA, 0x71, 0x1E, 0x00, 0x00, 0x00, 0x40, 0x00,
+        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01
+    ))
+
     public init() {}
 
     public func makeTemplate(
         from snapshot: MenuBarSnapshot,
         now: Date = Date(),
-        id: UUID = UUID()
+        id: UUID = Self.profileID
     ) -> PresentationProfileTemplate {
         let ordered = snapshot.items.sorted { lhs, rhs in
             if lhs.section != rhs.section {

@@ -23,6 +23,7 @@ final class ProfileManager: ObservableObject {
     private static let profileCatalogKey = "intent.profileCatalog"
     private static let processedCommandIDsKey = "intent.processedCommandIDs"
     private static let profileBeforeFocusIDKey = "focus.profileBeforeFocusID"
+    private static let presentationProfileIDKey = "focus.presentationProfileID"
     private static let presentationFocusActiveKey = "focus.presentationModeIsActive"
     private static let maximumProcessedCommandCount = 256
 
@@ -87,14 +88,22 @@ final class ProfileManager: ObservableObject {
 
     func createPresentationProfile() async {
         guard let appState else { return }
+        let presentationID = resolvedPresentationProfile()?.id ?? PresentationProfileTemplateBuilder.profileID
         await performOperation(successMessage: "Presentation profile saved.") {
             let snapshot = try await appState.compatibilityCoordinator.refresh()
-            let profile = PresentationProfileTemplateBuilder().makeTemplate(from: snapshot).profile
-            let updated = self.profiles.filter { $0.name != profile.name } + [profile]
+            let profile = PresentationProfileTemplateBuilder().makeTemplate(
+                from: snapshot,
+                id: presentationID
+            ).profile
+            let updated = self.profiles.filter { $0.id != presentationID } + [profile]
             try await self.store.save(updated)
             return updated
         } completion: { [weak self] updated in
             self?.profiles = updated
+            self?.processedDefaults.set(
+                presentationID.uuidString,
+                forKey: Self.presentationProfileIDKey
+            )
             self?.publishCatalog()
         }
     }
@@ -129,6 +138,9 @@ final class ProfileManager: ObservableObject {
         spacers: [ProfileSpacer]
     ) async {
         guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        if profile.name == "Presentation" || profile.id == PresentationProfileTemplateBuilder.profileID {
+            processedDefaults.set(profile.id.uuidString, forKey: Self.presentationProfileIDKey)
+        }
         let updatedProfile = BarlineProfile(
             id: profile.id,
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -374,7 +386,12 @@ final class ProfileManager: ObservableObject {
                 hidden: ordered.filter { $0.section == .hidden }.map(\.id),
                 alwaysHidden: ordered.filter { $0.section == .alwaysHidden }.map(\.id)
             ),
-            appearance: ProfileAppearance(itemSpacing: max(0, general.itemSpacingOffset)),
+            appearance: ProfileAppearance(
+                itemSpacing: min(
+                    max(general.itemSpacingOffset, ProfileAppearance.itemSpacingRange.lowerBound),
+                    ProfileAppearance.itemSpacingRange.upperBound
+                )
+            ),
             shelfBehavior: ProfileShelfBehavior(isEnabled: general.useBarlineShelf),
             revealTriggers: ProfileRevealTriggers(
                 click: general.showOnClick,
@@ -497,7 +514,7 @@ final class ProfileManager: ObservableObject {
                 processedDefaults.set(profileBeforeFocusID?.uuidString, forKey: Self.profileBeforeFocusIDKey)
                 processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
             }
-            guard let presentation = profiles.first(where: { $0.name == "Presentation" }) else {
+            guard let presentation = resolvedPresentationProfile() else {
                 statusMessage = "Create a Presentation profile before enabling the Focus filter."
                 return true
             }
@@ -520,6 +537,24 @@ final class ProfileManager: ObservableObject {
         profileBeforeFocusID = nil
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusIDKey)
         processedDefaults.set(false, forKey: Self.presentationFocusActiveKey)
+    }
+
+    private func resolvedPresentationProfile() -> BarlineProfile? {
+        if let storedID = processedDefaults.string(forKey: Self.presentationProfileIDKey)
+            .flatMap(UUID.init(uuidString:)),
+            let profile = profiles.first(where: { $0.id == storedID })
+        {
+            return profile
+        }
+        if let stable = profiles.first(where: { $0.id == PresentationProfileTemplateBuilder.profileID }) {
+            processedDefaults.set(stable.id.uuidString, forKey: Self.presentationProfileIDKey)
+            return stable
+        }
+        if let legacy = profiles.first(where: { $0.name == "Presentation" }) {
+            processedDefaults.set(legacy.id.uuidString, forKey: Self.presentationProfileIDKey)
+            return legacy
+        }
+        return nil
     }
 
     private func hasProcessed(_ commandID: UUID) -> Bool {

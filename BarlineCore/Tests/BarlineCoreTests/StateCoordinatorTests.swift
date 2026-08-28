@@ -373,6 +373,147 @@ struct StateCoordinatorTests {
         #expect(await coordinator.canRedo == false)
     }
 
+    @Test("Profile identity follows layout history through undo and redo")
+    func restoresProfileIdentityWithHistory() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let afterFirst = makeSnapshot(generation: 2, count: 2)
+        let afterSecond = makeSnapshot(generation: 3, count: 2)
+        let restoredFirst = makeSnapshot(generation: 4, count: 2)
+        let restoredSecond = makeSnapshot(generation: 5, count: 2)
+        let firstProfile = BarlineProfile(
+            id: UUID(104),
+            name: "First",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let secondProfile = BarlineProfile(
+            id: UUID(105),
+            name: "Second",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let backend = FakeBackend(snapshots: [
+            before,
+            afterFirst,
+            afterSecond,
+            restoredFirst,
+            restoredSecond,
+        ])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: firstProfile, now: afterFirst.capturedAt)
+        _ = try await coordinator.activate(profile: secondProfile, now: afterSecond.capturedAt)
+
+        _ = try await coordinator.undo(now: restoredFirst.capturedAt)
+        #expect(await coordinator.activeProfileID == firstProfile.id)
+
+        _ = try await coordinator.redo(now: restoredSecond.capturedAt)
+        #expect(await coordinator.activeProfileID == secondProfile.id)
+        #expect(await backend.restoredSnapshots == [afterFirst, afterSecond])
+    }
+
+    @Test("Failed history restore rolls back snapshot and profile identity")
+    func rollsBackFailedHistoryRestore() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(106),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let backend = FakeBackend(
+            snapshots: [before, after],
+            restoreFailures: 1
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            try await coordinator.undo(now: after.capturedAt)
+        }
+
+        #expect(await backend.restoredSnapshots == [before, after])
+        #expect(await coordinator.currentSnapshot == after)
+        #expect(await coordinator.activeProfileID == profile.id)
+        #expect(await coordinator.canUndo)
+        #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Invalid post-history snapshot rolls back snapshot and profile identity")
+    func rollsBackInvalidHistorySnapshot() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let invalid = makeSnapshot(generation: 3, count: 0)
+        let profile = BarlineProfile(
+            id: UUID(107),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let backend = FakeBackend(snapshots: [before, after, invalid])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.invalidSnapshot(.emptySnapshot)) {
+            try await coordinator.undo(now: invalid.capturedAt)
+        }
+
+        #expect(await backend.restoredSnapshots == [before, after])
+        #expect(await coordinator.currentSnapshot == after)
+        #expect(await coordinator.lastKnownGoodSnapshot == after)
+        #expect(await coordinator.activeProfileID == profile.id)
+        #expect(await coordinator.lastRejection == .emptySnapshot)
+        #expect(await coordinator.canUndo)
+        #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Failed history rollback clears unverified current authority")
+    func clearsAuthorityWhenHistoryRollbackFails() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let invalid = makeSnapshot(generation: 3, count: 0)
+        let profile = BarlineProfile(
+            id: UUID(108),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let backend = FakeBackend(
+            snapshots: [before, after, invalid],
+            restoreFailureCallNumbers: [2]
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
+
+        do {
+            _ = try await coordinator.undo(now: invalid.capturedAt)
+            Issue.record("Expected history rollback failure")
+        } catch let MenuBarBackendError.operationFailed(message) {
+            #expect(message.contains("history restore failed"))
+            #expect(message.contains("rollback failed"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(await backend.restoredSnapshots == [before, after])
+        #expect(await coordinator.currentSnapshot == nil)
+        #expect(await coordinator.lastKnownGoodSnapshot == after)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.canUndo)
+        #expect(await coordinator.canRedo == false)
+    }
+
     @Test("Explicit last-known-good restore participates in post-validation")
     func restoresLastKnownGoodMutation() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
@@ -521,6 +662,9 @@ private actor FakeBackend: MenuBarBackend {
     private let failMoveAt: Int?
     private let environmentSnapshot: MenuBarEnvironmentSnapshot?
     private var snapshotFailuresRemaining: Int
+    private var restoreFailuresRemaining: Int
+    private let restoreFailureCallNumbers: Set<Int>
+    private var restoreCallCount = 0
 
     init(
         snapshots: [MenuBarSnapshot],
@@ -535,7 +679,9 @@ private actor FakeBackend: MenuBarBackend {
         revealFailure: MenuBarBackendError? = nil,
         failMoveAt: Int? = nil,
         environment: MenuBarEnvironmentSnapshot? = nil,
-        snapshotFailures: Int = 0
+        snapshotFailures: Int = 0,
+        restoreFailures: Int = 0,
+        restoreFailureCallNumbers: Set<Int> = []
     ) {
         self.snapshots = snapshots
         self.capabilities = capabilities
@@ -544,6 +690,8 @@ private actor FakeBackend: MenuBarBackend {
         self.failMoveAt = failMoveAt
         environmentSnapshot = environment
         snapshotFailuresRemaining = max(0, snapshotFailures)
+        restoreFailuresRemaining = max(0, restoreFailures)
+        self.restoreFailureCallNumbers = restoreFailureCallNumbers
     }
 
     func snapshot() throws -> MenuBarSnapshot {
@@ -589,8 +737,13 @@ private actor FakeBackend: MenuBarBackend {
         return environmentSnapshot
     }
 
-    func restore(_ snapshot: MenuBarSnapshot) -> MenuBarMutationResult {
+    func restore(_ snapshot: MenuBarSnapshot) throws -> MenuBarMutationResult {
+        restoreCallCount += 1
         restoredSnapshots.append(snapshot)
+        if restoreFailureCallNumbers.contains(restoreCallCount) || restoreFailuresRemaining > 0 {
+            restoreFailuresRemaining -= 1
+            throw MenuBarBackendError.interrupted
+        }
         return MenuBarMutationResult(
             generation: snapshot.generation,
             changedItemIDs: snapshot.items.map(\.id)
