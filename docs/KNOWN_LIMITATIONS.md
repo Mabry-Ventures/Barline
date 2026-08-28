@@ -36,7 +36,8 @@ This list describes the active development tree. It is not a release claim.
 
 - The release pipeline implements Developer ID, entitlement/profile,
   notarization, stapling, Gatekeeper, Sparkle, checksum, SBOM, and source-archive
-  gates. It cannot complete without App Group profiles and a notary profile.
+  gates. A notarytool Keychain profile is available, but the pipeline cannot
+  create its signed submission without App Group-compatible profiles.
 - Sparkle is enabled only in Release with Barline's public key and canonical
   GitHub appcast URL. No previous public Barline version exists for update proof.
 - The canonical public repository exists. Protected rules are active and the

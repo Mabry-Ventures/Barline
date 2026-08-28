@@ -26,8 +26,9 @@ gate result.
   host-permission boundaries below.
 - A valid Mabry Ventures Developer ID identity exists, but Barline App Group
   provisioning profiles and a connected Xcode Apple account are unavailable.
-- No notarization Keychain profile is available. Sparkle trust material exists
-  locally, but a signed/notarized distributable and published feed do not.
+- A notarization Keychain profile is available. Sparkle trust material also
+  exists locally, but missing App Group provisioning prevents creation of the
+  signed artifact required before notarization and feed publication.
 - Developer Tools automation mode is disabled; enabling it requires administrator authorization, so the compiled XCUITest target cannot execute on this host.
 - The invoking host has not been granted the Accessibility TCC permission
   required by the runtime semantic audit.
