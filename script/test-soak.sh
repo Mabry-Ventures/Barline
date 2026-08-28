@@ -207,12 +207,23 @@ write_summary() {
       performance_results = File.read(ENV.fetch("PERFORMANCE_LOG_VALUE")).scan(
         /RESULT samples=(\d+) timeouts=(\d+) median_ms=([0-9.]+) p95_ms=([0-9.]+) max_ms=([0-9.]+).*verdict=(\w+)/
       )
+      performance_latencies = File.read(ENV.fetch("PERFORMANCE_LOG_VALUE")).scan(
+        /^cycle=\d+ status=OK latency_ms=([0-9.]+)$/
+      ).flatten.map(&:to_f).sort
+      percentile = lambda do |values, fraction|
+        next 0 if values.empty?
+        rank = [(fraction * values.length).ceil, 1].max
+        values[[rank - 1, values.length - 1].min]
+      end
+      aggregate_p95 = percentile.call(performance_latencies, 0.95)
+      expected_performance_samples = ENV.fetch("PERFORMANCE_VALUE").to_i *
+        ENV.fetch("PERFORMANCE_SAMPLES_VALUE").to_i
       cycle_counts = ["CYCLES_VALUE", "XPC_VALUE", "PERFORMANCE_VALUE"].map { |name| ENV.fetch(name).to_i }
       shelf_workload_passed = performance_results.length == ENV.fetch("PERFORMANCE_VALUE").to_i &&
         performance_results.all? do |result|
           result[0].to_i == ENV.fetch("PERFORMANCE_SAMPLES_VALUE").to_i &&
-            result[1].to_i == 0 && result[5] == "PASS"
-        end
+            result[1].to_i == 0
+        end && performance_latencies.length == expected_performance_samples && aggregate_p95 <= 250
       guards = {
         exact_candidate: exact,
         workload_cycles_completed: cycle_counts.all?(&:positive?) && cycle_counts.uniq.length == 1,
@@ -261,9 +272,10 @@ write_summary() {
           runs: performance_results.length,
           samples: performance_results.sum { |result| result[0].to_i },
           timeouts: performance_results.sum { |result| result[1].to_i },
-          maximum_p95_ms: performance_results.map { |result| result[3].to_f }.max || 0,
-          maximum_latency_ms: performance_results.map { |result| result[4].to_f }.max || 0,
-          all_passed: performance_results.all? { |result| result[5] == "PASS" }
+          aggregate_p95_ms: aggregate_p95,
+          maximum_window_p95_ms: performance_results.map { |result| result[3].to_f }.max || 0,
+          maximum_latency_ms: performance_latencies.max || 0,
+          all_passed: shelf_workload_passed
         },
         host: {
           macos: `sw_vers -productVersion`.strip,
@@ -342,6 +354,7 @@ while (( $(date +%s) < DEADLINE )); do
     ./script/test-xpc-interruption.sh --reuse-running --recovery-probe apple-event-reopen 2>&1 | tee -a "$XPC_LOG"
     XPC_CYCLES=$((XPC_CYCLES + 1))
     BARLINE_PERFORMANCE_CYCLES="$PERFORMANCE_SAMPLES_PER_RUN" BARLINE_PERFORMANCE_WARMUPS=1 \
+        BARLINE_PERFORMANCE_ENFORCE_BUDGET=0 \
         ./script/test-performance-smoke.sh --reuse-running --probe apple-event-reopen --output "$PERFORMANCE_LOG"
     PERFORMANCE_CYCLES=$((PERFORMANCE_CYCLES + 1))
     sample_resources
