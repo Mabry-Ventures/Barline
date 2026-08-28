@@ -553,7 +553,7 @@ public actor MenuBarStateCoordinator {
         mutationWaiters.removeFirst().resume()
     }
 
-    public func recover(now: Date = Date()) async throws -> MenuBarSnapshot {
+    public func recover(now: Date? = nil) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
@@ -587,7 +587,8 @@ public actor MenuBarStateCoordinator {
             }
             let candidate = try normalizeGeneration(of: raw)
             let continuityBaseline = preservedCurrent ?? preservedLastKnownGood
-            switch validator.validate(candidate, previous: continuityBaseline, now: now) {
+            let validationNow = now ?? Date()
+            switch validator.validate(candidate, previous: continuityBaseline, now: validationNow) {
             case let .success(snapshot):
                 if restoredLastKnownGood, let preservedLastKnownGood {
                     try validateHistoryResult(snapshot, matches: preservedLastKnownGood)
