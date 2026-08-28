@@ -4,7 +4,7 @@
 //
 
 import CoreGraphics
-import Darwin
+import ImageIO
 import os
 import ScreenCaptureKit
 
@@ -74,34 +74,20 @@ enum ScreenCapture {
     ///     Pass `nil` to capture the minimum rectangle that encloses the windows.
     ///   - option: Options that specify which parts of the windows are captured.
     static func captureWindows(with windowIDs: [CGWindowID], screenBounds: CGRect? = nil, option: CGWindowImageOption = []) -> CGImage? {
-        guard let array = Bridging.createCGWindowArray(with: windowIDs) else {
-            return nil
-        }
-        let bounds = screenBounds ?? .null
-        // ScreenCaptureKit cannot capture offscreen menu bar items. Resolve the
-        // obsolete CoreGraphics entry point dynamically so its removal disables
-        // image capture instead of preventing Barline from launching.
-        typealias CaptureFunction = @convention(c) (
-            CGRect,
-            CFArray,
-            CGWindowImageOption
-        ) -> Unmanaged<CGImage>?
-
         guard
-            let handle = dlopen(
-                "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
-                RTLD_LAZY | RTLD_LOCAL
-            )
+            case let .data(data) = BarlineMenuService.Connection.shared.sendLegacy(
+                .captureWindows(
+                    windowIDs: windowIDs,
+                    screenBounds: screenBounds,
+                    options: option.rawValue
+                )
+            ),
+            let data,
+            let source = CGImageSourceCreateWithData(data as CFData, nil)
         else {
             return nil
         }
-        defer { dlclose(handle) }
-
-        guard let symbol = dlsym(handle, "CGWindowListCreateImageFromArray") else {
-            return nil
-        }
-        let capture = unsafeBitCast(symbol, to: CaptureFunction.self)
-        return capture(bounds, array, option)?.takeRetainedValue()
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 
     /// Captures an image of a window.

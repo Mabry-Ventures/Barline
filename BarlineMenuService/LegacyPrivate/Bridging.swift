@@ -16,7 +16,6 @@ enum Bridging {
 // MARK: - CGSConnection
 
 extension Bridging {
-
     // MARK: Private Connection Helpers
 
     /// The identifier for the `null` window server connection.
@@ -75,7 +74,6 @@ extension Bridging {
 // MARK: - CGDisplay / CGSDisplay
 
 extension Bridging {
-
     // MARK: Private Display Helpers
 
     private static func getActiveDisplayCount() -> UInt32? {

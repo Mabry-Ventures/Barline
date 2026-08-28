@@ -3,8 +3,8 @@
 //  Barline
 //
 
-import Combine
 import Cocoa
+import Combine
 
 // MARK: - Permission
 
@@ -33,7 +33,7 @@ class Permission: ObservableObject, Identifiable {
     /// The function that requests permissions.
     private let request: () -> Void
 
-    /// Observer that runs on a timer to check permissions.
+    /// Observer that checks permission after relevant application lifecycle events.
     private var timerCancellable: AnyCancellable?
 
     /// Observer that observes the ``hasPermission`` property.
@@ -62,14 +62,15 @@ class Permission: ObservableObject, Identifiable {
         self.settingsURL = settingsURL
         self.check = check
         self.request = request
-        self.hasPermission = check()
+        hasPermission = check()
         configureCancellables()
     }
 
     /// Sets up the internal observers for the permission.
     private func configureCancellables() {
-        timerCancellable = Timer.publish(every: 1, on: .main, in: .default)
-            .autoconnect()
+        timerCancellable = NotificationCenter.default
+            .publisher(for: NSApplication.didBecomeActiveNotification)
+            .map { _ in Date.now }
             .merge(with: Just(.now))
             .sink { [weak self] _ in
                 guard let self else {

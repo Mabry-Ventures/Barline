@@ -19,7 +19,9 @@ baseline. It is updated with each milestone.
   `Config/*.xcconfig`.
 - Replaced the Ice cube artwork with an original generated Barline icon and
   retained deterministic icon and acknowledgements generation sources under
-  `script/`.
+  `script/`. Generic dot, ellipsis, and warning resources plus the rearranging
+  documentation media remain unchanged Ice-derived GPL material and are
+  recorded in `docs/DEPENDENCIES.md`.
 - Raised Barline-owned code to Swift 6 complete strict-concurrency checking and
   warnings-as-errors, repairing actor ownership and unsafe shared state exposed
   by the compiler.

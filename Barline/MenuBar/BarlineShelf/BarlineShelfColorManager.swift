@@ -73,7 +73,7 @@ final class BarlineShelfColorManager: ObservableObject {
                 }
                 .store(in: &c)
 
-            Publishers.Merge4(
+            Publishers.Merge3(
                 NSWorkspace.shared.notificationCenter
                     .publisher(for: NSWorkspace.activeSpaceDidChangeNotification)
                     .replace(with: ()),
@@ -82,9 +82,6 @@ final class BarlineShelfColorManager: ObservableObject {
                     .replace(with: ()),
                 DistributedNotificationCenter.default()
                     .publisher(for: DistributedNotificationCenter.interfaceThemeChangedNotification)
-                    .replace(with: ()),
-                Timer.publish(every: 5, on: .main, in: .default)
-                    .autoconnect()
                     .replace(with: ())
             )
             .receive(on: DispatchQueue.main)
@@ -140,7 +137,7 @@ final class BarlineShelfColorManager: ObservableObject {
         let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
 
         let insetScreenFrame = screen.frame.insetBy(dx: frame.width / 2, dy: 0)
-        let percentage = ((frame.midX - insetScreenFrame.minX) / insetScreenFrame.width).clamped(to: 0...1)
+        let percentage = ((frame.midX - insetScreenFrame.minX) / insetScreenFrame.width).clamped(to: 0 ... 1)
 
         let cropRect = CGRect(x: imageBounds.width * percentage, y: 0, width: 0, height: 1)
             .insetBy(dx: -150, dy: 0)

@@ -75,8 +75,12 @@ final class MenuBarItemImageCache: ObservableObject {
 
         if let appState {
             Publishers.Merge3(
-                // Update every 3 seconds at minimum.
-                Timer.publish(every: 3, on: .main, in: .default).autoconnect().replace(with: ()),
+                // Refresh when the app becomes active or the machine wakes.
+                Publishers.Merge(
+                    NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification),
+                    NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+                )
+                .replace(with: ()),
 
                 // Update when the active space or screen parameters change.
                 Publishers.Merge(
@@ -212,7 +216,7 @@ final class MenuBarItemImageCache: ObservableObject {
 
         // Merge the successfully captured images from each result. Keep excluded
         // items as part of the result, so they can be logged elsewhere.
-        individualResult.images.merge(compositeResult.images) { (_, new) in new }
+        individualResult.images.merge(compositeResult.images) { _, new in new }
 
         return individualResult
     }
@@ -256,13 +260,13 @@ final class MenuBarItemImageCache: ObservableObject {
                 continue
             }
 
-            newImages.merge(sectionImages) { (_, new) in new }
+            newImages.merge(sectionImages) { _, new in new }
         }
 
         let validTags = Set(appState.itemManager.itemCache.managedItems.map(\.tag))
 
         var updatedImages = images.filter { validTags.contains($0.key) }
-        updatedImages.merge(newImages) { (_, new) in new }
+        updatedImages.merge(newImages) { _, new in new }
         images = updatedImages
     }
 
@@ -275,7 +279,7 @@ final class MenuBarItemImageCache: ObservableObject {
         let isBarlineShelfPresented = appState.navigationState.isBarlineShelfPresented
         let isSearchPresented = appState.navigationState.isSearchPresented
 
-        if !isBarlineShelfPresented && !isSearchPresented {
+        if !isBarlineShelfPresented, !isSearchPresented {
             guard
                 appState.navigationState.isAppFrontmost,
                 appState.navigationState.isSettingsPresented,
@@ -329,14 +333,13 @@ final class MenuBarItemImageCache: ObservableObject {
         guard let appState else {
             return false
         }
-        let items: [MenuBarItem]
-        if
+        let items: [MenuBarItem] = if
             let displayID = appState.itemManager.itemCache.displayID,
             let screen = NSScreen.screens.first(where: { $0.displayID == displayID })
         {
-            items = appState.itemManager.itemsForBarlineShelf(in: section, on: screen)
+            appState.itemManager.itemsForBarlineShelf(in: section, on: screen)
         } else {
-            items = appState.itemManager.itemCache[section]
+            appState.itemManager.itemCache[section]
         }
         guard !items.isEmpty else {
             return false

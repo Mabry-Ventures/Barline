@@ -3,148 +3,156 @@
 //  Barline
 //
 
+import BarlineCore
 import Foundation
 import OSLog
 
-// MARK: - BarlineMenuService.Connection
-
 @available(macOS 26.0, *)
 extension BarlineMenuService {
-    /// A connection to the `BarlineMenuService` XPC service.
     final class Connection: Sendable {
-        /// The shared connection.
         static let shared = Connection()
 
-        /// The connection's underlying session.
         private let session: Session
-
-        /// The connection's target queue.
         private let queue: DispatchQueue
-
-        /// The connection's logger.
         private let logger: Logger
 
-        /// Creates a new connection.
         private init() {
-            let queue = DispatchQueue.targetingGlobal(
+            let queue = DispatchQueue(
                 label: "BarlineMenuService.Connection.queue",
-                qos: .userInteractive,
-                attributes: .concurrent
+                qos: .userInteractive
             )
             let logger = Logger(category: "BarlineMenuService.Connection")
-            self.session = Session(queue: queue, logger: logger)
+            session = Session(logger: logger)
             self.queue = queue
             self.logger = logger
         }
 
-        /// Starts the connection.
         func start() async {
             logger.debug("Starting BarlineMenuService connection")
-
-            await withCheckedContinuation { continuation in
-                guard let response = session.send(request: .start) else {
-                    logger.error("Start request returned nil")
-                    continuation.resume()
-                    return
-                }
-                if case .start = response {
-                    continuation.resume()
-                } else {
-                    logger.error("Start request returned invalid response \(String(describing: response))")
-                    continuation.resume()
-                }
+            guard case .start = await send(.start) else {
+                logger.error("Start request returned an invalid response")
+                return
             }
         }
 
-        /// Returns the source process identifier for the given window.
+        func capabilities() async throws -> MenuBarCapabilities {
+            guard case let .capabilities(result) = await send(.capabilities) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func snapshot() async throws -> MenuBarSnapshot {
+            guard case let .snapshot(result) = await send(.snapshot) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func move(_ operation: MenuBarMoveOperation) async throws -> MenuBarMutationResult {
+            guard case let .mutation(result) = await send(.move(operation)) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func reveal(_ item: MenuBarItemID) async throws -> MenuBarMutationResult {
+            guard case let .mutation(result) = await send(.reveal(item)) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) async throws {
+            guard case let .activation(result) = await send(.activate(item: item, button: button)) else {
+                throw MenuBarBackendError.interrupted
+            }
+            _ = try result.value()
+        }
+
+        func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
+            guard case let .mutation(result) = await send(.restore(snapshot)) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func health() async -> MenuBarBackendHealth {
+            guard case let .health(health) = await send(.health) else {
+                return MenuBarBackendHealth(
+                    backendName: "XPC",
+                    state: .unavailable,
+                    message: "Compatibility service did not respond"
+                )
+            }
+            return health
+        }
+
+        func restart() async {
+            session.cancel(reason: "Explicit compatibility restart")
+            _ = await send(.restart)
+        }
+
         func sourcePID(for window: WindowInfo) async -> pid_t? {
+            guard case let .sourcePID(pid) = await send(.sourcePID(window)) else {
+                logger.error("Source PID request returned an invalid response")
+                return nil
+            }
+            return pid
+        }
+
+        func sendLegacy(_ request: LegacyRequest) -> LegacyResponse? {
+            guard case let .legacy(response) = session.send(request: .legacy(request)) else {
+                logger.error("Legacy compatibility request returned an invalid response")
+                return nil
+            }
+            return response
+        }
+
+        private func send(_ request: Request) async -> Response? {
             await withCheckedContinuation { continuation in
-                guard let response = session.send(request: .sourcePID(window)) else {
-                    logger.error("Source PID request returned nil")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                if case .sourcePID(let pid) = response {
-                    continuation.resume(returning: pid)
-                } else {
-                    logger.error("Source PID request returned invalid response \(String(describing: response))")
-                    continuation.resume(returning: nil)
+                queue.async { [session] in
+                    continuation.resume(returning: session.send(request: request))
                 }
             }
         }
     }
 }
 
-// MARK: - BarlineMenuService.Session
+private extension BarlineMenuService.ServiceResult {
+    func value() throws -> Value {
+        switch self {
+        case let .success(value):
+            return value
+        case let .failure(error):
+            throw error
+        }
+    }
+}
 
 @available(macOS 26.0, *)
 extension BarlineMenuService {
-    /// A wrapper around an XPC session.
-    private final class Session: Sendable {
-        /// A session's underlying storage.
-        private final class Storage: @unchecked Sendable {
-            private let name = BarlineMenuService.name
-            private var session: XPCSession?
-            private let queue: DispatchQueue
-            private let logger: Logger
-
-            init(queue: DispatchQueue, logger: Logger) {
-                self.queue = queue
-                self.logger = logger
-            }
-
-            private func getOrCreateSession() throws -> XPCSession {
-                if let session {
-                    return session
-                }
-                // The cancellation callback runs on the session's target queue,
-                // outside the lock that protects this storage. Mutating the
-                // stored session here races with an in-flight `sendSync`.
-                let session = try XPCSession(xpcService: name, options: .inactive) { [logger] error in
-                    logger.warning("Session was cancelled with error \(error.localizedDescription)")
-                }
-                session.setPeerRequirement(.isFromSameTeam())
-                session.setTargetQueue(queue)
-                try session.activate()
-                self.session = session
-                return session
-            }
-
-            func cancel(reason: String) {
-                guard let session = session.take() else {
-                    return
-                }
-                session.cancel(reason: reason)
-            }
-
-            func send(request: Request) -> Response? {
-                do {
-                    let session = try getOrCreateSession()
-                    let reply = try session.sendSync(request)
-                    return try reply.decode(as: Response.self)
-                } catch {
-                    logger.error("Session failed with error \(error)")
-                    if let deadSession = session.take() {
-                        deadSession.cancel(reason: "Send failed: \(error.localizedDescription)")
-                    }
-                    return nil
-                }
-            }
+    private final class Session: @unchecked Sendable {
+        private struct State: @unchecked Sendable {
+            var session: XPCSession?
+            var generation: UInt64 = 0
         }
 
-        /// Protected storage for the underlying XPC session.
-        private let storage: OSAllocatedUnfairLock<Storage>
-
-        /// The session's target queue.
-        private let queue: DispatchQueue
-
-        /// The session's logger.
+        private let name = BarlineMenuService.name
+        private let state = OSAllocatedUnfairLock(initialState: State())
+        private let callbackQueue = DispatchQueue(
+            label: "BarlineMenuService.Connection.callback",
+            qos: .userInteractive,
+            attributes: .concurrent
+        )
+        private let transportQueue = DispatchQueue(
+            label: "BarlineMenuService.Connection.transport",
+            qos: .userInteractive,
+            attributes: .concurrent
+        )
         private let logger: Logger
 
-        /// Creates a new session.
-        init(queue: DispatchQueue, logger: Logger) {
-            self.storage = OSAllocatedUnfairLock(initialState: Storage(queue: queue, logger: logger))
-            self.queue = queue
+        init(logger: Logger) {
             self.logger = logger
         }
 
@@ -152,14 +160,78 @@ extension BarlineMenuService {
             cancel(reason: "Session deinitialized")
         }
 
-        /// Cancels the session.
         func cancel(reason: String) {
-            storage.withLock { $0.cancel(reason: reason) }
+            let oldSession = state.withLock { state -> XPCSession? in
+                state.generation &+= 1
+                return state.session.take()
+            }
+            oldSession?.cancel(reason: reason)
         }
 
-        /// Sends the given request to the service and returns the response.
         func send(request: Request) -> Response? {
-            storage.withLock { $0.send(request: request) }
+            let semaphore = DispatchSemaphore(value: 0)
+            let result = OSAllocatedUnfairLock<Response?>(initialState: nil)
+            transportQueue.async { [self] in
+                let response = performSend(request: request)
+                result.withLock { $0 = response }
+                semaphore.signal()
+            }
+            guard semaphore.wait(timeout: .now() + 5) == .success else {
+                logger.error("Compatibility request timed out")
+                cancel(reason: "Request timed out")
+                return nil
+            }
+            return result.withLock { $0.take() }
+        }
+
+        private func performSend(request: Request) -> Response? {
+            do {
+                let (session, generation) = try getOrCreateSession()
+                let reply = try session.sendSync(request)
+                let response = try reply.decode(as: Response.self)
+                let remainsCurrent = state.withLock { $0.generation == generation }
+                return remainsCurrent ? response : nil
+            } catch {
+                logger.error("Session failed with error \(error)")
+                cancel(reason: "Send failed: \(error.localizedDescription)")
+                return nil
+            }
+        }
+
+        private func getOrCreateSession() throws -> (XPCSession, UInt64) {
+            if let existing = state.withLock({ state -> (XPCSession, UInt64)? in
+                state.session.map { ($0, state.generation) }
+            }) {
+                return existing
+            }
+            let generation = state.withLock { state in
+                state.generation &+= 1
+                return state.generation
+            }
+            let session = try XPCSession(xpcService: name, options: .inactive) { [weak self] error in
+                guard let self else { return }
+                logger.warning("Session was cancelled with error \(error.localizedDescription)")
+                state.withLock { state in
+                    guard state.generation == generation else { return }
+                    state.generation &+= 1
+                    state.session = nil
+                }
+            }
+            session.setPeerRequirement(.isFromSameTeam())
+            session.setTargetQueue(callbackQueue)
+            try session.activate()
+            let installed = state.withLock { state -> Bool in
+                guard state.generation == generation, state.session == nil else {
+                    return false
+                }
+                state.session = session
+                return true
+            }
+            guard installed else {
+                session.cancel(reason: "Superseded during activation")
+                throw MenuBarBackendError.interrupted
+            }
+            return (session, generation)
         }
     }
 }

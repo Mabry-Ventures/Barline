@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Combine
 import OSLog
 import SwiftUI
@@ -46,6 +47,9 @@ final class AppState: ObservableObject {
     /// Manager for app updates.
     let updatesManager = UpdatesManager()
 
+    /// Serialized authority for validated compatibility snapshots and recovery.
+    let compatibilityCoordinator = MenuBarStateCoordinator(backend: XPCMenuBarBackend())
+
     /// Manager for user notifications.
     let userNotificationManager = UserNotificationManager()
 
@@ -64,6 +68,11 @@ final class AppState: ObservableObject {
 
         if #available(macOS 26.0, *) {
             await BarlineMenuService.Connection.shared.start()
+            do {
+                _ = try await compatibilityCoordinator.refresh()
+            } catch {
+                logger.warning("Compatibility snapshot unavailable during setup: \(error.localizedDescription)")
+            }
         }
 
         appearanceManager.performSetup(with: self)

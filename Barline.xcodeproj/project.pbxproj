@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BA0000010000000000000001 /* BarlineCore in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000010000000000000011 /* BarlineCore */; };
+		BA0000010000000000000002 /* BarlineCore in Frameworks */ = {isa = PBXBuildFile; productRef = BA0000010000000000000012 /* BarlineCore */; };
 		170423D92B56DE78004A2549 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 170423D82B56DE78004A2549 /* Sparkle */; };
 		175061912B1543DD003144CD /* LaunchAtLogin in Frameworks */ = {isa = PBXBuildFile; productRef = 175061902B1543DD003144CD /* LaunchAtLogin */; };
 		1787C4272B16890B002F50DF /* AXSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 1787C4262B16890B002F50DF /* AXSwift */; };
@@ -69,7 +71,7 @@
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		7188A6842E27F9ED008F131D /* BarlineMenuService */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (7188A6912E27F9ED008F131D /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = BarlineMenuService; sourceTree = "<group>"; };
-		7188A69E2E280BB4008F131D /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Shared; sourceTree = "<group>"; };
+		7188A69E2E280BB4008F131D /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (); explicitFileTypes = {}; explicitFolders = (); path = Shared; sourceTree = "<group>"; };
 		71BDFBE12C978E2A00EF145F /* Barline */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (71BDFC6C2C978E2A00EF145F /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = Barline; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
@@ -78,6 +80,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BA0000010000000000000001 /* BarlineCore in Frameworks */,
 				170423D92B56DE78004A2549 /* Sparkle in Frameworks */,
 				7127A9FF2C4886D100D99DEF /* IfritStatic in Frameworks */,
 				175061912B1543DD003144CD /* LaunchAtLogin in Frameworks */,
@@ -90,6 +93,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BA0000010000000000000002 /* BarlineCore in Frameworks */,
 				7168EE532E281CBC00FF9830 /* AXSwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -152,6 +156,7 @@
 			);
 			name = Barline;
 			packageProductDependencies = (
+				BA0000010000000000000011 /* BarlineCore */,
 				175061902B1543DD003144CD /* LaunchAtLogin */,
 				1787C4262B16890B002F50DF /* AXSwift */,
 				170423D82B56DE78004A2549 /* Sparkle */,
@@ -180,6 +185,7 @@
 			);
 			name = BarlineMenuService;
 			packageProductDependencies = (
+				BA0000010000000000000012 /* BarlineCore */,
 				7168EE522E281CBC00FF9830 /* AXSwift */,
 			);
 			productName = BarlineMenuService;
@@ -214,6 +220,7 @@
 			);
 			mainGroup = 716683212A767E6A006ABF84;
 			packageReferences = (
+				BA0000010000000000000010 /* XCLocalSwiftPackageReference "BarlineCore" */,
 				1750618F2B1543DD003144CD /* XCRemoteSwiftPackageReference "LaunchAtLogin-Modern" */,
 				1787C4252B16890B002F50DF /* XCRemoteSwiftPackageReference "AXSwift" */,
 				170423D72B56DE78004A2549 /* XCRemoteSwiftPackageReference "Sparkle" */,
@@ -555,6 +562,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		BA0000010000000000000010 /* XCLocalSwiftPackageReference "BarlineCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = BarlineCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		170423D72B56DE78004A2549 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -599,6 +613,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		BA0000010000000000000011 /* BarlineCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BA0000010000000000000010 /* XCLocalSwiftPackageReference "BarlineCore" */;
+			productName = BarlineCore;
+		};
+		BA0000010000000000000012 /* BarlineCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BA0000010000000000000010 /* XCLocalSwiftPackageReference "BarlineCore" */;
+			productName = BarlineCore;
+		};
 		170423D82B56DE78004A2549 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 170423D72B56DE78004A2549 /* XCRemoteSwiftPackageReference "Sparkle" */;

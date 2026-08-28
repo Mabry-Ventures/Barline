@@ -1,0 +1,49 @@
+# Local CI
+
+Barline app correctness is validated locally on Apple Silicon. GitHub Actions
+runs repository hygiene only; it never builds, signs, notarizes, tests, or
+publishes the macOS app.
+
+## Setup
+
+Run `./script/bootstrap.sh` to verify the host, Xcode, packages, and tools. Use
+`--install-tools` to install the pinned tool set declared in `Brewfile`, and
+`--install-hooks` to opt into the repository-local pre-commit and pre-push
+hooks. Bootstrap never uses `sudo` or changes the global Xcode selection.
+
+## Gates
+
+- `./script/ci.sh fast` resolves dependencies, checks changed Swift formatting,
+  runs strict SwiftLint, builds/tests BarlineCore with coverage, validates the
+  Xcode project, and runs the same repository hygiene used on Linux.
+- `./script/ci.sh full` adds the architecture firewall, unsigned Debug/Release
+  builds, analysis, regression fixtures, XPC interruption, UI smoke,
+  accessibility, support-bundle privacy, and performance smoke.
+- `./script/ci.sh release` runs full and then the local release gate. It remains
+  red until `script/release.sh` is implemented and distribution prerequisites
+  exist.
+- `./script/ci.sh xcode27 --xcode /Applications/Xcode-27.app` requires an
+  explicit Xcode 27. It reports runtime support as unverified unless the host is
+  actually running macOS 27.
+- `./script/ci.sh soak` requires the bounded release-preparation soak harness.
+
+Every run writes logs, result bundles where available, command records, and a
+machine-readable `summary.json` under ignored `.artifacts/ci/<sha>/`.
+
+The UI smoke gate launches the exact local build and verifies a visible window
+without clicking permission controls. The accessibility gate uses the macOS AX
+tree without requesting access; it returns unavailable when the invoking host
+lacks an existing grant. The XPC gate forcibly interrupts the embedded helper
+and requires automatic replacement while the app survives. The support-bundle
+privacy gate remains red until a product exporter exists and can be audited.
+
+## Commit status publishing
+
+`./script/ci.sh full --publish-status` requires a clean worktree and existing
+GitHub CLI authentication. It publishes `local/macos-arm64` through the commit
+status API for the captured SHA, verifies HEAD is unchanged, and cannot publish
+success if any required gate was missing or failed. Xcode 27 uses the optional
+`local/macos27-beta` context until final runtime validation supports renaming it.
+
+Hook bypass is possible with Git's documented `--no-verify` flag for an
+emergency, but the reason and replacement evidence must be recorded in the PR.

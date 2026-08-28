@@ -1,7 +1,10 @@
 .DS_Store
 build/
+.build/
 xcuserdata/
 .artifacts/
 Config/Local.xcconfig
 DerivedData/
 dist/
+*.xcresult
+.swiftpm/

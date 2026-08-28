@@ -1,0 +1,28 @@
+# Support bundle
+
+Barline now has a bounded JSON diagnostics encoder and atomic exporter. It
+returns an in-memory preview for explicit review before a caller writes to a
+user-selected destination. The current product UI does not yet expose that
+preview/save flow, so support-bundle export is implemented at the platform
+layer but is not yet user-accessible. The fail-closed
+`script/test-support-bundle-privacy.sh` checks the exporter, tracked credentials,
+and obvious sensitive logging sources.
+
+## Required privacy contract
+
+Every bundle must be created only after an explicit user action and shown
+for review before sharing. It may contain the Barline version/build, macOS
+version/build, hardware family and architecture, permission states, compatibility
+backend/capability status, bounded recent redacted logs, and validation/error
+codes useful for diagnosis.
+
+It must exclude screen images, menu item titles, private profile names or
+contents, raw process inventories/PIDs, usernames, full paths, home-directory
+locations, environment variables, credentials, signing identities, Sparkle
+private material, browser/app content, and unrelated unified logs. Stable item
+identifiers must be omitted or irreversibly scoped to the generated bundle when
+they are essential to correlate events.
+
+Generation must be bounded, cancellable, off the main actor, and fail safely.
+The privacy test must inspect both filenames and content using synthetic secrets
+and private values before this feature can be called ready.

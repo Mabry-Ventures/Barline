@@ -1,34 +1,51 @@
 # Third-party notices
 
-Barline's direct Swift package dependencies at the imported baseline are listed
-below. Exact revisions are recorded in the committed `Package.resolved`.
+Barline's direct Swift package dependencies are listed below. Exact revisions
+are recorded in the committed `Package.resolved` and audited in
+`docs/DEPENDENCIES.md`.
 
 ## AXSwift
 
-AXSwift is MIT-licensed. Copyright (c) 2017 Tyler Mandry.
+AXSwift 0.3.2 is MIT-licensed. Copyright (c) 2017 Tyler Mandry.
 
 ## CompactSlider
 
-CompactSlider is MIT-licensed. Copyright (c) 2022 Alexey Bukhtin.
+CompactSlider 1.2.1 is MIT-licensed. Copyright (c) 2022 Alexey Bukhtin.
 
 ## Ifrit
 
-Ifrit is MIT-licensed. Copyright (c) 2024 Andrii Vynnychenko and Kirollos Risk
-(original `fuse-swift` repository code).
+Ifrit 2.0.6 is MIT-licensed. Copyright (c) 2024 Andrii Vynnychenko and Kirollos
+Risk (original `fuse-swift` repository code).
 
 ## LaunchAtLogin-Modern
 
-LaunchAtLogin-Modern is MIT-licensed. Copyright (c) Sindre Sorhus.
+LaunchAtLogin-Modern 1.1.0 is MIT-licensed. Copyright (c) Sindre Sorhus
+<sindresorhus@gmail.com> (https://sindresorhus.com).
 
 ## Sparkle
 
-Sparkle is permissively licensed. Copyright holders include Andy Matuschak,
+Sparkle 2.8.0 is MIT-licensed. Copyright holders include Andy Matuschak,
 Elgato Systems GmbH, Kornel Lesinski, Mayur Pawashe, C.W. Betts, Petroules
 Corporation, and Big Nerd Ranch. Sparkle also incorporates separately noticed
 code from bsdiff, sais-lite, orlp/ed25519, and Mark Hamlin. The complete notices
 ship in `Barline/Resources/Acknowledgements.rtf` and must
 be regenerated into Barline's shipping acknowledgements when dependencies are
 changed.
+
+## Assets inherited from Ice
+
+Barline retains several non-brand utility assets from the exact imported Ice
+baseline: the dot and ellipsis control-item images, the warning image, and the
+`Resources/rearranging.gif` and `Resources/rearranging.mov` documentation
+media. No separate per-asset license or authorship notice was present in the
+imported repository. They are redistributed as Ice project material under the
+repository's GPLv3-or-later license, with Ice attribution in `NOTICE.md` and
+the provenance records. See `docs/DEPENDENCIES.md` for exact paths and audit
+limitations.
+
+The Barline application icon and Barline control-item icon are original
+Barline material generated from sources in `Resources/BarlineIcon.svg` and
+`script/generate_icon.swift`; they are not derived from the Ice cube artwork.
 
 ## MIT license text
 

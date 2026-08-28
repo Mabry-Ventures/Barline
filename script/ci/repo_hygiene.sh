@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+require() {
+    command -v "$1" >/dev/null 2>&1 || { printf 'error: missing %s\n' "$1" >&2; exit 1; }
+}
+
+require actionlint
+require ruby
+require shellcheck
+
+git diff --check
+
+shell_files=()
+while IFS= read -r -d '' file; do shell_files+=("$file"); done < <(git ls-files -z '*.sh' '.githooks/*')
+for file in "${shell_files[@]}"; do
+    bash -n "$file"
+done
+shellcheck --external-sources "${shell_files[@]}"
+actionlint -shellcheck shellcheck
+
+ruby -rjson -rpsych -rrexml/document -e '
+  generated = ->(p) { p.start_with?(".git/", ".artifacts/", ".build/") || p.include?("/.build/") }
+  Dir.glob("**/*.json", File::FNM_DOTMATCH).reject { |p| generated.call(p) }.each { |p| JSON.parse(File.read(p)) }
+  Dir.glob(".github/**/*.{yml,yaml}").each { |p| Psych.safe_load(File.read(p), aliases: true) }
+  Dir.glob("**/*.{plist,xcsettings,xcworkspacedata}").reject { |p| generated.call(p) }.each do |p|
+    text = File.read(p)
+    REXML::Document.new(text) if text.lstrip.start_with?("<?xml", "<plist", "<Workspace")
+  end
+'
+
+workflow_files=(.github/workflows/*.yml .github/workflows/*.yaml)
+for workflow in "${workflow_files[@]}"; do
+    [[ -e "$workflow" ]] || continue
+    if rg -n 'uses:\s*[^#[:space:]]+@(?![0-9a-f]{40}(?:\s|$))' --pcre2 "$workflow"; then
+        printf 'error: every action must be pinned to a full 40-character SHA\n' >&2
+        exit 1
+    fi
+done
+
+if rg -n 'runs-on:\s*(macos|\[?[^#\n]*self-hosted)|pull_request_target' .github/workflows; then
+    printf 'error: macOS, self-hosted, and pull_request_target workflows are forbidden\n' >&2
+    exit 1
+fi
+
+[[ "$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | wc -l | tr -d ' ')" == 1 ]] || {
+    printf 'error: exactly one GitHub Actions workflow is allowed\n' >&2
+    exit 1
+}
+rg -q '^permissions:$' .github/workflows/repo-hygiene.yml
+rg -q '^  contents: read$' .github/workflows/repo-hygiene.yml
+if rg -n '^\s+[a-z-]+:\s*write\s*$' .github/workflows; then
+    printf 'error: workflow token write permissions are forbidden\n' >&2
+    exit 1
+fi
+
+required=(LICENSE NOTICE.md THIRD_PARTY_NOTICES.md SECURITY.md docs/PROVENANCE.md docs/UPSTREAM.md AGENTS.md Barline.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)
+for file in "${required[@]}"; do
+    [[ -s "$file" ]] || { printf 'error: required repository file missing or empty: %s\n' "$file" >&2; exit 1; }
+done
+
+if git ls-files | rg -i '(\.p12$|\.mobileprovision$|\.provisionprofile$|sparkle.*private|notari[sz]ation.*(password|credential)|(^|/)(id_rsa|id_ed25519)$)'; then
+    printf 'error: possible signing/notarization/private-key material is tracked\n' >&2
+    exit 1
+fi
+if git grep -n -E -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'; then
+    printf 'error: private-key material is tracked\n' >&2
+    exit 1
+fi
+
+executables=(
+    script/bootstrap.sh
+    script/build_and_run.sh
+    script/ci.sh
+    script/ci/repo_hygiene.sh
+    script/ci/architecture_firewall.sh
+    script/test-accessibility.sh
+    script/test-fixtures.sh
+    script/test-menu-bar-recovery.sh
+    script/test-notch-overflow.sh
+    script/test-performance-smoke.sh
+    script/test-support-bundle-privacy.sh
+    script/test-ui-smoke.sh
+    script/test-xpc-interruption.sh
+    .githooks/pre-commit
+    .githooks/pre-push
+)
+for file in "${executables[@]}"; do
+    [[ -x "$file" ]] || { printf 'error: required script is not executable: %s\n' "$file" >&2; exit 1; }
+done
+
+for pattern in '.artifacts/' '.build/' 'DerivedData/' 'build/' '*.xcresult'; do
+    rg -q "^${pattern//\*/\\*}$" .gitignore || { printf 'error: generated path is not ignored: %s\n' "$pattern" >&2; exit 1; }
+done
+
+ruby -e '
+  Dir.glob("**/*.md").reject { |p| p.start_with?(".git/", ".artifacts/", ".build/") }.each do |path|
+    text = File.read(path)
+    abort "#{path}: merge-conflict marker present" if text.match?(/^(<<<<<<<|=======|>>>>>>>) /)
+    abort "#{path}: Markdown file has no heading" unless text.match?(/^# /)
+  end
+'
+
+printf 'Repository hygiene passed (Linux-safe; no Swift compilation or macOS validation performed).\n'

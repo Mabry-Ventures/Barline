@@ -95,7 +95,7 @@ final class MenuBarManager: ObservableObject {
             let window = hiddenSection.controlItem.window
         {
             window.publisher(for: \.frame)
-                .map { $0.origin.y }
+                .map(\.origin.y)
                 .removeDuplicates()
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
@@ -139,7 +139,11 @@ final class MenuBarManager: ObservableObject {
         $settingsWindow
             .removeNil()
             .flatMap { $0.publisher(for: \.isVisible) }
-            .discardMerge(Timer.publish(every: 5, on: .main, in: .default).autoconnect())
+            .discardMerge(
+                NotificationCenter.default
+                    .publisher(for: NSApplication.didChangeScreenParametersNotification)
+                    .replace(with: true)
+            )
             .receive(on: DispatchQueue.main)
             .sink { [weak self] in
                 self?.updateAverageColorInfo()
@@ -147,7 +151,7 @@ final class MenuBarManager: ObservableObject {
             .store(in: &c)
 
         // Hide application menus when a section is shown (if applicable).
-        Publishers.MergeMany(sections.map { $0.controlItem.$state })
+        Publishers.MergeMany(sections.map(\.controlItem.$state))
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self, let appState else {
@@ -362,7 +366,9 @@ struct MenuBarAverageColorInfo: Hashable {
     var source: Source
 
     /// The brightness of the menu bar's color.
-    var brightness: CGFloat { color.brightness ?? 0 }
+    var brightness: CGFloat {
+        color.brightness ?? 0
+    }
 
     /// A Boolean value that indicates whether the menu bar has a
     /// bright color.
@@ -370,5 +376,7 @@ struct MenuBarAverageColorInfo: Hashable {
     /// This value is `true` if ``brightness`` is above `0.67`. At
     /// the time of writing, if this value is `true`, the menu bar
     /// draws its items with a darker appearance.
-    var isBright: Bool { brightness > 0.67 }
+    var isBright: Bool {
+        brightness > 0.67
+    }
 }

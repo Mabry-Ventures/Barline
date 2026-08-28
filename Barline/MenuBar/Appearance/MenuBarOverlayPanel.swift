@@ -16,7 +16,9 @@ final class MenuBarOverlayPanel: NSPanel {
         case applicationMenuFrame
         case desktopWallpaper
 
-        var description: String { rawValue }
+        var description: String {
+            rawValue
+        }
     }
 
     /// The kind of validation that occurs before an update.
@@ -94,18 +96,18 @@ final class MenuBarOverlayPanel: NSPanel {
             backing: .buffered,
             defer: false
         )
-        self.level = .statusBar
-        self.title = "Menu Bar Overlay"
-        self.backgroundColor = .clear
-        self.hasShadow = false
-        self.animationBehavior = .none
-        self.hidesOnDeactivate = false
-        self.canHide = false
-        self.isMovable = false
-        self.ignoresMouseEvents = true
-        self.isExcludedFromWindowsMenu = true
-        self.collectionBehavior = [.fullScreenNone, .ignoresCycle, .moveToActiveSpace]
-        self.contentView = MenuBarOverlayPanelContentView()
+        level = .statusBar
+        title = "Menu Bar Overlay"
+        backgroundColor = .clear
+        hasShadow = false
+        animationBehavior = .none
+        hidesOnDeactivate = false
+        canHide = false
+        isMovable = false
+        ignoresMouseEvents = true
+        isExcludedFromWindowsMenu = true
+        collectionBehavior = [.fullScreenNone, .ignoresCycle, .moveToActiveSpace]
+        contentView = MenuBarOverlayPanelContentView()
         configureCancellables()
     }
 
@@ -129,13 +131,7 @@ final class MenuBarOverlayPanel: NSPanel {
                 guard let self else {
                     return
                 }
-                updateTaskContext.setTask(for: .desktopWallpaper, timeout: .seconds(5)) {
-                    while true {
-                        try Task.checkCancellation()
-                        self.insertUpdateFlag(.desktopWallpaper)
-                        try await Task.sleep(for: .seconds(1))
-                    }
-                }
+                insertUpdateFlag(.desktopWallpaper)
             }
             .store(in: &c)
 
@@ -153,29 +149,11 @@ final class MenuBarOverlayPanel: NSPanel {
             guard let self else {
                 return
             }
-            updateTaskContext.setTask(for: .applicationMenuFrame, timeout: .seconds(10)) {
-                var hasDoneInitialUpdate = false
-                while true {
-                    try Task.checkCancellation()
-                    guard
-                        let latestFrame = self.owningScreen.getApplicationMenuFrame(),
-                        latestFrame != self.applicationMenuFrame
-                    else {
-                        if hasDoneInitialUpdate {
-                            try await Task.sleep(for: .seconds(1))
-                        } else {
-                            try await Task.sleep(for: .milliseconds(1))
-                        }
-                        continue
-                    }
-                    self.insertUpdateFlag(.applicationMenuFrame)
-                    hasDoneInitialUpdate = true
-                }
-            }
+            insertUpdateFlag(.applicationMenuFrame)
             Task {
                 try? await Task.sleep(for: .milliseconds(100))
-                if self.owningScreen != NSScreen.main {
-                    self.updateTaskContext.cancelTask(for: .applicationMenuFrame)
+                if self.owningScreen == NSScreen.main {
+                    self.insertUpdateFlag(.applicationMenuFrame)
                 }
             }
         }
@@ -195,22 +173,6 @@ final class MenuBarOverlayPanel: NSPanel {
             self?.insertUpdateFlag(.applicationMenuFrame)
         }
         .store(in: &c)
-
-        // Continually update the desktop wallpaper. Ideally, we would set up an observer
-        // for a wallpaper change notification, but macOS doesn't post one anymore.
-        Timer.publish(every: 5, on: .main, in: .default)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.insertUpdateFlag(.desktopWallpaper)
-            }
-            .store(in: &c)
-
-        Timer.publish(every: 10, on: .main, in: .default)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.insertUpdateFlag(.applicationMenuFrame)
-            }
-            .store(in: &c)
 
         $needsShow
             .debounce(for: 0.05, scheduler: DispatchQueue.main)
@@ -353,7 +315,7 @@ final class MenuBarOverlayPanel: NSPanel {
     }
 
     override func isAccessibilityElement() -> Bool {
-        return false
+        false
     }
 }
 
@@ -609,7 +571,7 @@ private final class MenuBarOverlayPanelContentView: NSView {
 
     /// Returns the bounds that the view's drawn content can occupy.
     private func getDrawableBounds() -> CGRect {
-        return CGRect(
+        CGRect(
             x: bounds.origin.x,
             y: bounds.origin.y + 5,
             width: bounds.width,
@@ -634,7 +596,7 @@ private final class MenuBarOverlayPanelContentView: NSView {
         }
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func draw(_: NSRect) {
         guard
             let overlayPanel,
             let context = NSGraphicsContext.current
