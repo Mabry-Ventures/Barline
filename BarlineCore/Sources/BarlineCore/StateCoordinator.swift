@@ -55,6 +55,11 @@ public struct MenuBarWorkspaceCheckpoint: Codable, Hashable, Sendable {
     }
 }
 
+public enum MenuBarConditionalRestoreResult: Sendable, Equatable {
+    case restored(MenuBarSnapshot)
+    case superseded
+}
+
 public struct MenuBarWorkspaceTransaction: Sendable {
     fileprivate let captureClosure: @Sendable () async throws -> ProfileWorkspaceState
     fileprivate let applyClosure: @Sendable (ProfileWorkspaceState) async throws -> Void
@@ -417,7 +422,14 @@ public actor MenuBarStateCoordinator {
         if let activeDisplayID, !before.displayIDs.contains(activeDisplayID) {
             throw MenuBarBackendError.operationFailed("requested profile display is unavailable")
         }
-        let layout = profile.layout(for: activeDisplayID)
+        let matchingDisplayOverride = activeDisplayID.flatMap { activeDisplayID in
+            profile.displayOverrides.first { $0.displayID == activeDisplayID }
+        }
+        // A base profile can contain items from every display. Only a matching
+        // display override is scoped and retargeted to the active display;
+        // applying the base layout preserves each item's source display.
+        let profileDisplayID = matchingDisplayOverride?.displayID
+        let layout = matchingDisplayOverride?.layout ?? profile.layout
         let knownItemIDs = Set(before.items.map(\.id))
         for itemID in layout.allItemIDs where !knownItemIDs.contains(itemID) {
             throw MenuBarBackendError.staleItem(itemID)
@@ -434,7 +446,7 @@ public actor MenuBarStateCoordinator {
                 MenuBarWorkspaceCheckpoint(
                     snapshot: before,
                     activeProfileID: priorProfileID,
-                    activeDisplayID: activeDisplayID,
+                    activeDisplayID: profileDisplayID,
                     workspace: workspaceBefore
                 )
             )
@@ -456,7 +468,7 @@ public actor MenuBarStateCoordinator {
                 (.alwaysHidden, layout.alwaysHidden),
             ] {
                 let sectionCandidates = before.items.filter { $0.section == section }
-                let baseIndex = activeDisplayID.flatMap { displayID in
+                let baseIndex = profileDisplayID.flatMap { displayID in
                     sectionCandidates.firstIndex(where: { $0.displayID == displayID })
                 } ?? 0
                 for (index, itemID) in itemIDs.enumerated() {
@@ -466,7 +478,7 @@ public actor MenuBarStateCoordinator {
                             itemID: itemID,
                             section: section,
                             index: baseIndex + index,
-                            destinationDisplayID: activeDisplayID
+                            destinationDisplayID: profileDisplayID
                         )
                     )
                 }
@@ -479,7 +491,7 @@ public actor MenuBarStateCoordinator {
                 guard generation == mutationGeneration else {
                     throw CancellationError()
                 }
-                try validateProfileResult(layout, in: snapshot, displayID: activeDisplayID)
+                try validateProfileResult(layout, in: snapshot, displayID: profileDisplayID)
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
@@ -716,6 +728,81 @@ public actor MenuBarStateCoordinator {
             workspace: live.workspace
         )
         return restored
+    }
+
+    /// Restores a journaled workspace only while the profile that created it
+    /// still owns the exact current layout and modeled workspace. The ownership
+    /// check and restore share one mutation turn, so a newer activation cannot
+    /// be overwritten between them.
+    public func restoreWorkspaceCheckpoint(
+        _ checkpoint: MenuBarWorkspaceCheckpoint,
+        ifCurrentMatches expectedProfile: BarlineProfile,
+        authorityIsCurrent: Bool,
+        workspaceTransaction: MenuBarWorkspaceTransaction,
+        now: Date? = nil
+    ) async throws -> MenuBarConditionalRestoreResult {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try ProfileValidator().validate(checkpoint.workspace)
+        try ProfileValidator().validate(expectedProfile)
+        switch validator.validate(
+            checkpoint.snapshot,
+            previous: nil,
+            now: checkpoint.snapshot.capturedAt
+        ) {
+        case .success:
+            break
+        case let .failure(reason):
+            throw MenuBarBackendError.invalidSnapshot(reason)
+        }
+        let live = try await refreshedHistoryStartingCheckpoint(
+            workspace: workspaceTransaction.capture(),
+            now: now
+        )
+        let activeDisplayID: MenuBarDisplayID? = if let environment = try? await backend.environment(),
+                                                    let displayID = environment.activeStableDisplayID,
+                                                    expectedProfile.displayOverrides.contains(where: {
+                                                        $0.displayID == displayID
+                                                    })
+        {
+            displayID
+        } else {
+            nil
+        }
+        guard let liveWorkspace = live.workspace else {
+            throw MenuBarBackendError.operationFailed("workspace capture is unavailable")
+        }
+        let liveCheckpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: live.snapshot,
+            activeProfileID: live.activeProfileID,
+            activeDisplayID: activeDisplayID,
+            workspace: liveWorkspace
+        )
+        guard authorityIsCurrent,
+              ProfileAuthorityMatcher.matches(
+                  profile: expectedProfile,
+                  checkpoint: liveCheckpoint
+              )
+        else {
+            return .superseded
+        }
+        let target = HistoryCheckpoint(
+            snapshot: checkpoint.snapshot,
+            activeProfileID: checkpoint.activeProfileID,
+            workspace: checkpoint.workspace
+        )
+        let restored = try await restoreHistoryCheckpoint(
+            target,
+            previous: live,
+            now: now,
+            workspaceTransaction: workspaceTransaction
+        )
+        recordUndoCheckpoint(
+            live.snapshot,
+            activeProfileID: live.activeProfileID,
+            workspace: live.workspace
+        )
+        return .restored(restored)
     }
 
     @discardableResult

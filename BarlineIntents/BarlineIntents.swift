@@ -169,6 +169,9 @@ struct SetBarlinePresentationModeIntent: AppIntent {
     static let description = IntentDescription(
         "Requests Barline's presentation profile without moving menu bar items in the extension process."
     )
+    static var supportedModes: IntentModes {
+        .foreground
+    }
 
     @Parameter(title: "Enabled", default: true)
     var isEnabled: Bool
