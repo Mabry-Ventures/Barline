@@ -31,6 +31,13 @@ development line and are not release certification.
 - Product-facing Ice names and identifiers were replaced with Barline; Ice
   remains in provenance, attribution, historical migration keys, and historical
   documentation where necessary.
+- Profile and Focus changes now serialize layout and workspace settings as one
+  verified transaction, retain a crash-stable pre-Presentation journal, and
+  clear authority when rollback or a restored profile definition cannot be
+  proven current.
+- Menu-bar restoration now uses global cross-display planning, section-relative
+  postconditions, explicit stable destination-display targeting,
+  already-correct no-op handling, and monotonic helper generation rebasing.
 
 ### Release boundaries
 

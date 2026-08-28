@@ -17,7 +17,12 @@ struct MenuBarServiceCodecTests {
     @Test("Every typed request survives a Codable round trip")
     func requestRoundTrips() throws {
         let snapshot = makeCodecSnapshot()
-        let operation = MenuBarMoveOperation(itemID: itemID, section: .hidden, index: 2)
+        let operation = MenuBarMoveOperation(
+            itemID: itemID,
+            section: .hidden,
+            index: 2,
+            destinationDisplayID: MenuBarDisplayID("codec-display")
+        )
         let revealUUID = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
         let revealToken = MenuBarRevealObservationToken(value: revealUUID)
         let requests: [MenuBarServiceRequest] = [

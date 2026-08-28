@@ -173,3 +173,55 @@ public struct MenuBarSnapshot: Codable, Hashable, Sendable {
         self.menuTrackingIsActive = menuTrackingIsActive
     }
 }
+
+public struct MenuBarMovePlanner: Sendable {
+    public init() {}
+
+    /// Returns the helper's global, section-relative candidate index. Prefer
+    /// the last candidate on the item's display without mistaking a
+    /// display-local count for the helper's global index space.
+    public func destinationIndex(
+        in snapshot: MenuBarSnapshot,
+        section: MenuBarSection,
+        preferredDisplayID: MenuBarDisplayID?
+    ) -> Int {
+        let candidates = snapshot.items.filter { $0.section == section }
+        guard !candidates.isEmpty else { return 0 }
+        if let preferredDisplayID,
+           let index = candidates.lastIndex(where: { $0.displayID == preferredDisplayID })
+        {
+            return index
+        }
+        return candidates.count - 1
+    }
+
+    public func resultMatches(
+        _ operation: MenuBarMoveOperation,
+        in snapshot: MenuBarSnapshot
+    ) -> Bool {
+        let candidates = snapshot.items.filter { $0.section == operation.section }
+        guard !candidates.isEmpty else { return false }
+        let expectedIndex = min(max(operation.index, 0), candidates.count - 1)
+        return candidates.indices.contains(expectedIndex)
+            && candidates[expectedIndex].id == operation.itemID
+            && operation.destinationDisplayID.map {
+                candidates[expectedIndex].displayID == $0
+            } != false
+    }
+
+    public func restoreOperations(for snapshot: MenuBarSnapshot) -> [MenuBarMoveOperation] {
+        MenuBarSection.allCases.flatMap { section in
+            snapshot.items
+                .filter { $0.section == section }
+                .enumerated()
+                .map { index, descriptor in
+                    MenuBarMoveOperation(
+                        itemID: descriptor.id,
+                        section: section,
+                        index: index,
+                        destinationDisplayID: descriptor.displayID
+                    )
+                }
+        }
+    }
+}

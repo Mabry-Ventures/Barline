@@ -59,6 +59,11 @@ final class AppState: ObservableObject {
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
 
+    /// The Accessibility value already applied to HID setup. This suppresses
+    /// only an identical initial publisher emission while still reconciling a
+    /// grant or revocation that races the asynchronous setup sequence.
+    private var reconciledAccessibilityPermission: Bool?
+
     /// Logger for the app state.
     private let logger = Logger(category: "AppState")
 
@@ -79,10 +84,12 @@ final class AppState: ObservableObject {
         await profileManager.performSetup(with: self)
 
         appearanceManager.performSetup(with: self)
+        let initialAccessibilityPermission = permissions.accessibility.hasPermission
         hidEventManager.performSetup(
             with: self,
-            startsEnabled: permissions.accessibility.hasPermission
+            startsEnabled: initialAccessibilityPermission
         )
+        reconciledAccessibilityPermission = initialAccessibilityPermission
         await itemManager.performSetup(with: self)
         imageCache.performSetup(with: self)
         updatesManager.performSetup(with: self)
@@ -166,7 +173,6 @@ final class AppState: ObservableObject {
 
         permissions.accessibility.$hasPermission
             .removeDuplicates()
-            .dropFirst()
             .sink { [weak self] isGranted in
                 Task {
                     await self?.accessibilityPermissionDidChange(isGranted)
@@ -224,6 +230,8 @@ final class AppState: ObservableObject {
     /// mutation UI after revocation. Cached item names remain available for
     /// read-only search while mutation entry points check the live permission.
     private func accessibilityPermissionDidChange(_ isGranted: Bool) async {
+        guard reconciledAccessibilityPermission != isGranted else { return }
+        reconciledAccessibilityPermission = isGranted
         guard isGranted else {
             logger.notice("Accessibility permission was revoked; continuing in degraded mode")
             hidEventManager.stopAll()

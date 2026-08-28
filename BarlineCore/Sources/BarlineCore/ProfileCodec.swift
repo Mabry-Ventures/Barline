@@ -37,11 +37,15 @@ public struct ProfileCodec: Sendable {
 
     public func encode(_ profile: BarlineProfile) throws -> Data {
         try validator.validate(profile)
-        return try makeEncoder().encode(profile)
+        let data = try makeEncoder().encode(profile)
+        try preflightEncodedJSON(data)
+        return data
     }
 
     public func decode(_ data: Data) throws -> BarlineProfile {
+        try preflightEncodedJSON(data)
         let migrated = try ProfileMigrator().migrate(data)
+        try preflightEncodedJSON(migrated)
         let profile = try makeDecoder().decode(BarlineProfile.self, from: migrated)
         try validator.validate(profile)
         return profile
@@ -56,6 +60,7 @@ public struct ProfileCodec: Sendable {
         guard data.count <= Self.maximumArchiveByteCount else {
             throw ProfileValidationError.archiveTooLarge(data.count)
         }
+        try preflightEncodedJSON(data)
         return data
     }
 
@@ -138,6 +143,16 @@ public struct ProfileCodec: Sendable {
                 try preflight(nestedValue, depth: depth + 1)
             }
         }
+    }
+
+    private func preflightEncodedJSON(_ data: Data) throws {
+        let value: Any
+        do {
+            value = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw ProfileValidationError.malformedDocument(String(describing: error))
+        }
+        try preflight(value, depth: 0)
     }
 
     private func makeEncoder() -> JSONEncoder {

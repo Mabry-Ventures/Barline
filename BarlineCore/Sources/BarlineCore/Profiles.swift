@@ -142,6 +142,41 @@ public struct ProfileAutoRehide: Codable, Hashable, Sendable {
     }
 }
 
+/// The non-layout settings that must commit and roll back with a profile's
+/// menu-bar layout. Keeping this value in Core lets history and Focus recovery
+/// preserve an exact custom workspace without importing AppKit state.
+public struct ProfileWorkspaceState: Codable, Hashable, Sendable {
+    public var appearance: ProfileAppearance
+    public var shelfBehavior: ProfileShelfBehavior
+    public var revealTriggers: ProfileRevealTriggers
+    public var autoRehide: ProfileAutoRehide
+    public var applicationMenuOverlapBehavior: ApplicationMenuOverlapBehavior
+
+    public init(
+        appearance: ProfileAppearance,
+        shelfBehavior: ProfileShelfBehavior,
+        revealTriggers: ProfileRevealTriggers,
+        autoRehide: ProfileAutoRehide,
+        applicationMenuOverlapBehavior: ApplicationMenuOverlapBehavior
+    ) {
+        self.appearance = appearance
+        self.shelfBehavior = shelfBehavior
+        self.revealTriggers = revealTriggers
+        self.autoRehide = autoRehide
+        self.applicationMenuOverlapBehavior = applicationMenuOverlapBehavior
+    }
+
+    public init(profile: BarlineProfile) {
+        self.init(
+            appearance: ProfileAppearance(itemSpacing: profile.appearance.itemSpacing),
+            shelfBehavior: profile.shelfBehavior,
+            revealTriggers: profile.revealTriggers,
+            autoRehide: profile.autoRehide,
+            applicationMenuOverlapBehavior: profile.applicationMenuOverlapBehavior
+        )
+    }
+}
+
 public enum ApplicationMenuOverlapBehavior: String, Codable, Sendable {
     case leaveVisible
     case hideWhenNeeded
@@ -218,6 +253,37 @@ public struct BarlineProfile: Codable, Hashable, Sendable, Identifiable {
     public func layout(for displayID: MenuBarDisplayID?) -> ProfileLayout {
         guard let displayID else { return layout }
         return displayOverrides.first { $0.displayID == displayID }?.layout ?? layout
+    }
+
+    /// All item identities referenced by the profile, including display-specific
+    /// layouts, in stable archive order with duplicates removed.
+    public var searchableItemIDs: [MenuBarItemID] {
+        stableUnique(
+            layout.allItemIDs + displayOverrides.flatMap(\.layout.allItemIDs)
+        )
+    }
+
+    /// All groups referenced by the profile, including display-specific groups,
+    /// in stable archive order with duplicate group values removed.
+    public var searchableGroups: [ProfileGroup] {
+        stableUnique(groups + displayOverrides.flatMap(\.groups))
+    }
+
+    public var searchableGroupNames: [String] {
+        stableUnique(searchableGroups.map(\.name))
+    }
+
+    public func searchableGroupNames(containing itemID: MenuBarItemID) -> [String] {
+        stableUnique(
+            searchableGroups
+                .filter { $0.itemIDs.contains(itemID) }
+                .map(\.name)
+        )
+    }
+
+    private func stableUnique<Value: Hashable>(_ values: [Value]) -> [Value] {
+        var seen = Set<Value>()
+        return values.filter { seen.insert($0).inserted }
     }
 }
 
