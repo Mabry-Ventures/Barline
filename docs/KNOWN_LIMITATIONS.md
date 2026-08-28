@@ -39,8 +39,9 @@ This list describes the active development tree. It is not a release claim.
   gates. It cannot complete without App Group profiles and a notary profile.
 - Sparkle is enabled only in Release with Barline's public key and canonical
   GitHub appcast URL. No previous public Barline version exists for update proof.
-- The canonical public repository exists. Protected rules and local status
-  publication wait on a fully green exact-head candidate.
+- The canonical public repository exists. Protected rules are active and the
+  exact-head local status is published red while required interactive runtime
+  gates remain unavailable on this host.
 
 Track candidate-specific results in [the test matrix](TEST_MATRIX.md), release
 requirements in [RELEASING.md](RELEASING.md), and architecture progress in

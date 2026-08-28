@@ -14,8 +14,8 @@ gate result.
 | 5. Profiles and Focus | Lead | Implemented locally; system execution pending | M3–4 | app-group store, atomic workspace/layout/presentation transactions, display reconnect aliases, operational groups/spacers, durable Focus journal, serialized activation/history, extension metadata; real Focus/Shortcuts requires signed runtime |
 | 6. Search and on-device interpretation | Lead | Complete for macOS 26 | M3–5 | deterministic panel ranking, bounded Spotlight synchronization, cross-display metadata, 164 Core tests; macOS 27 tool remains gated |
 | 7. UI and accessibility | Lead | Implemented; credentialed/manual passes pending | M3–6 | profile UI, fixture UI, diagnostics review/save, status-item smoke pass; AX/XCUITest/VoiceOver boundaries recorded |
-| 8. OS hardening | Lead | Exact candidate rerun pending; macOS 27 blocked | M3–7 | prior candidate build/analyze and 30-minute soak passed; exact-head evidence must be regenerated after launch hardening; Xcode/macOS 27 unavailable |
-| 9. Distribution readiness | Lead | Dry-run implemented; externally blocked | M0–8 | canonical repository, protected PR, unsigned archive/topology/GPL checks; App Group profiles, notarization, and Sparkle publication pending |
+| 8. OS hardening | Lead | Headless exact pass; interactive/macOS 27 blocked | M3–7 | exact-head Debug, analyze, and test-plan compilation pass; runtime/soak gates remain unavailable on this host; Xcode/macOS 27 unavailable |
+| 9. Distribution readiness | Lead | Exact unsigned dry-run passes; externally blocked | M0–8 | canonical repository, protected PR, exact-head unsigned archive/topology/GPL checks; App Group profiles, notarization, and Sparkle publication pending |
 
 ## External boundaries currently known
 
