@@ -26,7 +26,9 @@ than invoking the Debug-only runtime bridge. It repeatedly executes
 snapshot/state/profile/search tests in SwiftPM's Release configuration,
 requires XPC helper replacement while preserving the app PID, and samples
 app/helper RSS and CPU plus Barline cache size. A changed app PID invalidates
-the run, so RSS growth remains continuous and enforced. The production reopen
+the run, so app RSS growth remains continuous and enforced. Helper and combined
+RSS are reported only as observed extrema because intentional helper replacement
+breaks their process continuity. The production reopen
 probe does not claim shelf responsiveness: real shelf interaction remains a
 separate Accessibility-bound release gate. It writes
 `resources.csv` and `summary.json`

@@ -190,15 +190,18 @@ write_summary() {
     ruby -rcsv -rjson -e '
       rows = CSV.read(ENV.fetch("CSV_VALUE"), headers: true)
       integers = ->(name) { rows.map { |row| row[name].to_i } }
-      rss = integers.call("total_rss_kb")
+      app_rss = integers.call("app_rss_kb")
+      helper_rss = integers.call("helper_rss_kb")
+      total_rss = integers.call("total_rss_kb")
+      helper_generations = rows.map { |row| row["helper_pid"].to_i }.reject(&:zero?).uniq.length
       cache = integers.call("cache_kb")
       app_cpu = rows.map { |row| row["app_cpu_percent"].to_f }
       helper_cpu = rows.map { |row| row["helper_cpu_percent"].to_f }
-      initial_rss = rss.first || 0
-      final_rss = rss.last || 0
+      initial_app_rss = app_rss.first || 0
+      final_app_rss = app_rss.last || 0
       initial_cache = cache.first || 0
       final_cache = cache.last || 0
-      rss_growth = final_rss - initial_rss
+      app_rss_growth = final_app_rss - initial_app_rss
       cache_growth = final_cache - initial_cache
       exact = ENV.fetch("SHA_VALUE") == ENV.fetch("END_SHA_VALUE") && ENV.fetch("DIRTY_VALUE") == "false"
       harness = ENV.fetch("HARNESS_VALUE") == "1"
@@ -231,14 +234,14 @@ write_summary() {
         release_execution_path: ENV.fetch("CONFIGURATION_VALUE") == "Release" &&
           ENV.fetch("PROBE_VALUE") == "apple-event-reopen" &&
           ENV.fetch("XPC_STRATEGY_VALUE") == "same-process-apple-event-reopen",
-        rss_growth_within_limit: rss_growth <= ENV.fetch("RSS_LIMIT_VALUE").to_i,
+        app_rss_growth_within_limit: app_rss_growth <= ENV.fetch("RSS_LIMIT_VALUE").to_i,
         cache_growth_within_limit: cache_growth <= ENV.fetch("CACHE_LIMIT_VALUE").to_i,
         sufficient_samples: rows.length >= (complete_duration ? 10 : 2)
       }
       operational = ENV.fetch("EXIT_VALUE").to_i == 0 && guards.reject { |name, _| name == :exact_candidate }.values.all?
       candidate_pass = operational && guards[:exact_candidate] && complete_duration && !harness
       document = {
-        schema_version: 1,
+        schema_version: 2,
         mode: "release",
         build_configuration: ENV.fetch("CONFIGURATION_VALUE"),
         production_probe: ENV.fetch("PROBE_VALUE"),
@@ -256,10 +259,12 @@ write_summary() {
         performance_samples_per_run: ENV.fetch("PERFORMANCE_SAMPLES_VALUE").to_i,
         cycles: {core: ENV.fetch("CYCLES_VALUE").to_i, xpc_restart: ENV.fetch("XPC_VALUE").to_i, production_probe: ENV.fetch("PERFORMANCE_VALUE").to_i},
         app_process_continuity: true,
-        rss_growth_guard_enforced: true,
+        app_rss_growth_guard_enforced: true,
         resources: {
           samples: rows.length,
-          rss_kb: {initial: initial_rss, final: final_rss, minimum: rss.min || 0, maximum: rss.max || 0, growth: rss_growth, growth_limit: ENV.fetch("RSS_LIMIT_VALUE").to_i, continuity_eligible: true},
+          app_rss_kb: {initial: initial_app_rss, final: final_app_rss, minimum: app_rss.min || 0, maximum: app_rss.max || 0, growth: app_rss_growth, growth_limit: ENV.fetch("RSS_LIMIT_VALUE").to_i, continuity_eligible: true},
+          helper_rss_kb: {minimum: helper_rss.min || 0, maximum: helper_rss.max || 0, process_generations: helper_generations, continuity_eligible: false, growth_guard_enforced: false, note: "helper process is intentionally replaced during XPC recovery cycles"},
+          total_rss_kb: {minimum: total_rss.min || 0, maximum: total_rss.max || 0, continuity_eligible: false, growth_guard_enforced: false},
           cache_kb: {initial: initial_cache, final: final_cache, minimum: cache.min || 0, maximum: cache.max || 0, growth: cache_growth, growth_limit: ENV.fetch("CACHE_LIMIT_VALUE").to_i},
           cpu_percent: {
             app_average: app_cpu.empty? ? 0 : app_cpu.sum / app_cpu.length,
