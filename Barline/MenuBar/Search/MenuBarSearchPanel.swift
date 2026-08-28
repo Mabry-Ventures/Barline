@@ -431,7 +431,9 @@ private struct MenuBarSearchContentView: View {
                     groups: profile.groups.map(\.name),
                     synonyms: ["profile", "layout"],
                     keywords: ["switch", "activate"],
-                    lastUsedAt: profile.id == profileManager.activeProfileID ? Date() : nil
+                    lastUsedAt: profile.id == profileManager.activeProfileID
+                        ? profileManager.activeProfileActivatedAt
+                        : nil
                 )
                 searchItems.append(SearchItem(listItem, document))
             }
@@ -609,6 +611,7 @@ private struct MenuBarSearchContentView: View {
                         .reveal(itemID),
                         expectedGeneration: snapshot.generation
                     )
+                    await profileManager.clearActiveProfileAuthority()
                 case .activate:
                     guard let itemID = command.targetItemIDs.first else { return }
                     _ = try await appState.compatibilityCoordinator.perform(
@@ -643,6 +646,7 @@ private struct MenuBarSearchContentView: View {
                         ),
                         expectedGeneration: snapshot.generation
                     )
+                    await profileManager.clearActiveProfileAuthority()
                 case .activateProfile, .replaceWithProfile:
                     guard let profileID = command.targetProfileID,
                           let profile = profileManager.profiles.first(where: {
