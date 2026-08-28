@@ -62,15 +62,19 @@ private func requestProductionReopen() throws -> Double {
         throw ProbeError.applicationNotRunning
     }
     let processIdentifier = application.processIdentifier
-    guard let script = NSAppleScript(source: "tell application id \"\(bundleIdentifier)\" to reopen") else {
-        throw ProbeError.appleEventRejected("could not create the Apple event")
-    }
+    let target = NSAppleEventDescriptor(processIdentifier: processIdentifier)
+    let event = NSAppleEventDescriptor(
+        eventClass: AEEventClass(kCoreEventClass),
+        eventID: AEEventID(kAEReopenApplication),
+        targetDescriptor: target,
+        returnID: AEReturnID(kAutoGenerateReturnID),
+        transactionID: AETransactionID(kAnyTransactionID)
+    )
     let start = ContinuousClock.now
-    var errors: NSDictionary?
-    _ = script.executeAndReturnError(&errors)
-    if let errors {
-        let message = errors[NSAppleScript.errorMessage] as? String ?? "unknown Apple event error"
-        throw ProbeError.appleEventRejected(message)
+    do {
+        _ = try event.sendEvent(options: [.waitForReply, .neverInteract], timeout: 5)
+    } catch {
+        throw ProbeError.appleEventRejected(error.localizedDescription)
     }
     guard
         !application.isTerminated,
