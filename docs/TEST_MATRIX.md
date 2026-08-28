@@ -8,7 +8,7 @@ under ignored `.artifacts/ci/<sha>/` directories.
 | Pure domain | Swift Testing for snapshots, state coordination, profile presentation, display reconnect resolution, persistence/import, search, Spotlight records, and command/service validation | 164 tests pass locally on 2026-08-28 |
 | Recovery policy | Standalone Swift script | Implemented |
 | Notch overflow resolver | Standalone Swift script | Implemented |
-| Debug/Release/analyze | Local Xcode steps in `script/ci.sh full` | Implemented command surface |
+| Debug/Release/analyze | Local Xcode steps in `script/ci.sh full` | Exact-head headless build/analyze and test-plan compilation pass |
 | Architecture firewall | Static boundary script | Implemented and passing |
 | Fixture regression | Script runs 20+ snapshot/state/profile/command cases and launches a configurable three-status-item app | Implemented |
 | Fixture app | Environment-configurable status items plus deterministic accessibility surface | Implemented as `BarlineFixture` |
@@ -18,7 +18,7 @@ under ignored `.artifacts/ci/<sha>/` directories.
 | Support-bundle privacy | Encoder content probes plus static logging/credential checks | Implemented and previously passing; exact-head rerun required |
 | Performance smoke | Shelf responsiveness probe | Integration 20/20 pass, 27.6 ms p95, 29.8 ms max; clean exact-head rerun required |
 | Soak | Repeated Core cycles plus XPC interruption and responsiveness | Integration 10-cycle pass; clean exact-head rerun required |
-| Release/install/update | Clean unsigned archive/topology gate | Implemented dry run; signed install/update externally blocked |
+| Release/install/update | Clean unsigned archive/topology gate | Exact-head unsigned archive passes; signed install/update externally blocked |
 
 The fail-closed full gate runs these scripts and reports unavailable permissions
 or missing product behavior instead of silently treating them as passed.
