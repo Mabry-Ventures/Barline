@@ -75,11 +75,18 @@ public struct MenuBarPoint: Codable, Equatable, Sendable {
 
 public struct MenuBarEnvironmentSnapshot: Codable, Equatable, Sendable {
     public let activeDisplayID: UInt32?
+    public let activeStableDisplayID: MenuBarDisplayID?
     public let activeSpaceToken: Int
     public let activeSpaceIsFullscreen: Bool
 
-    public init(activeDisplayID: UInt32?, activeSpaceToken: Int, activeSpaceIsFullscreen: Bool) {
+    public init(
+        activeDisplayID: UInt32?,
+        activeStableDisplayID: MenuBarDisplayID? = nil,
+        activeSpaceToken: Int,
+        activeSpaceIsFullscreen: Bool
+    ) {
         self.activeDisplayID = activeDisplayID
+        self.activeStableDisplayID = activeStableDisplayID
         self.activeSpaceToken = activeSpaceToken
         self.activeSpaceIsFullscreen = activeSpaceIsFullscreen
     }

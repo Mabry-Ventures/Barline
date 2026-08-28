@@ -202,7 +202,17 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.unsafeMenuTracking
         }
 
-        let layout = profile.layout(for: displayID)
+        let activeDisplayID: MenuBarDisplayID? = if let displayID {
+            displayID
+        } else if let environment = try? await backend.environment(),
+                  let environmentDisplayID = environment.activeStableDisplayID,
+                  before.displayIDs.contains(environmentDisplayID)
+        {
+            environmentDisplayID
+        } else {
+            nil
+        }
+        let layout = profile.layout(for: activeDisplayID)
         let knownItemIDs = Set(before.items.map(\.id))
         for itemID in layout.allItemIDs where !knownItemIDs.contains(itemID) {
             throw MenuBarBackendError.staleItem(itemID)

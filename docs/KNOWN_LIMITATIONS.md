@@ -7,8 +7,9 @@ This list describes the active development tree. It is not a release claim.
 - Profile storage, capture, transactional activation, editing, archive import/
   export, Presentation templates, App Intents/Focus delivery, and recovery are
   wired, including explicit Ice import preview and bounded layout undo/redo.
-  Display reconnect reconciliation and runtime group/spacer placement remain
-  incomplete.
+  Active-display profile overrides resolve through the helper's stable display
+  identity. Display reconnect reconciliation and runtime group/spacer placement
+  remain incomplete.
 - Real Focus and Shortcuts execution is not proven without a provisioned signed
   build; the local development certificate is unavailable.
 - Deterministic search, bounded Spotlight indexing, and typed on-device model

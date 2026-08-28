@@ -307,8 +307,10 @@ final class WindowServerClient: @unchecked Sendable {
 
     func environment() -> MenuBarEnvironmentSnapshot {
         let activeSpace = Bridging.getActiveSpaceID()
+        let activeDisplayID = Bridging.getActiveMenuBarDisplayID()
         return MenuBarEnvironmentSnapshot(
-            activeDisplayID: Bridging.getActiveMenuBarDisplayID(),
+            activeDisplayID: activeDisplayID,
+            activeStableDisplayID: activeDisplayID.map(stableDisplayID),
             activeSpaceToken: activeSpace,
             activeSpaceIsFullscreen: Bridging.isSpaceFullscreen(activeSpace)
         )
@@ -670,7 +672,10 @@ final class WindowServerClient: @unchecked Sendable {
         guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
             return nil
         }
-        let displayID = CGDirectDisplayID(number.uint32Value)
+        return stableDisplayID(CGDirectDisplayID(number.uint32Value))
+    }
+
+    private func stableDisplayID(_ displayID: CGDirectDisplayID) -> MenuBarDisplayID {
         guard let unmanagedUUID = CGDisplayCreateUUIDFromDisplayID(displayID) else {
             return MenuBarDisplayID("display-\(displayID)")
         }

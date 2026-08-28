@@ -215,6 +215,45 @@ struct StateCoordinatorTests {
         #expect(await backend.restoredSnapshots.isEmpty)
     }
 
+    @Test("Profile activation resolves the active display override through the helper boundary")
+    func activatesActiveDisplayOverride() async throws {
+        let before = makeSnapshot(generation: 1, count: 3)
+        let activeDisplay = MenuBarDisplayID("test-display")
+        let overrideLayout = ProfileLayout(
+            visible: [before.items[1].id],
+            hidden: [before.items[2].id],
+            alwaysHidden: [before.items[0].id]
+        )
+        let profile = BarlineProfile(
+            id: UUID(101),
+            name: "Presentation",
+            layout: ProfileLayout(visible: before.items.map(\.id)),
+            displayOverrides: [
+                DisplayProfileOverride(displayID: activeDisplay, layout: overrideLayout),
+            ]
+        )
+        let after = makeProfileSnapshot(generation: 2, layout: overrideLayout)
+        let backend = FakeBackend(
+            snapshots: [before, after],
+            environment: MenuBarEnvironmentSnapshot(
+                activeDisplayID: 7,
+                activeStableDisplayID: activeDisplay,
+                activeSpaceToken: 42,
+                activeSpaceIsFullscreen: false
+            )
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
+
+        #expect(await backend.moveOperations.map(\.itemID) == overrideLayout.allItemIDs)
+        #expect(await coordinator.activeProfileID == profile.id)
+    }
+
     @Test("A partially applied profile is rolled back and never becomes authoritative")
     func rollsBackPartialProfileActivation() async throws {
         let before = makeSnapshot(generation: 1, count: 3)
@@ -480,6 +519,7 @@ private actor FakeBackend: MenuBarBackend {
     private let mutationDelay: Duration
     private let revealFailure: MenuBarBackendError?
     private let failMoveAt: Int?
+    private let environmentSnapshot: MenuBarEnvironmentSnapshot?
     private var snapshotFailuresRemaining: Int
 
     init(
@@ -494,6 +534,7 @@ private actor FakeBackend: MenuBarBackend {
         mutationDelay: Duration = .zero,
         revealFailure: MenuBarBackendError? = nil,
         failMoveAt: Int? = nil,
+        environment: MenuBarEnvironmentSnapshot? = nil,
         snapshotFailures: Int = 0
     ) {
         self.snapshots = snapshots
@@ -501,6 +542,7 @@ private actor FakeBackend: MenuBarBackend {
         self.mutationDelay = mutationDelay
         self.revealFailure = revealFailure
         self.failMoveAt = failMoveAt
+        environmentSnapshot = environment
         snapshotFailuresRemaining = max(0, snapshotFailures)
     }
 
@@ -538,6 +580,13 @@ private actor FakeBackend: MenuBarBackend {
 
     func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) {
         activations.append(Activation(itemID: item, button: button))
+    }
+
+    func environment() throws -> MenuBarEnvironmentSnapshot {
+        guard let environmentSnapshot else {
+            throw MenuBarBackendError.unavailableCapability("environment")
+        }
+        return environmentSnapshot
     }
 
     func restore(_ snapshot: MenuBarSnapshot) -> MenuBarMutationResult {

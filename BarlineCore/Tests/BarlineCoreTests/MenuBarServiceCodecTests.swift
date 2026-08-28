@@ -71,6 +71,7 @@ struct MenuBarServiceCodecTests {
         )
         let environment = MenuBarEnvironmentSnapshot(
             activeDisplayID: 1,
+            activeStableDisplayID: MenuBarDisplayID("built-in"),
             activeSpaceToken: 7,
             activeSpaceIsFullscreen: false
         )

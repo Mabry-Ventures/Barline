@@ -9,10 +9,10 @@ gate result.
 | 0. Import and provenance | Lead; delegated audit | Complete | none | Exact history, remotes, ancestor proof, vendor tag, license/provenance records |
 | 1. Baseline build and audit | Lead; delegated audits | Complete | M0 | Debug/Release/analyze/archive and policy scripts pass; permission-gated launch; result bundles |
 | 2. Rebrand and build system | Lead | Complete | M1 | Debug/Release/analyze pass; strict lint 0 violations; canonical Run verification pass |
-| 3. Core and compatibility firewall | Lead | Complete | M2 | 84 Core tests; strict source/binary firewall; signed helper kill/relaunch recovery |
+| 3. Core and compatibility firewall | Lead | Complete | M2 | 96 Core tests; strict source/binary firewall; signed helper kill/relaunch recovery |
 | 4. Fixture and local CI | Lead; delegated validation | Implemented; XCUITest execution blocked | M3 | real fixture/test targets and test plan; unit/integration pass; automation mode needs administrator authorization |
 | 5. Profiles and Focus | Lead | Implemented locally; system execution pending | M3–4 | app-group store, transactional activation, precedence, extension metadata; real Focus/Shortcuts requires signed runtime |
-| 6. Search and on-device interpretation | Lead | Complete for macOS 26 | M3–5 | deterministic panel ranking, bounded Spotlight synchronization, 84 Core tests; macOS 27 tool remains gated |
+| 6. Search and on-device interpretation | Lead | Complete for macOS 26 | M3–5 | deterministic panel ranking, bounded Spotlight synchronization, 96 Core tests; macOS 27 tool remains gated |
 | 7. UI and accessibility | Lead | Implemented; credentialed/manual passes pending | M3–6 | profile UI, fixture UI, diagnostics review/save, status-item smoke pass; AX/XCUITest/VoiceOver boundaries recorded |
 | 8. OS hardening | Lead | Complete on available macOS 26 host; macOS 27 blocked | M3–7 | build/analyze, 10-cycle soak, helper interruption, and 20/20 shelf responsiveness pass; Xcode/macOS 27 unavailable |
 | 9. Distribution readiness | Lead | Dry-run implemented; externally blocked | M0–8 | unsigned archive/topology/GPL checks; signing, notarization, Sparkle and GitHub administration pending |
