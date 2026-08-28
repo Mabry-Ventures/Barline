@@ -10,6 +10,7 @@ SAMPLE_INTERVAL_SECONDS="${BARLINE_SOAK_SAMPLE_INTERVAL_SECONDS:-15}"
 RSS_GROWTH_LIMIT_KB="${BARLINE_SOAK_RSS_GROWTH_LIMIT_KB:-131072}"
 CACHE_GROWTH_LIMIT_KB="${BARLINE_SOAK_CACHE_GROWTH_LIMIT_KB:-65536}"
 HARNESS_VALIDATION="${BARLINE_SOAK_HARNESS_VALIDATION:-0}"
+PERFORMANCE_SAMPLES_PER_RUN=20
 
 usage() {
     cat <<'EOF'
@@ -181,6 +182,7 @@ write_summary() {
     SHA_VALUE="$SHA" END_SHA_VALUE="$end_sha" DIRTY_VALUE="$dirty" HARNESS_VALUE="$HARNESS_VALIDATION" START_VALUE="$STARTED_AT" END_VALUE="$ended_at" \
     DURATION_VALUE="$DURATION_SECONDS" INTERVAL_VALUE="$SAMPLE_INTERVAL_SECONDS" CYCLES_VALUE="$CYCLES" \
     XPC_VALUE="$XPC_CYCLES" PERFORMANCE_VALUE="$PERFORMANCE_CYCLES" EXIT_VALUE="$exit_code" \
+    PERFORMANCE_SAMPLES_VALUE="$PERFORMANCE_SAMPLES_PER_RUN" \
     RSS_LIMIT_VALUE="$RSS_GROWTH_LIMIT_KB" CACHE_LIMIT_VALUE="$CACHE_GROWTH_LIMIT_KB" CSV_VALUE="$CSV" \
     CORE_LOG_VALUE="$CORE_LOG" XPC_LOG_VALUE="$XPC_LOG" PERFORMANCE_LOG_VALUE="$PERFORMANCE_LOG" \
     SUMMARY_VALUE="$SUMMARY" ARTIFACT_VALUE="$ARTIFACT_DIR" \
@@ -207,7 +209,10 @@ write_summary() {
       )
       cycle_counts = ["CYCLES_VALUE", "XPC_VALUE", "PERFORMANCE_VALUE"].map { |name| ENV.fetch(name).to_i }
       shelf_workload_passed = performance_results.length == ENV.fetch("PERFORMANCE_VALUE").to_i &&
-        performance_results.all? { |result| result[0].to_i == 5 && result[1].to_i == 0 && result[5] == "PASS" }
+        performance_results.all? do |result|
+          result[0].to_i == ENV.fetch("PERFORMANCE_SAMPLES_VALUE").to_i &&
+            result[1].to_i == 0 && result[5] == "PASS"
+        end
       guards = {
         exact_candidate: exact,
         workload_cycles_completed: cycle_counts.all?(&:positive?) && cycle_counts.uniq.length == 1,
@@ -237,6 +242,7 @@ write_summary() {
         harness_validation: harness,
         candidate_evidence: candidate_pass,
         sample_interval_seconds: ENV.fetch("INTERVAL_VALUE").to_i,
+        performance_samples_per_run: ENV.fetch("PERFORMANCE_SAMPLES_VALUE").to_i,
         cycles: {core: ENV.fetch("CYCLES_VALUE").to_i, xpc_restart: ENV.fetch("XPC_VALUE").to_i, production_probe: ENV.fetch("PERFORMANCE_VALUE").to_i},
         app_process_continuity: true,
         rss_growth_guard_enforced: true,
@@ -335,7 +341,7 @@ while (( $(date +%s) < DEADLINE )); do
         2>&1 | tee -a "$CORE_LOG"
     ./script/test-xpc-interruption.sh --reuse-running --recovery-probe apple-event-reopen 2>&1 | tee -a "$XPC_LOG"
     XPC_CYCLES=$((XPC_CYCLES + 1))
-    BARLINE_PERFORMANCE_CYCLES=5 BARLINE_PERFORMANCE_WARMUPS=1 \
+    BARLINE_PERFORMANCE_CYCLES="$PERFORMANCE_SAMPLES_PER_RUN" BARLINE_PERFORMANCE_WARMUPS=1 \
         ./script/test-performance-smoke.sh --reuse-running --probe apple-event-reopen --output "$PERFORMANCE_LOG"
     PERFORMANCE_CYCLES=$((PERFORMANCE_CYCLES + 1))
     sample_resources
