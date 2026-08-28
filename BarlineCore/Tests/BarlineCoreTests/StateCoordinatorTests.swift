@@ -332,6 +332,28 @@ struct StateCoordinatorTests {
         #expect(await coordinator.mutationGeneration == 1)
     }
 
+    @Test("Recovery validates against time after a delayed helper restart")
+    func recoveryUsesPostRestartValidationTime() async throws {
+        let capturedAt = Date().addingTimeInterval(0.05)
+        let recovered = makeSnapshot(generation: 1, count: 2, capturedAt: capturedAt)
+        let backend = FakeBackend(
+            snapshots: [recovered],
+            restartDelay: .milliseconds(100)
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            validator: SnapshotValidator(
+                policy: SnapshotValidationPolicy(maximumFutureClockSkew: 0)
+            ),
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let result = try await coordinator.recover()
+
+        #expect(result == recovered)
+        #expect(await backend.restartCount == 1)
+    }
+
     @Test("Replacement helper generations are rebased monotonically")
     func rebasesReplacementHelperGeneration() async throws {
         let before = makeSnapshot(generation: 50, count: 2)
@@ -1468,6 +1490,7 @@ private actor FakeBackend: MenuBarBackend {
     private var mutationStarted = false
     private var mutationStartWaiters = [CheckedContinuation<Void, Never>]()
     private let mutationDelay: Duration
+    private let restartDelay: Duration
     private let revealFailure: MenuBarBackendError?
     private let failMoveAt: Int?
     private let environmentSnapshot: MenuBarEnvironmentSnapshot?
@@ -1486,6 +1509,7 @@ private actor FakeBackend: MenuBarBackend {
             canRestore: true
         ),
         mutationDelay: Duration = .zero,
+        restartDelay: Duration = .zero,
         revealFailure: MenuBarBackendError? = nil,
         failMoveAt: Int? = nil,
         environment: MenuBarEnvironmentSnapshot? = nil,
@@ -1496,6 +1520,7 @@ private actor FakeBackend: MenuBarBackend {
         self.snapshots = snapshots
         self.capabilities = capabilities
         self.mutationDelay = mutationDelay
+        self.restartDelay = restartDelay
         self.revealFailure = revealFailure
         self.failMoveAt = failMoveAt
         environmentSnapshot = environment
@@ -1577,8 +1602,9 @@ private actor FakeBackend: MenuBarBackend {
         MenuBarBackendHealth(backendName: "Fake", state: .healthy)
     }
 
-    func restart() {
+    func restart() async {
         restartCount += 1
+        try? await Task.sleep(for: restartDelay)
     }
 }
 
@@ -1586,11 +1612,12 @@ private func makeSnapshot(
     generation: UInt64,
     count: Int,
     menuTracking: Bool = false,
-    display: MenuBarDisplayID = MenuBarDisplayID("test-display")
+    display: MenuBarDisplayID = MenuBarDisplayID("test-display"),
+    capturedAt: Date = Date()
 ) -> MenuBarSnapshot {
     MenuBarSnapshot(
         generation: generation,
-        capturedAt: Date(),
+        capturedAt: capturedAt,
         items: (0 ..< count).map { index in
             MenuBarItemDescriptor(
                 id: MenuBarItemID(
