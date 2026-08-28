@@ -83,13 +83,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         Logger.default.debug("Handling reopen")
+        // Keep every reopen responsive even if a prior compatibility recovery
+        // is still in flight. The opener coalesces bursts independently.
+        openSettingsWindow()
         // A reopen is also a safe recovery opportunity for the compatibility
         // backend. This keeps the app process alive while replacing an
         // interrupted XPC helper before the user performs another action.
         if reopenRecoveryTask == nil {
-            // Window presentation must not wait on compatibility recovery. The
-            // coalesced opener remains responsive even when the XPC helper is hung.
-            openSettingsWindow()
             reopenRecoveryTask = Task { [weak self] in
                 guard let self else {
                     return

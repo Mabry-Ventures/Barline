@@ -196,6 +196,7 @@ public struct ProfileMigrator: Sendable {
             case 2: migrateV2ToV3(&document)
             case 3: migrateV3ToV4(&document)
             case 4: migrateV4ToV5(&document)
+            case 5: migrateV5ToV6(&document)
             default: throw ProfileValidationError.unsupportedSchemaVersion(migratedVersion)
             }
             migratedVersion += 1
@@ -243,5 +244,40 @@ public struct ProfileMigrator: Sendable {
         appearance["dynamicAppearance"] = appearance["dynamicAppearance"] ?? NSNull()
         appearance["isDynamic"] = appearance["isDynamic"] ?? false
         document["appearance"] = appearance
+    }
+
+    private func migrateV5ToV6(_ document: inout [String: Any]) {
+        var appearance = migrateAppearanceModeToV6(document["appearance"] as? [String: Any] ?? [:])
+        if var dynamicAppearance = appearance["dynamicAppearance"] as? [String: Any] {
+            dynamicAppearance["light"] = migrateAppearanceModeToV6(
+                dynamicAppearance["light"] as? [String: Any] ?? [:]
+            )
+            dynamicAppearance["dark"] = migrateAppearanceModeToV6(
+                dynamicAppearance["dark"] as? [String: Any] ?? [:]
+            )
+            appearance["dynamicAppearance"] = dynamicAppearance
+        }
+        appearance["shapeDetails"] = appearance["shapeDetails"] ?? [
+            "full": ["leading": "round", "trailing": "round"],
+            "splitLeading": ["leading": "round", "trailing": "round"],
+            "splitTrailing": ["leading": "round", "trailing": "round"],
+            "isInset": true,
+        ]
+        document["appearance"] = appearance
+    }
+
+    private func migrateAppearanceModeToV6(_ source: [String: Any]) -> [String: Any] {
+        var appearance = source
+        let gradientHex = appearance["gradientHex"] as? [String] ?? []
+        if !gradientHex.isEmpty {
+            appearance["tintHex"] = NSNull()
+        }
+        let denominator = max(gradientHex.count - 1, 1)
+        appearance["gradientStops"] = gradientHex.enumerated().map { index, colorHex in
+            ["colorHex": colorHex, "location": Double(index) / Double(denominator)] as [String: Any]
+        }
+        appearance["borderHex"] = appearance["borderHex"] ?? "#000000"
+        appearance["borderWidth"] = appearance["borderWidth"] ?? 1
+        return appearance
     }
 }
