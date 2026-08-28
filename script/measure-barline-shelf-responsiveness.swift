@@ -13,6 +13,7 @@ private enum Configuration {
     static let closeTimeout = Duration.milliseconds(1000)
     static let pollingIntervalMicroseconds: useconds_t = 10000
     static let probe = ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_PROBE"] ?? "runtime-smoke"
+    static let enforceBudget = ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_ENFORCE_BUDGET"] != "0"
 
     private static func positiveEnvironmentInteger(_ name: String) -> Int? {
         guard
@@ -227,6 +228,7 @@ do {
         let maximum = latencies.max() ?? 0
         let budgetMilliseconds = milliseconds(Configuration.feedbackBudget)
         let passed = p95 <= budgetMilliseconds
+        let verdict = passed ? "PASS" : (Configuration.enforceBudget ? "FAIL" : "OBSERVED")
         print(
             String(
                 format: "RESULT samples=%d timeouts=0 median_ms=%.1f p95_ms=%.1f max_ms=%.1f feedback_in_250ms=%@ silent_cancellation=false verdict=%@",
@@ -235,10 +237,10 @@ do {
                 p95,
                 maximum,
                 passed.description,
-                passed ? "PASS" : "FAIL"
+                verdict
             )
         )
-        exit(passed ? EXIT_SUCCESS : EXIT_FAILURE)
+        exit(passed || !Configuration.enforceBudget ? EXIT_SUCCESS : EXIT_FAILURE)
     }
     guard Configuration.probe == "runtime-smoke" else {
         fputs("error: BARLINE_PERFORMANCE_PROBE must be runtime-smoke or apple-event-reopen\n", stderr)
