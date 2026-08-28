@@ -7,6 +7,7 @@ DEVELOPER_PATH="${DEVELOPER_DIR:-$(xcode-select -p)}"
 SHA="$(git -C "$ROOT" rev-parse HEAD)"
 RELEASE_ROOT="$ROOT/.artifacts/release/$SHA"
 ARCHIVE="$RELEASE_ROOT/Barline.xcarchive"
+RELEASE_DERIVED_DATA="$RELEASE_ROOT/DerivedData"
 UNSIGNED=false
 NOTARY_PROFILE="${BARLINE_NOTARY_PROFILE:-}"
 SPARKLE_ACCOUNT="${BARLINE_SPARKLE_ACCOUNT:-mabry-ventures-barline}"
@@ -34,10 +35,18 @@ while (($#)); do
     shift
 done
 
-if [[ -n "$(git -C "$ROOT" status --porcelain=v1)" ]]; then
-    printf 'error: release requires a clean exact candidate\n' >&2
-    exit 1
-fi
+validate_exact_candidate() {
+    [[ "$(git -C "$ROOT" rev-parse HEAD)" == "$SHA" ]] || {
+        printf 'error: release HEAD changed from captured candidate %s\n' "$SHA" >&2
+        exit 1
+    }
+    [[ -z "$(git -C "$ROOT" status --porcelain=v1)" ]] || {
+        printf 'error: release requires a clean exact candidate\n' >&2
+        exit 1
+    }
+}
+
+validate_exact_candidate
 
 for command in xcodebuild codesign ditto plutil ruby shasum; do
     command -v "$command" >/dev/null 2>&1 || { printf 'error: missing %s\n' "$command" >&2; exit 1; }
@@ -47,15 +56,19 @@ for required in LICENSE NOTICE.md THIRD_PARTY_NOTICES.md PRIVACY.md SECURITY.md 
 done
 
 mkdir -p "$RELEASE_ROOT"
-/bin/rm -rf "$ARCHIVE"
+/bin/rm -rf "$ARCHIVE" "$RELEASE_DERIVED_DATA"
 archive_arguments=(
     -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release
-    -destination 'generic/platform=macOS' -archivePath "$ARCHIVE" archive
+    -destination 'generic/platform=macOS' -archivePath "$ARCHIVE"
+    -derivedDataPath "$RELEASE_DERIVED_DATA"
+    -clonedSourcePackagesDirPath "$RELEASE_DERIVED_DATA/SourcePackages" archive
 )
 if "$UNSIGNED"; then
     archive_arguments=(
         -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release
         -destination 'platform=macOS,arch=arm64' -archivePath "$ARCHIVE"
+        -derivedDataPath "$RELEASE_DERIVED_DATA"
+        -clonedSourcePackagesDirPath "$RELEASE_DERIVED_DATA/SourcePackages"
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
     )
 fi
@@ -135,7 +148,7 @@ spctl --assess --type execute --verbose=4 "$APP"
 /bin/rm -f "$ZIP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
-SPARKLE_BIN="$ROOT/.artifacts/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
+SPARKLE_BIN="$RELEASE_DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin"
 [[ -x "$SPARKLE_BIN/sign_update" && -x "$SPARKLE_BIN/generate_appcast" ]] || {
     printf 'error: resolve packages/build once so Sparkle release tools are available\n' >&2
     exit 1
@@ -147,8 +160,10 @@ cp "$ROOT/CHANGELOG.md" "$DIST/Barline-$VERSION.md"
     --download-url-prefix "https://github.com/Mabry-Ventures/Barline/releases/download/v$VERSION/" \
     --link 'https://github.com/Mabry-Ventures/Barline' --embed-release-notes -o "$DIST/appcast.xml" "$DIST"
 
+validate_exact_candidate
 git -C "$ROOT" archive --format=tar.gz --prefix="Barline-$VERSION/" -o "$DIST/Barline-$VERSION-source.tar.gz" "$SHA"
 "$ROOT/script/generate-spdx-sbom.rb" "$ROOT" "$VERSION" "$BUILD" "$SHA" "$DIST/Barline-$VERSION.spdx.json"
+validate_exact_candidate
 (cd "$DIST" && shasum -a 256 "Barline-$VERSION.zip" "Barline-$VERSION-source.tar.gz" "Barline-$VERSION.spdx.json" appcast.xml > SHA256SUMS)
 
 printf 'PASS: signed, notarized, stapled, Gatekeeper-assessed release package generated at %s\n' "$DIST"

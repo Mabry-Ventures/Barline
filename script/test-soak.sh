@@ -99,10 +99,9 @@ CYCLES=0
 XPC_CYCLES=0
 PERFORMANCE_CYCLES=0
 BUILD_CONFIGURATION=Release
-PRODUCTION_PROBE=status-observation
-XPC_RECOVERY_STRATEGY=release-app-relaunch
-RUN_ROOT="${BARLINE_RUN_ROOT:-/private/tmp/barline-run-$(id -u)}"
-RELEASE_APP="$RUN_ROOT/DerivedData/Build/Products/Release/Barline.app"
+PRODUCTION_PROBE=apple-event-reopen
+XPC_RECOVERY_STRATEGY=same-process-apple-event-reopen
+BASELINE_APP_PID=""
 
 mkdir -p "$ARTIFACT_DIR"
 printf 'timestamp_utc,elapsed_seconds,cycle,app_pid,helper_pid,app_rss_kb,helper_rss_kb,total_rss_kb,app_cpu_percent,helper_cpu_percent,cache_kb\n' > "$CSV"
@@ -146,6 +145,10 @@ sample_resources() {
         printf 'error: Barline exited during release soak\n' >&2
         return 1
     }
+    if [[ -n "$BASELINE_APP_PID" && "$app_pid" != "$BASELINE_APP_PID" ]]; then
+        printf 'error: Barline app PID changed during release soak; RSS continuity is invalid\n' >&2
+        return 1
+    fi
     app_rss="$(process_value "$app_pid" rss)"
     helper_rss="$(process_value "$helper_pid" rss)"
     app_cpu="$(process_value "$app_pid" %cpu)"
@@ -210,8 +213,8 @@ write_summary() {
         workload_cycles_completed: cycle_counts.all?(&:positive?) && cycle_counts.uniq.length == 1,
         production_probe_passed: shelf_workload_passed,
         release_execution_path: ENV.fetch("CONFIGURATION_VALUE") == "Release" &&
-          ENV.fetch("PROBE_VALUE") == "status-observation" &&
-          ENV.fetch("XPC_STRATEGY_VALUE") == "release-app-relaunch",
+          ENV.fetch("PROBE_VALUE") == "apple-event-reopen" &&
+          ENV.fetch("XPC_STRATEGY_VALUE") == "same-process-apple-event-reopen",
         rss_growth_within_limit: rss_growth <= ENV.fetch("RSS_LIMIT_VALUE").to_i,
         cache_growth_within_limit: cache_growth <= ENV.fetch("CACHE_LIMIT_VALUE").to_i,
         sufficient_samples: rows.length >= (complete_duration ? 10 : 2)
@@ -235,10 +238,11 @@ write_summary() {
         candidate_evidence: candidate_pass,
         sample_interval_seconds: ENV.fetch("INTERVAL_VALUE").to_i,
         cycles: {core: ENV.fetch("CYCLES_VALUE").to_i, xpc_restart: ENV.fetch("XPC_VALUE").to_i, production_probe: ENV.fetch("PERFORMANCE_VALUE").to_i},
-        app_process_continuity: false,
+        app_process_continuity: true,
+        rss_growth_guard_enforced: true,
         resources: {
           samples: rows.length,
-          rss_kb: {initial: initial_rss, final: final_rss, minimum: rss.min || 0, maximum: rss.max || 0, growth: rss_growth, growth_limit: ENV.fetch("RSS_LIMIT_VALUE").to_i},
+          rss_kb: {initial: initial_rss, final: final_rss, minimum: rss.min || 0, maximum: rss.max || 0, growth: rss_growth, growth_limit: ENV.fetch("RSS_LIMIT_VALUE").to_i, continuity_eligible: true},
           cache_kb: {initial: initial_cache, final: final_cache, minimum: cache.min || 0, maximum: cache.max || 0, growth: cache_growth, growth_limit: ENV.fetch("CACHE_LIMIT_VALUE").to_i},
           cpu_percent: {
             app_average: app_cpu.empty? ? 0 : app_cpu.sum / app_cpu.length,
@@ -317,6 +321,7 @@ done
 }
 
 START_EPOCH="$(date +%s)"
+BASELINE_APP_PID="$ready_app_pid"
 DEADLINE=$((START_EPOCH + DURATION_SECONDS))
 sample_resources
 
@@ -327,10 +332,10 @@ while (( $(date +%s) < DEADLINE )); do
     swift test --package-path BarlineCore --configuration release \
         --filter 'BarlineCoreTests\.(StateCoordinatorTests|ProfileTests|DeterministicSearchIndexTests|SnapshotValidationTests)/' \
         2>&1 | tee -a "$CORE_LOG"
-    ./script/test-xpc-interruption.sh --reuse-running --relaunch-app "$RELEASE_APP" 2>&1 | tee -a "$XPC_LOG"
+    ./script/test-xpc-interruption.sh --reuse-running --recovery-probe apple-event-reopen 2>&1 | tee -a "$XPC_LOG"
     XPC_CYCLES=$((XPC_CYCLES + 1))
     BARLINE_PERFORMANCE_CYCLES=5 BARLINE_PERFORMANCE_WARMUPS=1 \
-        ./script/test-performance-smoke.sh --reuse-running --probe status-observation --output "$PERFORMANCE_LOG"
+        ./script/test-performance-smoke.sh --reuse-running --probe apple-event-reopen --output "$PERFORMANCE_LOG"
     PERFORMANCE_CYCLES=$((PERFORMANCE_CYCLES + 1))
     sample_resources
     now="$(date +%s)"
@@ -350,5 +355,5 @@ if [[ "$HARNESS_VALIDATION" != 1 && -n "$(git status --porcelain=v1)" ]]; then
     exit 1
 fi
 
-printf 'PASS: release soak completed %d Core, %d XPC lifecycle, and %d production status-observation cycles\n' \
+printf 'PASS: release soak completed %d Core, %d same-process XPC recovery, and %d production reopen-response cycles\n' \
     "$CYCLES" "$XPC_CYCLES" "$PERFORMANCE_CYCLES"

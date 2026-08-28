@@ -13,7 +13,9 @@ final class UserNotificationManager: NSObject {
     private(set) weak var appState: AppState?
 
     /// The current notification center.
-    var notificationCenter: UNUserNotificationCenter { .current() }
+    var notificationCenter: UNUserNotificationCenter {
+        .current()
+    }
 
     /// Performs the initial setup of the manager.
     func performSetup(with appState: AppState) {
@@ -21,18 +23,8 @@ final class UserNotificationManager: NSObject {
         notificationCenter.delegate = self
     }
 
-    /// Requests authorization to allow user notifications for the app.
-    func requestAuthorization() {
-        Task {
-            do {
-                try await notificationCenter.requestAuthorization(options: [.badge, .alert, .sound])
-            } catch {
-                Logger.default.error("Failed to request notification authorization: \(error)")
-            }
-        }
-    }
-
-    /// Schedules the delivery of a local notification.
+    /// Requests authorization and schedules a local notification only when a
+    /// concrete notification is ready for delivery.
     func addRequest(with identifier: UserNotificationIdentifier, title: String, body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
@@ -44,19 +36,31 @@ final class UserNotificationManager: NSObject {
             trigger: nil
         )
 
-        notificationCenter.add(request)
+        Task {
+            do {
+                guard try await notificationCenter.requestAuthorization(
+                    options: [.badge, .alert, .sound]
+                ) else {
+                    return
+                }
+                try await notificationCenter.add(request)
+            } catch {
+                Logger.default.error("Failed to authorize or schedule a notification: \(error)")
+            }
+        }
     }
 
     /// Removes the notifications from Notification Center that match the given identifiers.
     func removeDeliveredNotifications(with identifiers: [UserNotificationIdentifier]) {
-        notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers.map { $0.rawValue })
+        notificationCenter.removeDeliveredNotifications(withIdentifiers: identifiers.map(\.rawValue))
     }
 }
 
 // MARK: UserNotificationManager: UNUserNotificationCenterDelegate
+
 extension UserNotificationManager: @preconcurrency UNUserNotificationCenterDelegate {
     func userNotificationCenter(
-        _ center: UNUserNotificationCenter,
+        _: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {

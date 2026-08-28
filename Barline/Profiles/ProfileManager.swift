@@ -120,7 +120,23 @@ final class ProfileManager: ObservableObject {
         }
         var didActivate = false
         await performOperation(successMessage: "Profile applied.") {
-            _ = try await appState.compatibilityCoordinator.activate(profile: resolvedProfile)
+            let previousSpacingOffset = appState.spacingManager.offset
+            appState.spacingManager.offset = Int(resolvedProfile.appearance.itemSpacing)
+            do {
+                try await appState.spacingManager.applyOffset()
+                _ = try await appState.compatibilityCoordinator.activate(profile: resolvedProfile)
+            } catch {
+                let activationError = error
+                appState.spacingManager.offset = previousSpacingOffset
+                do {
+                    try await appState.spacingManager.applyOffset()
+                } catch {
+                    throw MenuBarBackendError.operationFailed(
+                        "profile activation failed: \(activationError); spacing rollback failed: \(error)"
+                    )
+                }
+                throw activationError
+            }
             return resolvedProfile.id
         } completion: { [weak self] profileID in
             self?.activeProfileID = profileID

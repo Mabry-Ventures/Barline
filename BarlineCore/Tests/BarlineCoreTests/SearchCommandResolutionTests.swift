@@ -160,6 +160,47 @@ struct SearchCommandResolutionTests {
                 == .explicitConfirmationRequired
         )
     }
+
+    @Test("Show and hide execution recheck current item capabilities")
+    func executionCapabilities() throws {
+        let fixture = SearchResolutionFixture()
+        let policy = SearchCommandExecutionPolicy()
+        let show = try fixture.validatedCommand(operation: .show, itemIDs: [fixture.itemID])
+        let hide = try fixture.validatedCommand(operation: .hide, itemIDs: [fixture.itemID])
+
+        #expect(
+            policy.disposition(
+                for: show,
+                in: fixture.snapshot(isMovable: false)
+            ) == .nonRunnable(.targetIsNotMovable)
+        )
+        #expect(
+            policy.disposition(
+                for: hide,
+                in: fixture.snapshot(canBeHidden: false)
+            ) == .nonRunnable(.targetCannotBeHidden)
+        )
+        #expect(
+            policy.disposition(for: show, in: fixture.snapshot())
+                == .executableImmediately
+        )
+        #expect(
+            policy.disposition(for: hide, in: fixture.snapshot())
+                == .executableImmediately
+        )
+    }
+
+    @Test("Execution rejects a target missing from current authority")
+    func executionRejectsUnavailableTarget() throws {
+        let fixture = SearchResolutionFixture()
+        let command = try fixture.validatedCommand(operation: .show, itemIDs: [fixture.itemID])
+        let currentSnapshot = fixture.snapshot(itemIDs: [fixture.secondItemID])
+
+        #expect(
+            SearchCommandExecutionPolicy().disposition(for: command, in: currentSnapshot)
+                == .nonRunnable(.targetUnavailable)
+        )
+    }
 }
 
 private struct SearchResolutionFixture {
@@ -200,21 +241,7 @@ private struct SearchResolutionFixture {
         itemIDs: [MenuBarItemID] = [],
         profileID: ProfileID? = nil
     ) throws -> ValidatedMenuBarCommand {
-        let displayID = MenuBarDisplayID("display")
-        let snapshot = MenuBarSnapshot(
-            generation: 1,
-            capturedAt: Date(timeIntervalSince1970: 1000),
-            items: [itemID, secondItemID].enumerated().map { index, itemID in
-                MenuBarItemDescriptor(
-                    id: itemID,
-                    section: .visible,
-                    order: index,
-                    displayID: displayID
-                )
-            },
-            displayIDs: [displayID],
-            activeSpaceIsValid: true
-        )
+        let snapshot = snapshot()
         let authority = MenuBarCommandAuthority(
             validatedSnapshot: snapshot,
             expectedGeneration: 1,
@@ -230,5 +257,29 @@ private struct SearchResolutionFixture {
             ),
             authority: authority
         ).get()
+    }
+
+    func snapshot(
+        itemIDs: [MenuBarItemID]? = nil,
+        isMovable: Bool = true,
+        canBeHidden: Bool = true
+    ) -> MenuBarSnapshot {
+        let displayID = MenuBarDisplayID("display")
+        return MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(timeIntervalSince1970: 1000),
+            items: (itemIDs ?? [itemID, secondItemID]).enumerated().map { index, itemID in
+                MenuBarItemDescriptor(
+                    id: itemID,
+                    section: .visible,
+                    order: index,
+                    displayID: displayID,
+                    isMovable: isMovable,
+                    canBeHidden: canBeHidden
+                )
+            },
+            displayIDs: [displayID],
+            activeSpaceIsValid: true
+        )
     }
 }

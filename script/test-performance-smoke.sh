@@ -13,7 +13,7 @@ OUTPUT_PATH=""
 PROBE="${BARLINE_PERFORMANCE_PROBE:-runtime-smoke}"
 
 usage() {
-    printf 'usage: %s [--reuse-running] [--probe runtime-smoke|status-observation] [--output PATH]\n' "$0" >&2
+    printf 'usage: %s [--reuse-running] [--probe runtime-smoke|apple-event-reopen] [--output PATH]\n' "$0" >&2
 }
 
 while (($#)); do
@@ -35,7 +35,7 @@ while (($#)); do
     shift
 done
 
-[[ "$PROBE" == runtime-smoke || "$PROBE" == status-observation ]] || { usage; exit 2; }
+[[ "$PROBE" == runtime-smoke || "$PROBE" == apple-event-reopen ]] || { usage; exit 2; }
 
 if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" 2>/dev/null)"; then
     ORIGINAL_PREFERENCE="$ORIGINAL_PREFERENCE_VALUE"

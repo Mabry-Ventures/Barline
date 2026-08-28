@@ -373,6 +373,88 @@ struct StateCoordinatorTests {
         #expect(await coordinator.canRedo == false)
     }
 
+    @Test("Click activation does not create a layout undo checkpoint")
+    func clickDoesNotCreateUndoHistory() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let afterClick = makeSnapshot(generation: 2, count: 2)
+        let backend = FakeBackend(snapshots: [before, afterClick])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        _ = try await coordinator.perform(
+            .activate(before.items[0].id, .left),
+            now: afterClick.capturedAt
+        )
+
+        #expect(await coordinator.canUndo == false)
+        #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Click activation preserves an existing redo checkpoint")
+    func clickPreservesRedoHistory() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let afterReveal = makeSnapshot(generation: 2, count: 2)
+        let restoredBefore = makeSnapshot(generation: 3, count: 2)
+        let afterClick = makeSnapshot(generation: 4, count: 2)
+        let restoredAfter = makeSnapshot(generation: 5, count: 2)
+        let backend = FakeBackend(snapshots: [
+            before,
+            afterReveal,
+            restoredBefore,
+            afterClick,
+            restoredAfter,
+        ])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.perform(.reveal(before.items[0].id), now: afterReveal.capturedAt)
+        _ = try await coordinator.undo(now: restoredBefore.capturedAt)
+
+        _ = try await coordinator.perform(
+            .activate(before.items[1].id, .right),
+            now: afterClick.capturedAt
+        )
+
+        #expect(await coordinator.canRedo)
+        _ = try await coordinator.redo(now: restoredAfter.capturedAt)
+        #expect(await coordinator.currentSnapshot == restoredAfter)
+        #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Structurally valid wrong history layout rolls back")
+    func rollsBackWrongHistoryLayout() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let wrongLayout = ProfileLayout(hidden: before.items.map(\.id))
+        let wrongButValid = makeProfileSnapshot(generation: 3, layout: wrongLayout)
+        let backend = FakeBackend(snapshots: [before, after, wrongButValid])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.perform(.reveal(before.items[0].id), now: after.capturedAt)
+
+        await #expect(
+            throws: MenuBarBackendError.operationFailed(
+                "history restore did not reach requested layout"
+            )
+        ) {
+            try await coordinator.undo(now: wrongButValid.capturedAt)
+        }
+
+        #expect(await backend.restoredSnapshots == [before, after])
+        #expect(await coordinator.currentSnapshot == after)
+        #expect(await coordinator.lastKnownGoodSnapshot == after)
+        #expect(await coordinator.canUndo)
+        #expect(await coordinator.canRedo == false)
+    }
+
     @Test("Profile identity follows layout history through undo and redo")
     func restoresProfileIdentityWithHistory() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
