@@ -33,6 +33,106 @@ struct ProfileTests {
         #expect(ProfileAppearance.itemSpacingRange == -16 ... 16)
     }
 
+    @Test("Dynamic appearance variants round-trip exactly")
+    func dynamicAppearanceRoundTrip() throws {
+        var profile = completeProfile()
+        profile.appearance.dynamicAppearance = ProfileDynamicAppearance(
+            light: ProfileAppearanceMode(
+                tintHex: "#11223344",
+                showsBorder: true
+            ),
+            dark: ProfileAppearanceMode(
+                gradientHex: ["#010203", "#AABBCCDD"],
+                showsShadow: true
+            )
+        )
+        profile.appearance.isDynamic = true
+
+        let decoded = try ProfileCodec().decode(ProfileCodec().encode(profile))
+
+        #expect(decoded == profile)
+        #expect(decoded.appearance.dynamicAppearance?.light.tintHex == "#11223344")
+        #expect(decoded.appearance.dynamicAppearance?.dark.gradientHex == ["#010203", "#AABBCCDD"])
+    }
+
+    @Test("Version 4 appearance migrates to static version 5")
+    func version4AppearanceMigration() throws {
+        let encoded = try ProfileCodec().encode(completeProfile())
+        var document = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        document["schemaVersion"] = 4
+        if var appearance = document["appearance"] as? [String: Any] {
+            appearance.removeValue(forKey: "dynamicAppearance")
+            document["appearance"] = appearance
+        }
+        let legacy = try JSONSerialization.data(withJSONObject: document)
+
+        let migrated = try ProfileCodec().decode(legacy)
+
+        #expect(migrated.schemaVersion == ProfileSchema.currentVersion)
+        #expect(migrated.appearance.dynamicAppearance == nil)
+        #expect(!migrated.appearance.isDynamic)
+        #expect(migrated.appearance.tintHex == "#102030")
+    }
+
+    @Test("Static mode preserves dormant dynamic variants")
+    func staticModePreservesDormantDynamicVariants() throws {
+        var profile = completeProfile()
+        profile.appearance.dynamicAppearance = ProfileDynamicAppearance(
+            light: ProfileAppearanceMode(tintHex: "#EEEEEE"),
+            dark: ProfileAppearanceMode(tintHex: "#111111")
+        )
+        profile.appearance.isDynamic = false
+
+        let decoded = try ProfileCodec().decode(ProfileCodec().encode(profile))
+
+        #expect(!decoded.appearance.isDynamic)
+        #expect(decoded.appearance.dynamicAppearance == profile.appearance.dynamicAppearance)
+    }
+
+    @Test("Validation rejects invalid inactive appearance variants")
+    func rejectsInvalidDynamicAppearance() {
+        var profile = completeProfile()
+        profile.appearance.dynamicAppearance = ProfileDynamicAppearance(
+            light: ProfileAppearanceMode(tintHex: "invalid"),
+            dark: ProfileAppearanceMode()
+        )
+
+        #expect(throws: ProfileValidationError.invalidAppearance) {
+            try ProfileValidator().validate(profile)
+        }
+    }
+
+    @Test("Authority includes inactive dynamic appearance variants")
+    func authorityIncludesInactiveAppearance() {
+        let expectedItem = item(1)
+        var profile = BarlineProfile(
+            name: "Dynamic",
+            layout: ProfileLayout(visible: [expectedItem])
+        )
+        profile.appearance.dynamicAppearance = ProfileDynamicAppearance(
+            light: ProfileAppearanceMode(tintHex: "#FFFFFF"),
+            dark: ProfileAppearanceMode(tintHex: "#000000")
+        )
+        var workspace = ProfileWorkspaceState(profile: profile)
+        workspace.appearance.dynamicAppearance?.dark.tintHex = "#101010"
+        let snapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [MenuBarItemDescriptor(id: expectedItem, section: .visible, order: 0)],
+            displayIDs: [],
+            activeSpaceIsValid: true
+        )
+
+        #expect(!ProfileAuthorityMatcher.matches(
+            profile: profile,
+            checkpoint: MenuBarWorkspaceCheckpoint(
+                snapshot: snapshot,
+                activeProfileID: profile.id,
+                workspace: workspace
+            )
+        ))
+    }
+
     @Test("Legacy auto-rehide checkpoints decode with the timed strategy")
     func legacyAutoRehideDecode() throws {
         let data = Data(#"{"isEnabled":true,"delaySeconds":3}"#.utf8)

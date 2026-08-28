@@ -6,7 +6,7 @@
 import Foundation
 
 public enum ProfileSchema {
-    public static let currentVersion = 4
+    public static let currentVersion = 5
     public static let archiveFormatVersion = 1
 }
 
@@ -92,6 +92,8 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
     public var showsShadow: Bool
     public var shape: Shape
     public var itemSpacing: Double
+    public var dynamicAppearance: ProfileDynamicAppearance?
+    public var isDynamic: Bool
 
     public init(
         tintHex: String? = nil,
@@ -99,7 +101,9 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
         showsBorder: Bool = false,
         showsShadow: Bool = false,
         shape: Shape = .standard,
-        itemSpacing: Double = 0
+        itemSpacing: Double = 0,
+        dynamicAppearance: ProfileDynamicAppearance? = nil,
+        isDynamic: Bool = false
     ) {
         self.tintHex = tintHex
         self.gradientHex = gradientHex
@@ -107,6 +111,48 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
         self.showsShadow = showsShadow
         self.shape = shape
         self.itemSpacing = itemSpacing
+        self.dynamicAppearance = dynamicAppearance
+        self.isDynamic = isDynamic
+    }
+
+    private enum CodingKeys: CodingKey {
+        case tintHex
+        case gradientHex
+        case showsBorder
+        case showsShadow
+        case shape
+        case itemSpacing
+        case dynamicAppearance
+        case isDynamic
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            tintHex: container.decodeIfPresent(String.self, forKey: .tintHex),
+            gradientHex: container.decodeIfPresent([String].self, forKey: .gradientHex) ?? [],
+            showsBorder: container.decodeIfPresent(Bool.self, forKey: .showsBorder) ?? false,
+            showsShadow: container.decodeIfPresent(Bool.self, forKey: .showsShadow) ?? false,
+            shape: container.decodeIfPresent(Shape.self, forKey: .shape) ?? .standard,
+            itemSpacing: container.decodeIfPresent(Double.self, forKey: .itemSpacing) ?? 0,
+            dynamicAppearance: container.decodeIfPresent(
+                ProfileDynamicAppearance.self,
+                forKey: .dynamicAppearance
+            ),
+            isDynamic: container.decodeIfPresent(Bool.self, forKey: .isDynamic) ?? false
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(tintHex, forKey: .tintHex)
+        try container.encode(gradientHex, forKey: .gradientHex)
+        try container.encode(showsBorder, forKey: .showsBorder)
+        try container.encode(showsShadow, forKey: .showsShadow)
+        try container.encode(shape, forKey: .shape)
+        try container.encode(itemSpacing, forKey: .itemSpacing)
+        try container.encodeIfPresent(dynamicAppearance, forKey: .dynamicAppearance)
+        try container.encode(isDynamic, forKey: .isDynamic)
     }
 }
 
@@ -206,6 +252,35 @@ public struct ProfileWorkspaceState: Codable, Hashable, Sendable {
             autoRehide: profile.autoRehide,
             applicationMenuOverlapBehavior: profile.applicationMenuOverlapBehavior
         )
+    }
+}
+
+public struct ProfileAppearanceMode: Codable, Hashable, Sendable {
+    public var tintHex: String?
+    public var gradientHex: [String]
+    public var showsBorder: Bool
+    public var showsShadow: Bool
+
+    public init(
+        tintHex: String? = nil,
+        gradientHex: [String] = [],
+        showsBorder: Bool = false,
+        showsShadow: Bool = false
+    ) {
+        self.tintHex = tintHex
+        self.gradientHex = gradientHex
+        self.showsBorder = showsBorder
+        self.showsShadow = showsShadow
+    }
+}
+
+public struct ProfileDynamicAppearance: Codable, Hashable, Sendable {
+    public var light: ProfileAppearanceMode
+    public var dark: ProfileAppearanceMode
+
+    public init(light: ProfileAppearanceMode, dark: ProfileAppearanceMode) {
+        self.light = light
+        self.dark = dark
     }
 }
 

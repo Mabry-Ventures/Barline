@@ -87,6 +87,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // backend. This keeps the app process alive while replacing an
         // interrupted XPC helper before the user performs another action.
         if reopenRecoveryTask == nil {
+            // Window presentation must not wait on compatibility recovery. The
+            // coalesced opener remains responsive even when the XPC helper is hung.
+            openSettingsWindow()
             reopenRecoveryTask = Task { [weak self] in
                 guard let self else {
                     return
@@ -114,13 +117,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     failureDescription = String(describing: error)
                     Logger.default.error("Compatibility refresh on reopen failed: \(error)")
                 }
-                do {
-                    try await Task.sleep(for: .milliseconds(100))
-                } catch {
-                    return
-                }
-                appState.activate(withPolicy: .regular)
-                appState.openWindow(.settings)
                 let visibilityDeadline = ContinuousClock.now + .seconds(1)
                 while ContinuousClock.now < visibilityDeadline,
                       !NSApp.windows.contains(where: {

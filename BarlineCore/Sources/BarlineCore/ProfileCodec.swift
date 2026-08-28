@@ -195,6 +195,7 @@ public struct ProfileMigrator: Sendable {
             case 1: migrateV1ToV2(&document)
             case 2: migrateV2ToV3(&document)
             case 3: migrateV3ToV4(&document)
+            case 4: migrateV4ToV5(&document)
             default: throw ProfileValidationError.unsupportedSchemaVersion(migratedVersion)
             }
             migratedVersion += 1
@@ -235,5 +236,12 @@ public struct ProfileMigrator: Sendable {
         var autoRehide = document["autoRehide"] as? [String: Any] ?? [:]
         autoRehide["strategy"] = autoRehide["strategy"] ?? "timed"
         document["autoRehide"] = autoRehide
+    }
+
+    private func migrateV4ToV5(_ document: inout [String: Any]) {
+        var appearance = document["appearance"] as? [String: Any] ?? [:]
+        appearance["dynamicAppearance"] = appearance["dynamicAppearance"] ?? NSNull()
+        appearance["isDynamic"] = appearance["isDynamic"] ?? false
+        document["appearance"] = appearance
     }
 }

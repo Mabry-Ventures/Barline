@@ -1,6 +1,6 @@
 # Profile schema
 
-`BarlineCore` defines profile schema version **4** and archive format version
+`BarlineCore` defines profile schema version **5** and archive format version
 **1**. The models, validator, JSON codec, migrations, file store, Ice-import
 preview, and Swift Testing coverage exist. The app uses the Barline App Group
 container (with an Application Support fallback for unsigned local builds),
@@ -15,7 +15,8 @@ A `BarlineProfile` contains:
 - default visible, hidden, and always-hidden item order
 - groups and spacers
 - per-display layout/group/spacer overrides
-- tint, gradient, border, shadow, shape, and item spacing
+- static and retained light/dark tint, gradient, border, and shadow variants,
+  the dynamic-mode flag, plus shape and item spacing
 - shelf behavior, reveal triggers, auto-rehide, overlap behavior, and hotkey
 
 Item identity combines a normalized bundle identifier with at least one of an
@@ -43,6 +44,9 @@ Archives contain `formatVersion`, `exportedAt`, and a nonempty `profiles` array.
 - v2 to v3 adds appearance, shelf, reveal, auto-rehide, and overlap defaults.
 - v3 to v4 adds the explicit smart, timed, or focused-app auto-rehide strategy;
   legacy workspace checkpoints decode a missing strategy as timed.
+- v4 to v5 adds optional dynamic light/dark appearance variants; legacy
+  profiles and workspace checkpoints remain static and preserve their existing
+  appearance fields.
 
 Migration is forward-only. Unknown future schema/archive versions fail safely;
 there is no downgrade writer. Import validates each migrated profile before it
