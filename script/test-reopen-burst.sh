@@ -21,6 +21,13 @@ BARLINE_PERFORMANCE_CYCLES=100 BARLINE_PERFORMANCE_WARMUPS=5 \
 # Keep a bounded version in the full gate so cross-path work accumulation fails
 # quickly instead of appearing only in the 30-minute candidate run.
 for cycle in {1..8}; do
+    if ((cycle > 1)); then
+        # launchd deliberately throttles services that are SIGKILLed in a tight
+        # crash loop. Keep each forced interruption independent so this gate
+        # measures Barline recovery rather than the host's crash-loop backoff;
+        # the release soak naturally provides at least this spacing as well.
+        /bin/sleep 10
+    fi
     printf 'Recovery/reopen burst cycle %d\n' "$cycle"
     "$ROOT/script/test-xpc-interruption.sh" \
         --reuse-running --recovery-probe apple-event-reopen

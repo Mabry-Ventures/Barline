@@ -7,6 +7,8 @@ import BarlineCore
 import CoreGraphics
 import Foundation
 import OSLog
+import Security
+import XPC
 
 @available(macOS 26.0, *)
 extension BarlineMenuService {
@@ -16,6 +18,50 @@ extension BarlineMenuService {
         private let session: Session
         private let queue: DispatchQueue
         private let logger: Logger
+
+        /// Returns a strict peer requirement for the embedded compatibility service.
+        ///
+        /// Apple-issued development and distribution signatures have a team
+        /// identifier, so production uses the strongest same-team plus exact
+        /// signing-identifier check. Local gates intentionally use ad-hoc signing,
+        /// which has no team identifier; those builds remain constrained to the
+        /// service's exact signing identifier and the local/ad-hoc validation
+        /// category instead of disabling peer validation.
+        fileprivate static func servicePeerRequirement() -> XPCPeerRequirement {
+            let signingIdentifier = "com.mabryventures.Barline.MenuBarService"
+            if currentProcessHasTeamIdentifier() {
+                return .isFromSameTeam(andMatchesSigningIdentifier: signingIdentifier)
+            }
+            var requirement = XPCDictionary()
+            requirement["signing-identifier"] = signingIdentifier
+            requirement["validation-category"] = 10
+            return XPCPeerRequirement(lightweightCodeRequirements: requirement)
+        }
+
+        private static func currentProcessHasTeamIdentifier() -> Bool {
+            var code: SecCode?
+            guard SecCodeCopySelf([], &code) == errSecSuccess, let code else {
+                return false
+            }
+            var staticCode: SecStaticCode?
+            guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess,
+                  let staticCode
+            else {
+                return false
+            }
+            var information: CFDictionary?
+            guard SecCodeCopySigningInformation(
+                staticCode,
+                SecCSFlags(rawValue: kSecCSSigningInformation),
+                &information
+            ) == errSecSuccess,
+                let dictionary = information as? [CFString: Any],
+                let teamIdentifier = dictionary[kSecCodeInfoTeamIdentifier] as? String
+            else {
+                return false
+            }
+            return !teamIdentifier.isEmpty
+        }
 
         private init() {
             let queue = DispatchQueue(
@@ -268,7 +314,7 @@ extension BarlineMenuService {
                 }
                 scheduleRecovery()
             }
-            session.setPeerRequirement(.isFromSameTeam())
+            session.setPeerRequirement(BarlineMenuService.Connection.servicePeerRequirement())
             session.setTargetQueue(callbackQueue)
             try session.activate()
             let installed = state.withLock { state -> Bool in

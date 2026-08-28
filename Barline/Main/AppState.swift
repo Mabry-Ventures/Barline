@@ -108,6 +108,12 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Waits for the one-time setup sequence before a production recovery
+    /// request competes for the compatibility connection.
+    func waitForSetup() async {
+        await setupTask.value
+    }
+
     /// Configures the internal observers for the app state.
     private func configureCancellables() {
         var c = Set<AnyCancellable>()
