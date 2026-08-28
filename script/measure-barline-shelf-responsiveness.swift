@@ -238,12 +238,14 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
 
 do {
     if Configuration.probe == "apple-event-reopen" {
-        guard let application = NSRunningApplication.runningApplications(
-            withBundleIdentifier: "com.mabryventures.Barline"
-        ).first else {
+        guard
+            let rawProcessIdentifier = ProcessInfo.processInfo.environment["BARLINE_EXPECTED_PID"],
+            let processIdentifier = pid_t(rawProcessIdentifier),
+            processIdentifier > 0,
+            NSRunningApplication(processIdentifier: processIdentifier)?.isTerminated == false
+        else {
             throw ProbeError.applicationNotRunning
         }
-        let processIdentifier = application.processIdentifier
         for warmup in 0 ..< Configuration.warmupCycles {
             // The first request can arrive while a cold Release launch is still
             // completing setup and its initial XPC snapshot. Establish readiness
