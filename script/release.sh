@@ -24,7 +24,7 @@ mkdir -p "$RELEASE_ROOT"
 /bin/rm -rf "$ARCHIVE"
 env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
     -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release \
-    -destination 'generic/platform=macOS,arch=arm64' -archivePath "$ARCHIVE" \
+    -destination 'platform=macOS,arch=arm64' -archivePath "$ARCHIVE" \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO archive
 
 APP="$ARCHIVE/Products/Applications/Barline.app"
