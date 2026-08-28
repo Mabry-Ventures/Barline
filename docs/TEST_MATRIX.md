@@ -5,7 +5,7 @@ under ignored `.artifacts/ci/<sha>/` directories.
 
 | Area | Current automated evidence | Status |
 | --- | --- | --- |
-| Pure domain | Swift Testing for snapshots, state coordination, profiles, persistence/import, search, Spotlight records, and command/service validation | 84 tests pass locally on 2026-08-28 |
+| Pure domain | Swift Testing for snapshots, state coordination, profiles, persistence/import, search, Spotlight records, and command/service validation | 96 tests pass locally on 2026-08-28 |
 | Recovery policy | Standalone Swift script | Implemented |
 | Notch overflow resolver | Standalone Swift script | Implemented |
 | Debug/Release/analyze | Local Xcode steps in `script/ci.sh full` | Implemented command surface |
