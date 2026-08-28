@@ -229,6 +229,13 @@ public enum ProfileActivationSource: String, Codable, CaseIterable, Sendable {
     case manual
     case recovery
 
+    public var retainsArbitrationRequestWhileActive: Bool {
+        switch self {
+        case .configuredDefault, .focus: true
+        case .shortcut, .appIntent, .manual, .recovery: false
+        }
+    }
+
     public var precedence: Int {
         switch self {
         case .configuredDefault: 0

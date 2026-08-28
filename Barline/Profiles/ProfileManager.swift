@@ -109,11 +109,19 @@ final class ProfileManager: ObservableObject {
     }
 
     @discardableResult
-    func activate(_ profile: BarlineProfile, source: ProfileActivationSource = .manual) async -> Bool {
+    func activate(
+        _ profile: BarlineProfile,
+        source: ProfileActivationSource = .manual,
+        expectedGeneration: UInt64? = nil
+    ) async -> Bool {
         guard let appState else { return false }
         activationRequests[source] = ProfileActivationRequest(profileID: profile.id, source: source)
+        let request = ProfileActivationResolver().resolve(activationRequests.values)
+        if !source.retainsArbitrationRequestWhileActive {
+            activationRequests.removeValue(forKey: source)
+        }
         guard
-            let request = ProfileActivationResolver().resolve(activationRequests.values),
+            let request,
             let resolvedProfile = profiles.first(where: { $0.id == request.profileID })
         else {
             return false
@@ -124,7 +132,10 @@ final class ProfileManager: ObservableObject {
             appState.spacingManager.offset = Int(resolvedProfile.appearance.itemSpacing)
             do {
                 try await appState.spacingManager.applyOffset()
-                _ = try await appState.compatibilityCoordinator.activate(profile: resolvedProfile)
+                _ = try await appState.compatibilityCoordinator.activate(
+                    profile: resolvedProfile,
+                    expectedGeneration: expectedGeneration
+                )
             } catch {
                 let activationError = error
                 appState.spacingManager.offset = previousSpacingOffset
@@ -213,17 +224,11 @@ final class ProfileManager: ObservableObject {
     }
 
     func undoLayoutChange() async {
-        guard let appState else { return }
-        await performOperation(successMessage: "Layout change undone.") {
-            try await appState.compatibilityCoordinator.undo()
-        } completion: { _ in }
+        await performHistoryChange(isUndo: true)
     }
 
     func redoLayoutChange() async {
-        guard let appState else { return }
-        await performOperation(successMessage: "Layout change redone.") {
-            try await appState.compatibilityCoordinator.redo()
-        } completion: { _ in }
+        await performHistoryChange(isUndo: false)
     }
 
     func archiveData() async -> Data? {
@@ -545,8 +550,62 @@ final class ProfileManager: ObservableObject {
             return true
         }
         guard await activate(prior, source: .focus) else { return false }
+        activationRequests.removeValue(forKey: .focus)
         clearProfileBeforeFocus()
         return true
+    }
+
+    private func performHistoryChange(isUndo: Bool) async {
+        guard let appState else { return }
+        let successMessage = isUndo ? "Layout change undone." : "Layout change redone."
+        await performOperation(successMessage: successMessage) {
+            if isUndo {
+                _ = try await appState.compatibilityCoordinator.undo()
+            } else {
+                _ = try await appState.compatibilityCoordinator.redo()
+            }
+            let profileID = await appState.compatibilityCoordinator.activeProfileID
+            return try await self.synchronizeProfileAuthority(to: profileID)
+        } completion: { [weak self] profileID in
+            self?.activeProfileID = profileID
+        }
+    }
+
+    private func synchronizeProfileAuthority(to profileID: UUID?) async throws -> UUID? {
+        guard let appState else { return nil }
+        activationRequests.removeAll()
+        guard let profileID,
+              let profile = profiles.first(where: { $0.id == profileID })
+        else {
+            activeProfileID = nil
+            await appState.compatibilityCoordinator.clearActiveProfileAuthority()
+            try await clearWorkspaceProfileSettings()
+            return nil
+        }
+        do {
+            appState.spacingManager.offset = Int(profile.appearance.itemSpacing)
+            try await appState.spacingManager.applyOffset()
+            applyWorkspaceSettings(from: profile)
+            return profileID
+        } catch {
+            activeProfileID = nil
+            await appState.compatibilityCoordinator.clearActiveProfileAuthority()
+            try? await clearWorkspaceProfileSettings()
+            throw error
+        }
+    }
+
+    private func clearWorkspaceProfileSettings() async throws {
+        guard let appState else { return }
+        let defaults = BarlineProfile(name: "Workspace defaults")
+        appState.spacingManager.offset = Int(defaults.appearance.itemSpacing)
+        do {
+            try await appState.spacingManager.applyOffset()
+        } catch {
+            applyWorkspaceSettings(from: defaults)
+            throw error
+        }
+        applyWorkspaceSettings(from: defaults)
     }
 
     private func clearProfileBeforeFocus() {
