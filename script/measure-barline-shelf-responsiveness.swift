@@ -2,6 +2,7 @@
 
 import AppKit
 import CoreGraphics
+import Darwin
 import Foundation
 
 private enum Configuration {
@@ -32,6 +33,10 @@ private struct WindowSnapshot {
     let ownerName: String?
     let windowName: String?
     let bounds: CGRect
+}
+
+private func processIsRunning(_ processIdentifier: pid_t) -> Bool {
+    kill(processIdentifier, 0) == 0
 }
 
 private enum ProbeError: Error, CustomStringConvertible {
@@ -74,7 +79,7 @@ private func requestProductionReopen(
     let applicationID = bundleIdentifier as CFString
     CFPreferencesAppSynchronize(applicationID)
     let startingGeneration = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
-    guard let application = NSRunningApplication(processIdentifier: processIdentifier), !application.isTerminated else {
+    guard processIsRunning(processIdentifier) else {
         throw ProbeError.applicationNotRunning
     }
     let target = NSAppleEventDescriptor(processIdentifier: processIdentifier)
@@ -92,8 +97,7 @@ private func requestProductionReopen(
         throw ProbeError.appleEventRejected(error.localizedDescription)
     }
     guard
-        !application.isTerminated,
-        NSRunningApplication(processIdentifier: processIdentifier)?.isTerminated == false
+        processIsRunning(processIdentifier)
     else {
         throw ProbeError.applicationProcessChanged
     }
@@ -242,7 +246,7 @@ do {
             let rawProcessIdentifier = ProcessInfo.processInfo.environment["BARLINE_EXPECTED_PID"],
             let processIdentifier = pid_t(rawProcessIdentifier),
             processIdentifier > 0,
-            NSRunningApplication(processIdentifier: processIdentifier)?.isTerminated == false
+            processIsRunning(processIdentifier)
         else {
             throw ProbeError.applicationNotRunning
         }
