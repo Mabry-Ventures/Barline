@@ -34,17 +34,53 @@ private struct WindowSnapshot {
 }
 
 private enum ProbeError: Error, CustomStringConvertible {
+    case applicationNotRunning
+    case applicationProcessChanged
+    case appleEventRejected(String)
     case barlineIconNotFound
     case unableToCloseBaseline
 
     var description: String {
         switch self {
+        case .applicationNotRunning:
+            "The production Barline application is not running"
+        case .applicationProcessChanged:
+            "Barline changed processes during the reopen response probe"
+        case let .appleEventRejected(message):
+            "The production reopen request was rejected: \(message)"
         case .barlineIconNotFound:
             "No on-screen Barline.ControlItem.Visible window was found"
         case .unableToCloseBaseline:
             "The Barline Bar could not be closed before measurement"
         }
     }
+}
+
+private func requestProductionReopen() throws -> Double {
+    let bundleIdentifier = "com.mabryventures.Barline"
+    guard let application = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
+        throw ProbeError.applicationNotRunning
+    }
+    let processIdentifier = application.processIdentifier
+    guard let script = NSAppleScript(source: "tell application id \"\(bundleIdentifier)\" to reopen") else {
+        throw ProbeError.appleEventRejected("could not create the Apple event")
+    }
+    let start = ContinuousClock.now
+    var errors: NSDictionary?
+    _ = script.executeAndReturnError(&errors)
+    if let errors {
+        let message = errors[NSAppleScript.errorMessage] as? String ?? "unknown Apple event error"
+        throw ProbeError.appleEventRejected(message)
+    }
+    guard
+        !application.isTerminated,
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).contains(where: {
+            $0.processIdentifier == processIdentifier
+        })
+    else {
+        throw ProbeError.applicationProcessChanged
+    }
+    return milliseconds(start.duration(to: .now))
 }
 
 private func windowSnapshots() -> [WindowSnapshot] {
@@ -171,15 +207,13 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
 }
 
 do {
-    if Configuration.probe == "status-observation" {
+    if Configuration.probe == "apple-event-reopen" {
         for _ in 0 ..< Configuration.warmupCycles {
-            _ = try barlineIconCenter()
+            _ = try requestProductionReopen()
         }
         var latencies = [Double]()
         for cycle in 1 ... Configuration.measuredCycles {
-            let start = ContinuousClock.now
-            _ = try barlineIconCenter()
-            let latency = milliseconds(start.duration(to: .now))
+            let latency = try requestProductionReopen()
             latencies.append(latency)
             print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
             usleep(50000)
@@ -203,7 +237,7 @@ do {
         exit(passed ? EXIT_SUCCESS : EXIT_FAILURE)
     }
     guard Configuration.probe == "runtime-smoke" else {
-        fputs("error: BARLINE_PERFORMANCE_PROBE must be runtime-smoke or status-observation\n", stderr)
+        fputs("error: BARLINE_PERFORMANCE_PROBE must be runtime-smoke or apple-event-reopen\n", stderr)
         exit(2)
     }
 

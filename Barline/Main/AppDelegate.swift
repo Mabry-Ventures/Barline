@@ -73,6 +73,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         Logger.default.debug("Handling reopen")
+        // A reopen is also a safe recovery opportunity for the compatibility
+        // backend. This keeps the app process alive while replacing an
+        // interrupted XPC helper before the user performs another action.
+        Task { [appState] in
+            do {
+                _ = try await appState.compatibilityCoordinator.refresh()
+            } catch {
+                Logger.default.error("Compatibility refresh on reopen failed: \(error)")
+            }
+        }
         openSettingsWindow()
         return true
     }

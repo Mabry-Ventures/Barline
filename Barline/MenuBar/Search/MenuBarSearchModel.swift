@@ -25,6 +25,7 @@ final class MenuBarSearchModel: ObservableObject {
         case fallback
         case validated(ValidatedMenuBarCommand)
         case previewRequired(ValidatedMenuBarCommand)
+        case nonRunnable(ValidatedMenuBarCommand, SearchCommandNonRunnableReason)
     }
 
     @Published var searchText = ""
@@ -38,6 +39,7 @@ final class MenuBarSearchModel: ObservableObject {
     private let commandRoutingPolicy = SearchCommandRoutingPolicy()
     private let commandValidator = MenuBarCommandValidator()
     private var commandInterpretationTask: Task<Void, Never>?
+    private var commandInterpretationSequence: UInt64 = 0
     private var spotlightDocuments = [SearchDocument]()
 
     init(commandInterpreter: any MenuBarCommandInterpreting = FoundationModelCommandInterpreter()) {
@@ -66,6 +68,8 @@ final class MenuBarSearchModel: ObservableObject {
         coordinator: MenuBarStateCoordinator,
         availableProfileIDs: Set<ProfileID>
     ) {
+        commandInterpretationSequence += 1
+        let requestSequence = commandInterpretationSequence
         commandInterpretationTask?.cancel()
         guard commandRoutingPolicy.shouldInterpret(
             query: query,
@@ -93,14 +97,36 @@ final class MenuBarSearchModel: ObservableObject {
         commandInterpretationTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(250))
-                guard !Task.isCancelled else { return }
+                guard self?.commandRequestIsCurrent(requestSequence, query: query) == true else {
+                    return
+                }
                 let command = try await interpreter.interpret(query: query, documents: context)
+                guard self?.commandRequestIsCurrent(requestSequence, query: query) == true else {
+                    return
+                }
+
+                // Model inference can outlive the snapshot it started with. Refresh
+                // before creating authority so validation never relies on that stale state.
+                _ = try await coordinator.refresh()
+                guard self?.commandRequestIsCurrent(requestSequence, query: query) == true else {
+                    return
+                }
                 let authority = try await MenuBarCommandAuthority.current(
                     from: coordinator,
                     availableProfileIDs: availableProfileIDs
                 )
                 let validated = try validator.validate(command, authority: authority).get()
-                guard !Task.isCancelled, self?.searchText == query else { return }
+                guard self?.commandRequestIsCurrent(requestSequence, query: query) == true else {
+                    return
+                }
+                let disposition = SearchCommandExecutionPolicy().disposition(
+                    for: validated,
+                    in: authority.validatedSnapshot
+                )
+                if case let .nonRunnable(reason) = disposition {
+                    self?.commandInterpretationState = .nonRunnable(validated, reason)
+                    return
+                }
                 switch validated.confirmation {
                 case .immediate:
                     self?.commandInterpretationState = .validated(validated)
@@ -110,16 +136,32 @@ final class MenuBarSearchModel: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
-                guard !Task.isCancelled, self?.searchText == query else { return }
+                guard self?.commandRequestIsCurrent(requestSequence, query: query) == true else {
+                    return
+                }
                 self?.commandInterpretationState = .fallback
             }
         }
     }
 
     func resetCommandInterpretation() {
+        commandInterpretationSequence += 1
         commandInterpretationTask?.cancel()
         commandInterpretationTask = nil
         commandInterpretationState = .idle
+    }
+
+    func markCommandNonRunnable(
+        _ command: ValidatedMenuBarCommand,
+        reason: SearchCommandNonRunnableReason
+    ) {
+        commandInterpretationState = .nonRunnable(command, reason)
+    }
+
+    private func commandRequestIsCurrent(_ sequence: UInt64, query: String) -> Bool {
+        !Task.isCancelled
+            && sequence == commandInterpretationSequence
+            && searchText == query
     }
 
     private func boundedModelContext(

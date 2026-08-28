@@ -10,6 +10,14 @@ public enum MenuBarMutation: Sendable {
     case reveal(MenuBarItemID)
     case activate(MenuBarItemID, MenuBarMouseButton)
     case restoreLastKnownGood
+
+    fileprivate var recordsLayoutHistory: Bool {
+        if case .activate = self {
+            false
+        } else {
+            true
+        }
+    }
 }
 
 public struct RetryPolicy: Sendable {
@@ -47,6 +55,12 @@ public actor MenuBarStateCoordinator {
     private struct HistoryCheckpoint: Sendable {
         let snapshot: MenuBarSnapshot
         let activeProfileID: UUID?
+    }
+
+    private struct LogicalLayoutItem: Hashable, Sendable {
+        let id: MenuBarItemID
+        let section: MenuBarSection
+        let order: Int
     }
 
     public private(set) var currentSnapshot: MenuBarSnapshot?
@@ -151,7 +165,9 @@ public actor MenuBarStateCoordinator {
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
-                recordUndoCheckpoint(before, activeProfileID: activeProfileID)
+                if mutation.recordsLayoutHistory {
+                    recordUndoCheckpoint(before, activeProfileID: activeProfileID)
+                }
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
@@ -364,6 +380,7 @@ public actor MenuBarStateCoordinator {
             // the newer pre-undo snapshot would reject a correct restore.
             switch validator.validate(candidate, previous: nil, now: now) {
             case let .success(snapshot):
+                try validateHistoryResult(snapshot, matches: target.snapshot)
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
@@ -388,6 +405,23 @@ public actor MenuBarStateCoordinator {
                 )
             }
             throw historyRestoreError
+        }
+    }
+
+    private func validateHistoryResult(
+        _ snapshot: MenuBarSnapshot,
+        matches target: MenuBarSnapshot
+    ) throws {
+        let restoredLayout = Set(snapshot.items.map {
+            LogicalLayoutItem(id: $0.id, section: $0.section, order: $0.order)
+        })
+        let targetLayout = Set(target.items.map {
+            LogicalLayoutItem(id: $0.id, section: $0.section, order: $0.order)
+        })
+        guard restoredLayout == targetLayout else {
+            throw MenuBarBackendError.operationFailed(
+                "history restore did not reach requested layout"
+            )
         }
     }
 

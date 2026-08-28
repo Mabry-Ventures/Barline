@@ -261,15 +261,21 @@ private struct MenuBarSearchContentView: View {
             .padding(8)
             .accessibilityIdentifier("search-command-interpreting")
         case let .validated(command), let .previewRequired(command):
-            commandAction(for: command)
+            commandAction(
+                for: command,
+                disposition: SearchCommandExecutionPolicy().disposition(for: command)
+            )
+        case let .nonRunnable(command, reason):
+            commandAction(for: command, disposition: .nonRunnable(reason))
         case .idle, .deterministicOnly, .unavailable, .fallback:
             EmptyView()
         }
     }
 
-    @ViewBuilder
-    private func commandAction(for command: ValidatedMenuBarCommand) -> some View {
-        let disposition = SearchCommandExecutionPolicy().disposition(for: command)
+    private func commandAction(
+        for command: ValidatedMenuBarCommand,
+        disposition: SearchCommandExecutionDisposition
+    ) -> some View {
         HStack {
             Label(
                 commandActionSummary(command, disposition: disposition),
@@ -285,8 +291,12 @@ private struct MenuBarSearchContentView: View {
                 Button("Confirm") {
                     executeValidatedCommand(command, confirmationGranted: true)
                 }
-            case .nonRunnable:
-                Button("Edit Manually") { openManualEditor(for: command) }
+            case let .nonRunnable(reason):
+                if nonRunnableCommandCanBeEditedManually(reason) {
+                    Button("Edit Manually") { openManualEditor(for: command) }
+                } else {
+                    Button("Dismiss") { model.resetCommandInterpretation() }
+                }
             }
         }
         .padding(8)
@@ -304,6 +314,23 @@ private struct MenuBarSearchContentView: View {
             "Cannot run this batch atomically. \(summary) manually in Layout Settings."
         case .missingArrangementDestination, .missingGroupDefinition:
             summary
+        case .targetUnavailable:
+            "Cannot run: the target is no longer available."
+        case .targetIsNotMovable:
+            "Cannot run: this menu bar item cannot be moved."
+        case .targetCannotBeHidden:
+            "Cannot run: this menu bar item cannot be hidden."
+        }
+    }
+
+    private func nonRunnableCommandCanBeEditedManually(
+        _ reason: SearchCommandNonRunnableReason
+    ) -> Bool {
+        switch reason {
+        case .atomicBatchMutationUnavailable, .missingArrangementDestination, .missingGroupDefinition:
+            true
+        case .targetUnavailable, .targetIsNotMovable, .targetCannotBeHidden:
+            false
         }
     }
 
@@ -552,7 +579,6 @@ private struct MenuBarSearchContentView: View {
         _ command: ValidatedMenuBarCommand,
         confirmationGranted: Bool
     ) {
-        guard requireAccessibilityForAction() else { return }
         let disposition = SearchCommandExecutionPolicy().disposition(for: command)
         switch disposition {
         case .executableImmediately:
@@ -565,11 +591,21 @@ private struct MenuBarSearchContentView: View {
 
         Task {
             do {
-                let snapshot = await appState.compatibilityCoordinator.currentSnapshot
-                guard snapshot?.generation == command.authorityGeneration else {
+                guard
+                    let snapshot = await appState.compatibilityCoordinator.currentSnapshot,
+                    snapshot.generation == command.authorityGeneration
+                else {
                     model.resetCommandInterpretation()
                     return
                 }
+                if case let .nonRunnable(reason) = SearchCommandExecutionPolicy().disposition(
+                    for: command,
+                    in: snapshot
+                ) {
+                    model.markCommandNonRunnable(command, reason: reason)
+                    return
+                }
+                guard requireAccessibilityForAction() else { return }
                 switch command.operation {
                 case .reveal:
                     guard let itemID = command.targetItemIDs.first else { return }
@@ -581,7 +617,7 @@ private struct MenuBarSearchContentView: View {
                     guard
                         command.targetItemIDs.count == 1,
                         let itemID = command.targetItemIDs.first,
-                        let item = snapshot?.items.first(where: { $0.id == itemID })
+                        let item = snapshot.items.first(where: { $0.id == itemID })
                     else {
                         return
                     }
@@ -592,9 +628,9 @@ private struct MenuBarSearchContentView: View {
                         closePanel()
                         return
                     }
-                    let targetIndex = snapshot?.items.count(where: {
+                    let targetIndex = snapshot.items.count(where: {
                         $0.section == targetSection && $0.displayID == item.displayID
-                    }) ?? 0
+                    })
                     _ = try await appState.compatibilityCoordinator.perform(
                         .move(
                             MenuBarMoveOperation(

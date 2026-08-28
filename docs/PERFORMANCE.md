@@ -20,12 +20,16 @@ implementation SHA is committed and clean.
 
 The default `./script/ci.sh soak` remains a short development smoke. Release
 preparation uses `./script/ci.sh soak --release`, which defaults to a bounded
-1,800-second run against an actual Release build. It observes the production
-status item rather than invoking the Debug-only runtime bridge, repeatedly executes
+1,800-second run against an actual Release build. It sends a standard production
+Apple `reopen` event and measures the synchronous application response rather
+than invoking the Debug-only runtime bridge. It repeatedly executes
 snapshot/state/profile/search tests in SwiftPM's Release configuration,
-forces XPC helper replacement through a production app lifecycle, and observes
-the status item while sampling app/helper
-RSS and CPU plus Barline cache size. It writes `resources.csv` and `summary.json`
+requires XPC helper replacement while preserving the app PID, and samples
+app/helper RSS and CPU plus Barline cache size. A changed app PID invalidates
+the run, so RSS growth remains continuous and enforced. The production reopen
+probe does not claim shelf responsiveness: real shelf interaction remains a
+separate Accessibility-bound release gate. It writes
+`resources.csv` and `summary.json`
 under `.artifacts/soak/<sha>/`, including the exact SHA, dirty state, host,
 toolchain, cycle counts, resource extrema/growth, configured guards, and whether
 the full 30-minute duration actually completed. A reduced duration is useful

@@ -116,14 +116,7 @@ final class UpdatesManager: NSObject, ObservableObject {
 
 // MARK: UpdatesManager: SPUUpdaterDelegate
 
-extension UpdatesManager: @preconcurrency SPUUpdaterDelegate {
-    func updater(_: SPUUpdater, willScheduleUpdateCheckAfterDelay _: TimeInterval) {
-        guard let appState else {
-            return
-        }
-        appState.userNotificationManager.requestAuthorization()
-    }
-}
+extension UpdatesManager: SPUUpdaterDelegate {}
 
 // MARK: UpdatesManager: SPUStandardUserDriverDelegate
 

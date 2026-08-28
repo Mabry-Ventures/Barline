@@ -194,6 +194,9 @@ public enum SearchCommandNonRunnableReason: String, Equatable, Sendable {
     case atomicBatchMutationUnavailable
     case missingArrangementDestination
     case missingGroupDefinition
+    case targetUnavailable
+    case targetIsNotMovable
+    case targetCannotBeHidden
 }
 
 public enum SearchCommandExecutionDisposition: Equatable, Sendable {
@@ -224,5 +227,34 @@ public struct SearchCommandExecutionPolicy: Sendable {
         case .group:
             .nonRunnable(.missingGroupDefinition)
         }
+    }
+
+    /// Rechecks execution capabilities against the current validated snapshot.
+    /// This check belongs immediately before execution because item capabilities
+    /// can change after model interpretation and command validation complete.
+    public func disposition(
+        for command: ValidatedMenuBarCommand,
+        in snapshot: MenuBarSnapshot
+    ) -> SearchCommandExecutionDisposition {
+        let schemaDisposition = disposition(for: command)
+        guard schemaDisposition == .executableImmediately else {
+            return schemaDisposition
+        }
+        guard command.operation == .show || command.operation == .hide else {
+            return schemaDisposition
+        }
+
+        for itemID in command.targetItemIDs {
+            guard let item = snapshot.items.first(where: { $0.id == itemID }) else {
+                return .nonRunnable(.targetUnavailable)
+            }
+            guard item.isMovable else {
+                return .nonRunnable(.targetIsNotMovable)
+            }
+            if command.operation == .hide, !item.canBeHidden {
+                return .nonRunnable(.targetCannotBeHidden)
+            }
+        }
+        return schemaDisposition
     }
 }
