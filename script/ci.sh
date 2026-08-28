@@ -51,7 +51,8 @@ mkdir -p "$ARTIFACT_DIR/logs" "$ARTIFACT_DIR/results"
 # Keep runtime builds isolated to this exact CI invocation and outside the
 # synchronized workspace, whose File Provider metadata is invalid signing
 # input. Interactive gates intentionally reuse this root within the run.
-export BARLINE_RUN_ROOT="/private/tmp/barline-ci-$(id -u)-$SHA-$MODE-${STARTED_AT//:/-}"
+BARLINE_RUN_ROOT="/private/tmp/barline-ci-$(id -u)-$SHA-$MODE-${STARTED_AT//:/-}"
+export BARLINE_RUN_ROOT
 COMMANDS_FILE="$ARTIFACT_DIR/commands.tsv"
 FAILURES_FILE="$ARTIFACT_DIR/failures.txt"
 : > "$COMMANDS_FILE"
