@@ -29,7 +29,8 @@ if rg -q 'permissions\.stopAllChecks\(\)' "$ROOT/Barline/Main/AppState.swift"; t
     exit 1
 fi
 rg -q 'permissions\.accessibility\.\$hasPermission' "$ROOT/Barline/Main/AppState.swift"
-rg -q 'startsEnabled: permissions\.accessibility\.hasPermission' "$ROOT/Barline/Main/AppState.swift"
+rg -q 'let initialAccessibilityPermission = permissions\.accessibility\.hasPermission' "$ROOT/Barline/Main/AppState.swift"
+rg -q 'startsEnabled: initialAccessibilityPermission' "$ROOT/Barline/Main/AppState.swift"
 rg -q 'accessibilityIdentifier\("degraded-mode-banner"\)' "$ROOT/Barline/Settings/SettingsView.swift"
 
 env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
