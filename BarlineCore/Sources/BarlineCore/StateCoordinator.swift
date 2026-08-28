@@ -11,6 +11,7 @@ public enum MenuBarAuthorityRefreshError: Error, Equatable, Sendable {
 
 public enum MenuBarMutation: Sendable {
     case move(MenuBarMoveOperation)
+    case transientMove(MenuBarMoveOperation)
     case reveal(MenuBarItemID)
     case activate(MenuBarItemID, MenuBarMouseButton)
     case restoreLastKnownGood
@@ -18,8 +19,19 @@ public enum MenuBarMutation: Sendable {
     fileprivate var recordsLayoutHistory: Bool {
         if case .activate = self {
             false
+        } else if case .transientMove = self {
+            false
         } else {
             true
+        }
+    }
+
+    fileprivate var moveOperation: MenuBarMoveOperation? {
+        switch self {
+        case let .move(operation), let .transientMove(operation):
+            operation
+        case .reveal, .activate, .restoreLastKnownGood:
+            nil
         }
     }
 }
@@ -263,7 +275,7 @@ public actor MenuBarStateCoordinator {
                 guard generation == mutationGeneration else {
                     throw CancellationError()
                 }
-                if case let .move(operation) = mutation,
+                if let operation = mutation.moveOperation,
                    !MenuBarMovePlanner().resultMatches(operation, in: snapshot)
                 {
                     throw MenuBarBackendError.operationFailed(
@@ -885,7 +897,7 @@ public actor MenuBarStateCoordinator {
         in snapshot: MenuBarSnapshot
     ) throws {
         let itemID: MenuBarItemID? = switch mutation {
-        case let .move(operation):
+        case let .move(operation), let .transientMove(operation):
             operation.itemID
         case let .reveal(referencedItemID), let .activate(referencedItemID, _):
             referencedItemID
@@ -965,7 +977,7 @@ public actor MenuBarStateCoordinator {
 
     private func apply(_ mutation: MenuBarMutation) async throws {
         switch mutation {
-        case let .move(operation):
+        case let .move(operation), let .transientMove(operation):
             _ = try await backend.move(operation)
         case let .reveal(itemID):
             _ = try await backend.reveal(itemID)

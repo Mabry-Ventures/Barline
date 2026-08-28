@@ -250,6 +250,7 @@ final class AppState: ObservableObject {
         await BarlineMenuService.Connection.shared.start()
         do {
             _ = try await compatibilityCoordinator.refresh()
+            await profileManager.reconcileActiveProfileAuthority()
         } catch {
             logger.warning("Compatibility snapshot unavailable after permission grant")
         }

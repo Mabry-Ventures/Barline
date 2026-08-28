@@ -707,7 +707,11 @@ extension MenuBarItemManager {
         )
     }
 
-    func move(item: MenuBarItem, to destination: MoveDestination) async throws {
+    func move(
+        item: MenuBarItem,
+        to destination: MoveDestination,
+        recordsHistory: Bool = true
+    ) async throws {
         guard appState?.permissions.accessibility.hasPermission == true else {
             throw EventError.cannotComplete
         }
@@ -733,13 +737,18 @@ extension MenuBarItemManager {
                 throw EventError.cannotComplete
             }
             let priorProfileID = await appState.compatibilityCoordinator.activeProfileID
+            let mutation: BarlineCore.MenuBarMutation = recordsHistory
+                ? .move(operation)
+                : .transientMove(operation)
             _ = try await appState.compatibilityCoordinator.perform(
-                .move(operation),
+                mutation,
                 expectedGeneration: snapshot.generation
             )
-            await appState.profileManager.clearActiveProfileAuthority(
-                ifMatches: priorProfileID
-            )
+            if recordsHistory {
+                await appState.profileManager.clearActiveProfileAuthority(
+                    ifMatches: priorProfileID
+                )
+            }
             await cacheItemsRegardless()
         } catch {
             logger.error("Typed helper move failed: \(error, privacy: .public)")
@@ -889,7 +898,11 @@ extension MenuBarItemManager {
         logger.debug("Temporarily showing \(item.logString, privacy: .public)")
 
         do {
-            try await move(item: item, to: .leftOfItem(targetItem))
+            try await move(
+                item: item,
+                to: .leftOfItem(targetItem),
+                recordsHistory: false
+            )
         } catch {
             logger.error("Error showing item: \(error, privacy: .public)")
             return
@@ -969,7 +982,11 @@ extension MenuBarItemManager {
                 continue
             }
             do {
-                try await move(item: item, to: context.returnDestination)
+                try await move(
+                    item: item,
+                    to: context.returnDestination,
+                    recordsHistory: false
+                )
                 if let token = context.revealObservation {
                     await BarlineMenuService.Connection.shared.endRevealObservation(token)
                 }

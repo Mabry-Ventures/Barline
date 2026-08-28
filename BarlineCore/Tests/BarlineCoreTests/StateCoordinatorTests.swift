@@ -1137,6 +1137,56 @@ struct StateCoordinatorTests {
         #expect(await coordinator.canUndo)
     }
 
+    @Test("Transient moves preserve profile authority and layout history")
+    func transientMovePreservesProfileAuthorityAndHistory() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(131),
+            name: "Current",
+            layout: ProfileLayout(
+                visible: [before.items[1].id],
+                hidden: [before.items[0].id]
+            )
+        )
+        let activated = makeProfileSnapshot(generation: 2, layout: profile.layout)
+        let transientLayout = ProfileLayout(
+            visible: [before.items[1].id, before.items[0].id]
+        )
+        let temporarilyShown = makeProfileSnapshot(generation: 3, layout: transientLayout)
+        let liveTemporarilyShown = makeProfileSnapshot(generation: 4, layout: transientLayout)
+        let restoredBefore = makeSnapshot(generation: 5, count: 2)
+        let backend = FakeBackend(snapshots: [
+            before,
+            activated,
+            temporarilyShown,
+            liveTemporarilyShown,
+            restoredBefore,
+        ])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: activated.capturedAt)
+
+        _ = try await coordinator.perform(
+            .transientMove(
+                MenuBarMoveOperation(
+                    itemID: before.items[0].id,
+                    section: .visible,
+                    index: 1
+                )
+            ),
+            now: temporarilyShown.capturedAt
+        )
+
+        #expect(await coordinator.activeProfileID == profile.id)
+        _ = try await coordinator.undo(now: restoredBefore.capturedAt)
+        #expect(await coordinator.currentSnapshot == restoredBefore)
+        #expect(await coordinator.canUndo == false)
+        #expect(await coordinator.canRedo)
+    }
+
     @Test("External layout refresh revokes active profile authority")
     func externalRefreshClearsProfileAuthority() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
