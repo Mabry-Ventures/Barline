@@ -33,16 +33,16 @@ ruby -rjson -rpsych -rrexml/document -e '
   end
 '
 
-workflow_files=(.github/workflows/*.yml .github/workflows/*.yaml)
-for workflow in "${workflow_files[@]}"; do
-    [[ -e "$workflow" ]] || continue
-    if rg -n 'uses:\s*[^#[:space:]]+@(?![0-9a-f]{40}(?:\s|$))' --pcre2 "$workflow"; then
-        printf 'error: every action must be pinned to a full 40-character SHA\n' >&2
-        exit 1
-    fi
-done
+ruby -e '
+  Dir.glob(".github/workflows/*.{yml,yaml}").each do |path|
+    File.readlines(path).each_with_index do |line, index|
+      next unless (match = line.match(/uses:\s*([^#\s]+)@([^#\s]+)/))
+      abort "#{path}:#{index + 1}: action is not pinned to a full SHA" unless match[2].match?(/\A[0-9a-f]{40}\z/)
+    end
+  end
+'
 
-if rg -n 'runs-on:\s*(macos|\[?[^#\n]*self-hosted)|pull_request_target' .github/workflows; then
+if grep -RInE 'runs-on:[[:space:]]*(macos|\[?[^#]*self-hosted)|pull_request_target' .github/workflows; then
     printf 'error: macOS, self-hosted, and pull_request_target workflows are forbidden\n' >&2
     exit 1
 fi
@@ -51,9 +51,9 @@ fi
     printf 'error: exactly one GitHub Actions workflow is allowed\n' >&2
     exit 1
 }
-rg -q '^permissions:$' .github/workflows/repo-hygiene.yml
-rg -q '^  contents: read$' .github/workflows/repo-hygiene.yml
-if rg -n '^\s+[a-z-]+:\s*write\s*$' .github/workflows; then
+grep -q '^permissions:$' .github/workflows/repo-hygiene.yml
+grep -q '^  contents: read$' .github/workflows/repo-hygiene.yml
+if grep -RInE '^[[:space:]]+[a-z-]+:[[:space:]]*write[[:space:]]*$' .github/workflows; then
     printf 'error: workflow token write permissions are forbidden\n' >&2
     exit 1
 fi
@@ -63,7 +63,7 @@ for file in "${required[@]}"; do
     [[ -s "$file" ]] || { printf 'error: required repository file missing or empty: %s\n' "$file" >&2; exit 1; }
 done
 
-if git ls-files | rg -i '(\.p12$|\.mobileprovision$|\.provisionprofile$|sparkle.*private|notari[sz]ation.*(password|credential)|(^|/)(id_rsa|id_ed25519)$)'; then
+if git ls-files | grep -Ei '(\.p12$|\.mobileprovision$|\.provisionprofile$|sparkle.*private|notari[sz]ation.*(password|credential)|(^|/)(id_rsa|id_ed25519)$)'; then
     printf 'error: possible signing/notarization/private-key material is tracked\n' >&2
     exit 1
 fi
@@ -94,7 +94,7 @@ for file in "${executables[@]}"; do
 done
 
 for pattern in '.artifacts/' '.build/' 'DerivedData/' 'build/' '*.xcresult'; do
-    rg -q "^${pattern//\*/\\*}$" .gitignore || { printf 'error: generated path is not ignored: %s\n' "$pattern" >&2; exit 1; }
+    grep -Fqx "$pattern" .gitignore || { printf 'error: generated path is not ignored: %s\n' "$pattern" >&2; exit 1; }
 done
 
 ruby -e '

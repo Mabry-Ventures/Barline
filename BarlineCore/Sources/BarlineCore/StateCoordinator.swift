@@ -57,8 +57,11 @@ public actor MenuBarStateCoordinator {
     private let backend: any MenuBarBackend
     private let validator: SnapshotValidator
     private let retryPolicy: RetryPolicy
+    private let historyLimit = 50
     private var mutationIsActive = false
     private var mutationWaiters = [CheckedContinuation<Void, Never>]()
+    private var undoSnapshots = [MenuBarSnapshot]()
+    private var redoSnapshots = [MenuBarSnapshot]()
 
     public init(
         backend: any MenuBarBackend,
@@ -143,6 +146,7 @@ public actor MenuBarStateCoordinator {
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
+                recordUndoCheckpoint(before)
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
@@ -233,6 +237,7 @@ public actor MenuBarStateCoordinator {
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
                 activeProfileID = profile.id
+                recordUndoCheckpoint(before)
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
@@ -279,6 +284,87 @@ public actor MenuBarStateCoordinator {
             _ = try await backend.restore(lastKnownGoodSnapshot)
         }
         return try await refresh(now: now)
+    }
+
+    public var canUndo: Bool {
+        !undoSnapshots.isEmpty
+    }
+
+    public var canRedo: Bool {
+        !redoSnapshots.isEmpty
+    }
+
+    @discardableResult
+    public func undo(now: Date = Date()) async throws -> MenuBarSnapshot {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+
+        guard let target = undoSnapshots.last else {
+            throw MenuBarBackendError.operationFailed("no layout undo checkpoint")
+        }
+        let before = try await validatedStartingSnapshot(now: now)
+        let restored = try await restoreHistorySnapshot(target, previous: before, now: now)
+        undoSnapshots.removeLast()
+        redoSnapshots.append(before)
+        trimHistory(&redoSnapshots)
+        return restored
+    }
+
+    @discardableResult
+    public func redo(now: Date = Date()) async throws -> MenuBarSnapshot {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+
+        guard let target = redoSnapshots.last else {
+            throw MenuBarBackendError.operationFailed("no layout redo checkpoint")
+        }
+        let before = try await validatedStartingSnapshot(now: now)
+        let restored = try await restoreHistorySnapshot(target, previous: before, now: now)
+        redoSnapshots.removeLast()
+        undoSnapshots.append(before)
+        trimHistory(&undoSnapshots)
+        return restored
+    }
+
+    private func restoreHistorySnapshot(
+        _ target: MenuBarSnapshot,
+        previous: MenuBarSnapshot,
+        now: Date
+    ) async throws -> MenuBarSnapshot {
+        guard await backend.capabilities.canRestore else {
+            throw MenuBarBackendError.unavailableCapability("restore")
+        }
+        mutationGeneration &+= 1
+        _ = try await backend.restore(target)
+        let candidate = try await backend.snapshot()
+        // History restoration intentionally targets an older logical layout;
+        // structural validation remains strict, but monotonic comparison with
+        // the newer pre-undo snapshot would reject a correct restore.
+        switch validator.validate(candidate, previous: nil, now: now) {
+        case let .success(snapshot):
+            currentSnapshot = snapshot
+            lastKnownGoodSnapshot = snapshot
+            lastRejection = nil
+            return snapshot
+        case let .failure(reason):
+            lastRejection = reason
+            _ = try? await backend.restore(previous)
+            currentSnapshot = previous
+            lastKnownGoodSnapshot = previous
+            throw MenuBarBackendError.invalidSnapshot(reason)
+        }
+    }
+
+    private func recordUndoCheckpoint(_ snapshot: MenuBarSnapshot) {
+        undoSnapshots.append(snapshot)
+        trimHistory(&undoSnapshots)
+        redoSnapshots.removeAll(keepingCapacity: true)
+    }
+
+    private func trimHistory(_ history: inout [MenuBarSnapshot]) {
+        if history.count > historyLimit {
+            history.removeFirst(history.count - historyLimit)
+        }
     }
 
     private func validateReferences(

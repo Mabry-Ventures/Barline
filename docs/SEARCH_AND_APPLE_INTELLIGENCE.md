@@ -24,27 +24,37 @@ panel now constructs bounded documents for live menu items and saved profiles,
 uses the deterministic index for ranking, exposes profile activation results,
 and replaces Barline's private Spotlight domain when the document set changes.
 
-## Not implemented
+## Typed on-device interpretation
+
+On macOS 26, ambiguous queries may enter a lazy `SystemLanguageModel` session.
+The adapter uses `@Generable` with a closed operation enum, at most 20 targets,
+and bounded privacy-safe documents. Generated IDs resolve against the supplied
+context, then pass current authority, `MenuBarCommandValidator`, and confirmation
+policy. Invalid, low-confidence, or unavailable-model results fall back to
+deterministic search without mutation.
+
+Evaluation routing requires at least 80% overall accuracy and 100% rejection of
+unsafe requests before candidate evidence may pass.
+
+## Remaining work
 
 - Core Spotlight query/deep-link handling and user-facing reindex controls
-- Foundation Models typed parsing or inference sessions
 - macOS 27 `SpotlightSearchTool`
-- release-lane model evaluation and recorded thresholds
+- candidate-bound execution and recording of the model evaluation corpus
 
 The App Intents extension implements stable-ID profile entity lookup against a
 privacy-bounded App Group catalog. It does not read menu-bar snapshots or call
 the compatibility helper.
 
 The availability model always keeps deterministic local search enabled and can
-plan optional Spotlight/model stages. Capability probes may mark frameworks
-available, but availability alone does not execute indexing, inference, or a
+plan optional Spotlight/model stages. Capability alone never authorizes a
 command.
 
 ## Safety contract
 
-Future model output must be decoded into a closed typed command, checked by
+Model output is decoded into a closed typed command, checked by
 `MenuBarCommandValidator`, bound to the current generation and known entities,
-and subjected to confirmation policy. A model must never emit executable code,
+and subjected to confirmation policy. The model cannot emit executable code,
 paths, shell commands, or bypass deterministic validation. Search must remain
 useful with Apple Intelligence disabled, unavailable, or unsupported, and no
 query may be sent to a remote model.

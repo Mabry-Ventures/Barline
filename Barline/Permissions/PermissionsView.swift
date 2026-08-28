@@ -10,7 +10,9 @@ struct PermissionsView: View {
     @EnvironmentObject var manager: AppPermissions
 
     private var continueButtonText: LocalizedStringKey {
-        if case .hasRequired = manager.permissionsState {
+        if case .missing = manager.permissionsState {
+            "Continue in Degraded Mode"
+        } else if case .hasRequired = manager.permissionsState {
             "Continue in Limited Mode"
         } else {
             "Continue"
@@ -43,7 +45,6 @@ struct PermissionsView: View {
         .fixedSize()
     }
 
-    @ViewBuilder
     private var headerView: some View {
         Label {
             Text("Permissions")
@@ -58,7 +59,6 @@ struct PermissionsView: View {
         }
     }
 
-    @ViewBuilder
     private var explanationBox: some View {
         BarlineSection {
             VStack {
@@ -73,7 +73,6 @@ struct PermissionsView: View {
         .font(.title3)
     }
 
-    @ViewBuilder
     private var permissionsStack: some View {
         VStack {
             explanationBox
@@ -83,7 +82,6 @@ struct PermissionsView: View {
         }
     }
 
-    @ViewBuilder
     private var footerView: some View {
         HStack {
             quitButton
@@ -92,7 +90,6 @@ struct PermissionsView: View {
         .controlSize(.large)
     }
 
-    @ViewBuilder
     private var quitButton: some View {
         Button {
             NSApp.terminate(nil)
@@ -102,17 +99,10 @@ struct PermissionsView: View {
         }
     }
 
-    @ViewBuilder
     private var continueButton: some View {
         Button {
             appState.dismissWindow(.permissions)
-
-            guard manager.permissionsState != .missing else {
-                appState.performSetup(hasPermissions: false)
-                return
-            }
-
-            appState.performSetup(hasPermissions: true)
+            appState.performSetup()
 
             Task {
                 appState.activate(withPolicy: .regular)
@@ -123,10 +113,8 @@ struct PermissionsView: View {
                 .frame(maxWidth: .infinity)
                 .foregroundStyle(continueButtonForegroundStyle)
         }
-        .disabled(manager.permissionsState == .missing)
     }
 
-    @ViewBuilder
     private func permissionBox(_ permission: Permission) -> some View {
         BarlineSection {
             VStack(spacing: 12) {

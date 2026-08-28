@@ -58,12 +58,34 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-        } detail: {
-            detailView
+        VStack(spacing: 0) {
+            if !appState.permissions.accessibility.hasPermission {
+                degradedModeBanner
+            }
+            NavigationSplitView {
+                sidebar
+            } detail: {
+                detailView
+            }
+            .navigationTitle(navigationTitle)
         }
-        .navigationTitle(navigationTitle)
+    }
+
+    private var degradedModeBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.shield")
+                .foregroundStyle(.yellow)
+            Text("Degraded mode: settings, saved profiles, search, and diagnostics remain available. Accessibility is needed only to inspect or arrange other apps' menu bar items.")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Enable Accessibility") {
+                appState.permissions.accessibility.performRequest()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.yellow.opacity(0.12))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("degraded-mode-banner")
     }
 
     private var sidebar: some View {

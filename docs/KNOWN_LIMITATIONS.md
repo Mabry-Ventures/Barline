@@ -4,16 +4,16 @@ This list describes the active development tree. It is not a release claim.
 
 ## Product
 
-- Profile storage, capture, transactional activation, deletion, Presentation
-  templates, source precedence, App Intents and Focus bridging are wired. Full
-  groups/spacers editing, Ice-import UI, display reconnect reconciliation,
-  user-facing recovery controls, and complete undo/redo remain absent.
+- Profile storage, capture, transactional activation, editing, archive import/
+  export, Presentation templates, App Intents/Focus delivery, and recovery are
+  wired, including explicit Ice import preview and bounded layout undo/redo.
+  Display reconnect reconciliation and runtime group/spacer placement remain
+  incomplete.
 - Real Focus and Shortcuts execution is not proven without a provisioned signed
   build; the local development certificate is unavailable.
-- Deterministic search and bounded Spotlight indexing are connected. Foundation
-  Models typed parsing/inference and macOS 27 `SpotlightSearchTool` are absent.
-- Missing required Accessibility permission still routes launch to a permissions
-  window rather than allowing the complete degraded product experience.
+- Deterministic search, bounded Spotlight indexing, and typed on-device model
+  interpretation are connected. macOS 27 `SpotlightSearchTool` remains blocked
+  on the unavailable Xcode/macOS 27 lane.
 
 ## Compatibility and quality
 
@@ -22,20 +22,21 @@ This list describes the active development tree. It is not a release claim.
 - Fixture, unit, integration and UI targets plus an explicit test plan exist.
   UI execution is administrator-blocked because Developer Tools automation mode
   is disabled on this host.
-- The status-item smoke, bounded shelf-responsiveness probe, and 10-cycle Core/
-  XPC/shelf soak pass locally. Full XCUITest, AX/VoiceOver, display, sleep/wake,
-  permission-revocation, representative-hardware, and 30-minute soak matrices
-  have not passed.
+- Status-item smoke, bounded shelf responsiveness, and resource-sampled soak
+  automation exist. Full XCUITest, AX/VoiceOver, display, sleep/wake,
+  permission-revocation, representative-hardware, and release-duration soak
+  evidence have not passed on the exact launch SHA.
 - Xcode 27 is not installed and no macOS 27 runtime host has been used.
 
 ## Distribution
 
-- The unsigned release dry-run script exists. No signed candidate, notarization,
-  stapling, Gatekeeper proof, SBOM, or clean install/update evidence exists.
-- Sparkle is embedded but disabled. There is no Barline feed, public key,
-  appcast, or signed update test.
-- The canonical `origin`, public support URLs, and GitHub branch rules are not
-  configured.
+- The release pipeline implements Developer ID, entitlement/profile,
+  notarization, stapling, Gatekeeper, Sparkle, checksum, SBOM, and source-archive
+  gates. It cannot complete without App Group profiles and a notary profile.
+- Sparkle is enabled only in Release with Barline's public key and canonical
+  GitHub appcast URL. No previous public Barline version exists for update proof.
+- The canonical public repository exists. Protected rules and local status
+  publication wait on a fully green exact-head candidate.
 
 Track candidate-specific results in [the test matrix](TEST_MATRIX.md), release
 requirements in [RELEASING.md](RELEASING.md), and architecture progress in

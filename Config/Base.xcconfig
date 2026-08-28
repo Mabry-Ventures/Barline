@@ -6,8 +6,11 @@ BARLINE_INTENTS_BUNDLE_IDENTIFIER = com.mabryventures.Barline.Intents
 BARLINE_APP_GROUP_IDENTIFIER = group.com.mabryventures.Barline
 BARLINE_LOGGING_SUBSYSTEM = com.mabryventures.Barline
 BARLINE_DEVELOPMENT_TEAM =
-BARLINE_SPARKLE_FEED_URL =
-BARLINE_SPARKLE_PUBLIC_KEY =
+// Public release metadata. The matching Ed25519 private key is stored only in
+// the release operator's Keychain under the `mabry-ventures-barline` account.
+BARLINE_URL_SCHEME_SEPARATOR = /$()/
+BARLINE_SPARKLE_FEED_URL = https:$(BARLINE_URL_SCHEME_SEPARATOR)github.com/Mabry-Ventures/Barline/releases/latest/download/appcast.xml
+BARLINE_SPARKLE_PUBLIC_KEY = FLCbqau7PBLbXZBmki4cLVfg7qrLROszQEulHX38htc=
 
 ARCHS = arm64
 EXCLUDED_ARCHS = x86_64 i386

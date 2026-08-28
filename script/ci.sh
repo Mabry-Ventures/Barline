@@ -7,14 +7,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
 MODE="${1:-}"
-[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|full|release|xcode27|soak} [--publish-status] [--xcode PATH]"
+[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|full|release|xcode27|soak} [--release] [--publish-status] [--xcode PATH]"
 shift
 
 PUBLISH_STATUS=false
 XCODE_PATH=""
+RELEASE_SOAK=false
 while (($#)); do
     case "$1" in
         --publish-status) PUBLISH_STATUS=true ;;
+        --release) RELEASE_SOAK=true ;;
         --xcode)
             (($# >= 2)) || barline_die "--xcode requires a path"
             XCODE_PATH="$2"
@@ -24,6 +26,10 @@ while (($#)); do
     esac
     shift
 done
+
+if "$RELEASE_SOAK" && [[ "$MODE" != soak ]]; then
+    barline_die "--release is supported only with soak mode"
+fi
 
 case "$MODE" in
     fast|full|release|xcode27|soak) ;;
@@ -169,7 +175,7 @@ run_fast() {
         git ls-files --others --exclude-standard -z -- '*.swift'
     )
     if ((${#changed_swift[@]})); then
-        run_step "swiftformat" swiftformat --lint "${changed_swift[@]}"
+        run_step "swiftformat" swiftformat --lint --swift-version 6.0 "${changed_swift[@]}"
     else
         printf 'Format check: no changed Swift files.\n'
     fi
@@ -249,7 +255,11 @@ case "$MODE" in
         fi
         ;;
     soak)
-        require_gate_script ./script/test-soak.sh
+        if "$RELEASE_SOAK"; then
+            run_step "test-soak-release" ./script/test-soak.sh --release
+        else
+            require_gate_script ./script/test-soak.sh
+        fi
         ;;
 esac
 

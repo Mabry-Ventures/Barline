@@ -309,6 +309,31 @@ struct StateCoordinatorTests {
         #expect(await coordinator.currentSnapshot == third)
     }
 
+    @Test("Layout mutations create bounded undo and redo checkpoints")
+    func undoesAndRedoesLayoutMutation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let restoredBefore = makeSnapshot(generation: 3, count: 2)
+        let restoredAfter = makeSnapshot(generation: 4, count: 2)
+        let backend = FakeBackend(snapshots: [before, after, restoredBefore, restoredAfter])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.perform(.reveal(before.items[0].id), now: after.capturedAt)
+
+        #expect(await coordinator.canUndo)
+        _ = try await coordinator.undo(now: restoredBefore.capturedAt)
+        #expect(await coordinator.canRedo)
+        _ = try await coordinator.redo(now: restoredAfter.capturedAt)
+
+        #expect(await backend.restoredSnapshots == [before, after])
+        #expect(await coordinator.currentSnapshot == restoredAfter)
+        #expect(await coordinator.canUndo)
+        #expect(await coordinator.canRedo == false)
+    }
+
     @Test("Explicit last-known-good restore participates in post-validation")
     func restoresLastKnownGoodMutation() async throws {
         let before = makeSnapshot(generation: 1, count: 2)

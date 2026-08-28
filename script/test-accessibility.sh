@@ -19,6 +19,18 @@ rg -q '\.accessibilityLabel\(item\.displayName\)' "$ROOT/Barline/MenuBar/Barline
 rg -q '\.accessibilityAction\(named: "left click"' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
 rg -q '\.accessibilityAction\(named: "right click"' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
 rg -q '\.accessibilityLabel\(label\)' "$ROOT/Barline/UI/Views/HotkeyRecorder.swift"
+rg -q 'appState\.performSetup\(\)' "$ROOT/Barline/Main/AppDelegate.swift"
+if rg -q 'performSetup\(hasPermissions:' "$ROOT/Barline"; then
+    printf 'error: launch still branches setup on permission state\n' >&2
+    exit 1
+fi
+if rg -q 'permissions\.stopAllChecks\(\)' "$ROOT/Barline/Main/AppState.swift"; then
+    printf 'error: app setup disables permission transition observation\n' >&2
+    exit 1
+fi
+rg -q 'permissions\.accessibility\.\$hasPermission' "$ROOT/Barline/Main/AppState.swift"
+rg -q 'startsEnabled: permissions\.accessibility\.hasPermission' "$ROOT/Barline/Main/AppState.swift"
+rg -q 'accessibilityIdentifier\("degraded-mode-banner"\)' "$ROOT/Barline/Settings/SettingsView.swift"
 
 env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
     -project "$ROOT/Barline.xcodeproj" -scheme BarlineFixture -configuration Debug \

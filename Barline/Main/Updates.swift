@@ -9,10 +9,15 @@ import SwiftUI
 /// Manager for app updates.
 @MainActor
 final class UpdatesManager: NSObject, ObservableObject {
-    /// Whether this distribution has a trusted, independently owned update feed.
-    ///
-    /// Keep disabled until the fork publishes its own appcast and signing key.
-    static let isEnabled = false
+    // Whether this distribution has a trusted, independently owned update feed.
+    //
+    // Release builds carry Barline's public Sparkle key and appcast URL. Debug
+    // builds remain offline so local runs never contact the production feed.
+    #if BARLINE_UPDATES_ENABLED
+        static let isEnabled = true
+    #else
+        static let isEnabled = false
+    #endif
 
     /// A Boolean value that indicates whether the user can check for updates.
     @Published var canCheckForUpdates = false
@@ -93,25 +98,26 @@ final class UpdatesManager: NSObject, ObservableObject {
             return
         }
         #if DEBUG
-        // Checking for updates hangs in debug mode.
-        let alert = NSAlert()
-        alert.messageText = "Checking for updates is not supported in debug mode."
-        alert.runModal()
+            // Checking for updates hangs in debug mode.
+            let alert = NSAlert()
+            alert.messageText = "Checking for updates is not supported in debug mode."
+            alert.runModal()
         #else
-        guard let appState else {
-            return
-        }
-        // Activate the app in case an alert needs to be displayed.
-        appState.activate(withPolicy: .regular)
-        appState.openWindow(.settings)
-        updater.checkForUpdates()
+            guard let appState else {
+                return
+            }
+            // Activate the app in case an alert needs to be displayed.
+            appState.activate(withPolicy: .regular)
+            appState.openWindow(.settings)
+            updater.checkForUpdates()
         #endif
     }
 }
 
 // MARK: UpdatesManager: SPUUpdaterDelegate
+
 extension UpdatesManager: @preconcurrency SPUUpdaterDelegate {
-    func updater(_ updater: SPUUpdater, willScheduleUpdateCheckAfterDelay delay: TimeInterval) {
+    func updater(_: SPUUpdater, willScheduleUpdateCheckAfterDelay _: TimeInterval) {
         guard let appState else {
             return
         }
@@ -120,22 +126,25 @@ extension UpdatesManager: @preconcurrency SPUUpdaterDelegate {
 }
 
 // MARK: UpdatesManager: SPUStandardUserDriverDelegate
+
 extension UpdatesManager: @preconcurrency SPUStandardUserDriverDelegate {
-    var supportsGentleScheduledUpdateReminders: Bool { true }
+    var supportsGentleScheduledUpdateReminders: Bool {
+        true
+    }
 
     func standardUserDriverShouldHandleShowingScheduledUpdate(
-        _ update: SUAppcastItem,
+        _: SUAppcastItem,
         andInImmediateFocus immediateFocus: Bool
     ) -> Bool {
         if NSApp.isActive {
-            return immediateFocus
+            immediateFocus
         } else {
-            return false
+            false
         }
     }
 
     func standardUserDriverWillHandleShowingUpdate(
-        _ handleShowingUpdate: Bool,
+        _: Bool,
         forUpdate update: SUAppcastItem,
         state: SPUUserUpdateState
     ) {
@@ -151,7 +160,7 @@ extension UpdatesManager: @preconcurrency SPUStandardUserDriverDelegate {
         }
     }
 
-    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+    func standardUserDriverDidReceiveUserAttention(forUpdate _: SUAppcastItem) {
         guard let appState else {
             return
         }
