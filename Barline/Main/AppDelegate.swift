@@ -11,6 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The shared app state.
     let appState = AppState()
 
+    /// Coalesces repeated requests to activate the settings window.
+    private var settingsOpenTask: Task<Void, Never>?
+
+    /// Prevents bursts of reopen events from starting overlapping XPC refreshes.
+    private var reopenRecoveryTask: Task<Void, Never>?
+
     #if DEBUG
         private static let runtimeSmokeToggleNotification = Notification.Name(
             "com.mabryventures.Barline.runtime-smoke.toggle-shelf"
@@ -76,11 +82,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A reopen is also a safe recovery opportunity for the compatibility
         // backend. This keeps the app process alive while replacing an
         // interrupted XPC helper before the user performs another action.
-        Task { [appState] in
-            do {
-                _ = try await appState.compatibilityCoordinator.refresh()
-            } catch {
-                Logger.default.error("Compatibility refresh on reopen failed: \(error)")
+        if reopenRecoveryTask == nil {
+            reopenRecoveryTask = Task { [weak self] in
+                guard let self else {
+                    return
+                }
+                defer { reopenRecoveryTask = nil }
+                do {
+                    _ = try await appState.compatibilityCoordinator.refresh()
+                } catch {
+                    Logger.default.error("Compatibility refresh on reopen failed: \(error)")
+                }
             }
         }
         openSettingsWindow()
@@ -107,8 +119,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opens the settings window and activates the app.
     @objc func openSettingsWindow() {
-        // Delay makes this more reliable for some reason.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [appState] in
+        // Delay makes this more reliable for some reason. Cancel the prior
+        // delayed activation so a burst of reopen events cannot enqueue
+        // unbounded main-actor work.
+        settingsOpenTask?.cancel()
+        settingsOpenTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                return
+            }
+            guard let self else {
+                return
+            }
+            settingsOpenTask = nil
             appState.activate(withPolicy: .regular)
             appState.openWindow(.settings)
         }

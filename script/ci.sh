@@ -241,6 +241,7 @@ run_full() {
     require_gate_script ./script/test-accessibility.sh
     require_gate_script ./script/test-support-bundle-privacy.sh
     require_gate_script ./script/test-performance-smoke.sh
+    require_gate_script ./script/test-reopen-burst.sh
 }
 
 case "$MODE" in
