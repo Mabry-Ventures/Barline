@@ -13,6 +13,7 @@ import OSLog
 final class ProfileManager: ObservableObject {
     @Published private(set) var profiles = [BarlineProfile]()
     @Published private(set) var activeProfileID: UUID?
+    @Published private(set) var activeProfileActivatedAt: Date?
     @Published private(set) var loadSource: ProfileStoreLoadSource = .notCreated
     @Published private(set) var pendingArchiveImport: ProfileArchiveImportPreview?
     @Published private(set) var pendingIceImports = [IceImportPreview]()
@@ -151,6 +152,7 @@ final class ProfileManager: ObservableObject {
             return resolvedProfile.id
         } completion: { [weak self] profileID in
             self?.activeProfileID = profileID
+            self?.activeProfileActivatedAt = Date()
             self?.applyWorkspaceSettings(from: resolvedProfile)
             didActivate = true
         }
@@ -220,6 +222,7 @@ final class ProfileManager: ObservableObject {
             return await appState.compatibilityCoordinator.activeProfileID
         } completion: { [weak self] profileID in
             self?.activeProfileID = profileID
+            self?.activeProfileActivatedAt = profileID == nil ? nil : Date()
         }
     }
 
@@ -296,17 +299,23 @@ final class ProfileManager: ObservableObject {
         }
         let retained = profiles.filter { !replacingExisting || !importedIDs.contains($0.id) }
         let updated = retained + importedProfiles
+        let invalidatesActiveProfile = replacingExisting
+            && activeProfileID.map(importedIDs.contains) == true
         await performOperation(successMessage: "Profile archive imported.") {
             try await self.store.save(updated)
-            return updated
-        } completion: { [weak self] saved in
-            if replacingExisting,
-               let activeProfileID = self?.activeProfileID,
-               importedIDs.contains(activeProfileID)
-            {
-                self?.activeProfileID = nil
+            if invalidatesActiveProfile {
+                await self.appState?.compatibilityCoordinator.clearActiveProfileAuthority()
             }
-            self?.profiles = saved
+            return (profiles: updated, invalidatedAuthority: invalidatesActiveProfile)
+        } completion: { [weak self] result in
+            if result.invalidatedAuthority {
+                self?.activationRequests = self?.activationRequests.filter {
+                    !importedIDs.contains($0.value.profileID)
+                } ?? [:]
+                self?.activeProfileID = nil
+                self?.activeProfileActivatedAt = nil
+            }
+            self?.profiles = result.profiles
             self?.pendingArchiveImport = nil
             self?.publishCatalog()
         }
@@ -358,14 +367,19 @@ final class ProfileManager: ObservableObject {
             statusMessage = "Keep at least one profile so the store remains recoverable."
             return
         }
+        let invalidatesActiveProfile = activeProfileID == profile.id
         await performOperation(successMessage: "Profile deleted.") {
             try await self.store.save(remaining)
-            return remaining
-        } completion: { [weak self] updated in
+            if invalidatesActiveProfile {
+                await self.appState?.compatibilityCoordinator.clearActiveProfileAuthority()
+            }
+            return (profiles: remaining, invalidatedAuthority: invalidatesActiveProfile)
+        } completion: { [weak self] result in
             self?.activationRequests = self?.activationRequests.filter { $0.value.profileID != profile.id } ?? [:]
-            self?.profiles = updated
-            if self?.activeProfileID == profile.id {
+            self?.profiles = result.profiles
+            if result.invalidatedAuthority {
                 self?.activeProfileID = nil
+                self?.activeProfileActivatedAt = nil
             }
             self?.publishCatalog()
         }
@@ -530,16 +544,22 @@ final class ProfileManager: ObservableObject {
 
     private func applyPresentationMode(_ isEnabled: Bool) async -> Bool {
         if isEnabled {
-            if !processedDefaults.bool(forKey: Self.presentationFocusActiveKey) {
-                profileBeforeFocusID = activeProfileID
-                processedDefaults.set(profileBeforeFocusID?.uuidString, forKey: Self.profileBeforeFocusIDKey)
-                processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
-            }
             guard let presentation = resolvedPresentationProfile() else {
                 statusMessage = "Create a Presentation profile before enabling the Focus filter."
-                return true
+                return false
             }
-            return await activate(presentation, source: .focus)
+            let wasActive = processedDefaults.bool(forKey: Self.presentationFocusActiveKey)
+            let priorProfileID = activeProfileID
+            guard await activate(presentation, source: .focus) else {
+                activationRequests.removeValue(forKey: .focus)
+                return false
+            }
+            if !wasActive {
+                profileBeforeFocusID = priorProfileID
+                processedDefaults.set(priorProfileID?.uuidString, forKey: Self.profileBeforeFocusIDKey)
+                processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+            }
+            return true
         }
 
         guard let priorID = profileBeforeFocusID,
@@ -568,6 +588,7 @@ final class ProfileManager: ObservableObject {
             return try await self.synchronizeProfileAuthority(to: profileID)
         } completion: { [weak self] profileID in
             self?.activeProfileID = profileID
+            self?.activeProfileActivatedAt = profileID == nil ? nil : Date()
         }
     }
 
@@ -578,6 +599,7 @@ final class ProfileManager: ObservableObject {
               let profile = profiles.first(where: { $0.id == profileID })
         else {
             activeProfileID = nil
+            activeProfileActivatedAt = nil
             await appState.compatibilityCoordinator.clearActiveProfileAuthority()
             try await clearWorkspaceProfileSettings()
             return nil
@@ -589,6 +611,7 @@ final class ProfileManager: ObservableObject {
             return profileID
         } catch {
             activeProfileID = nil
+            activeProfileActivatedAt = nil
             await appState.compatibilityCoordinator.clearActiveProfileAuthority()
             try? await clearWorkspaceProfileSettings()
             throw error
@@ -612,6 +635,13 @@ final class ProfileManager: ObservableObject {
         profileBeforeFocusID = nil
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusIDKey)
         processedDefaults.set(false, forKey: Self.presentationFocusActiveKey)
+    }
+
+    func clearActiveProfileAuthority() async {
+        activationRequests.removeAll()
+        activeProfileID = nil
+        activeProfileActivatedAt = nil
+        await appState?.compatibilityCoordinator.clearActiveProfileAuthority()
     }
 
     private func resolvedPresentationProfile() -> BarlineProfile? {

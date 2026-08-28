@@ -680,6 +680,30 @@ struct StateCoordinatorTests {
         #expect(await backend.restoredSnapshots.isEmpty)
     }
 
+    @Test("Manual layout mutations revoke active profile authority")
+    func layoutMutationClearsProfileAuthority() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let activated = makeSnapshot(generation: 2, count: 2)
+        let revealed = makeSnapshot(generation: 3, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(110),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let backend = FakeBackend(snapshots: [before, activated, revealed])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: activated.capturedAt)
+
+        _ = try await coordinator.perform(.reveal(before.items[0].id), now: revealed.capturedAt)
+
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.canUndo)
+    }
+
     @Test("Failed history rollback clears unverified current authority")
     func clearsAuthorityWhenHistoryRollbackFails() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
@@ -778,6 +802,41 @@ struct StateCoordinatorTests {
         #expect(result == after)
         #expect(await backend.restoredSnapshots == [before])
         #expect(await coordinator.lastKnownGoodSnapshot == after)
+    }
+
+    @Test("Last-known-good restore rejects a structurally valid wrong layout")
+    func rejectsWrongLastKnownGoodLayout() async throws {
+        let itemIDs = [
+            MenuBarItemID(bundleIdentifier: "com.example.first", accessibilityIdentifier: "first"),
+            MenuBarItemID(bundleIdentifier: "com.example.second", accessibilityIdentifier: "second"),
+        ]
+        let before = makeProfileSnapshot(
+            generation: 1,
+            layout: ProfileLayout(visible: itemIDs)
+        )
+        let wrong = makeProfileSnapshot(
+            generation: 2,
+            layout: ProfileLayout(visible: Array(itemIDs.reversed()))
+        )
+        let backend = FakeBackend(snapshots: [before, wrong])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        do {
+            _ = try await coordinator.perform(.restoreLastKnownGood, now: wrong.capturedAt)
+            Issue.record("Expected last-known-good layout verification failure")
+        } catch let MenuBarBackendError.operationFailed(message) {
+            #expect(message.contains("did not reach requested layout"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(await backend.restoredSnapshots == [before, before])
+        #expect(await coordinator.currentSnapshot == before)
+        #expect(await coordinator.lastKnownGoodSnapshot == before)
     }
 
     @Test("Invalid profile post-snapshot rolls back and records the rejection")

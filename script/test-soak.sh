@@ -288,6 +288,7 @@ write_summary() {
 
 finish() {
     local exit_code=$?
+    trap - EXIT
     /usr/bin/pkill -x Barline >/dev/null 2>&1 || true
     /usr/bin/pkill -x BarlineMenuService >/dev/null 2>&1 || true
     restore_preference
@@ -295,7 +296,7 @@ finish() {
         exit_code=1
     fi
     printf 'Release soak evidence: %s\n' "$SUMMARY"
-    return "$exit_code"
+    exit "$exit_code"
 }
 trap finish EXIT
 

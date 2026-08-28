@@ -197,6 +197,11 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.unsafeMenuTracking
         }
         try validateReferences(for: mutation, in: before)
+        let restoreTarget: MenuBarSnapshot? = if case .restoreLastKnownGood = mutation {
+            lastKnownGoodSnapshot
+        } else {
+            nil
+        }
 
         mutationGeneration &+= 1
         let generation = mutationGeneration
@@ -210,11 +215,15 @@ public actor MenuBarStateCoordinator {
                 guard generation == mutationGeneration else {
                     throw CancellationError()
                 }
+                if let restoreTarget {
+                    try validateHistoryResult(snapshot, matches: restoreTarget)
+                }
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
                 if mutation.recordsLayoutHistory {
                     recordUndoCheckpoint(before, activeProfileID: activeProfileID)
+                    activeProfileID = nil
                 }
                 return snapshot
             case let .failure(reason):
