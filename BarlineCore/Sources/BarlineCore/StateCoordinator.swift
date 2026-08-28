@@ -171,6 +171,11 @@ public actor MenuBarStateCoordinator {
                 let candidate = try await normalizedBackendSnapshot()
                 switch validator.validate(candidate, previous: currentSnapshot, now: now) {
                 case let .success(snapshot):
+                    if let currentSnapshot,
+                       logicalLayout(of: currentSnapshot) != logicalLayout(of: snapshot)
+                    {
+                        activeProfileID = nil
+                    }
                     currentSnapshot = snapshot
                     lastKnownGoodSnapshot = snapshot
                     lastRejection = nil

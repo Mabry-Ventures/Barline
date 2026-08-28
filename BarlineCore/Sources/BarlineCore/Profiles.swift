@@ -209,6 +209,27 @@ public struct ProfileWorkspaceState: Codable, Hashable, Sendable {
     }
 }
 
+public enum ProfileAuthorityMatcher {
+    public static func matches(
+        profile: BarlineProfile,
+        checkpoint: MenuBarWorkspaceCheckpoint
+    ) -> Bool {
+        guard ProfileWorkspaceState(profile: profile) == checkpoint.workspace else {
+            return false
+        }
+        let scopedItems = checkpoint.activeDisplayID.map { activeDisplayID in
+            checkpoint.snapshot.items.filter { $0.displayID == activeDisplayID }
+        } ?? checkpoint.snapshot.items
+        let visible = scopedItems.filter { $0.section == .visible }.map(\.id)
+        let hidden = scopedItems.filter { $0.section == .hidden }.map(\.id)
+        let alwaysHidden = scopedItems.filter { $0.section == .alwaysHidden }.map(\.id)
+        let layout = profile.layout(for: checkpoint.activeDisplayID)
+        return visible.starts(with: layout.visible)
+            && hidden.starts(with: layout.hidden)
+            && alwaysHidden.starts(with: layout.alwaysHidden)
+    }
+}
+
 public enum ApplicationMenuOverlapBehavior: String, Codable, Sendable {
     case leaveVisible
     case hideWhenNeeded

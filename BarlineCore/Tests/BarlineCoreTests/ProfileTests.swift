@@ -50,6 +50,79 @@ struct ProfileTests {
         #expect(profile.layout(for: nil) == profile.layout)
     }
 
+    @Test("Profile authority matches only the selected display and exact workspace")
+    func authorityMatching() {
+        let secondaryDisplay = MenuBarDisplayID("secondary")
+        let expectedItem = item(1)
+        let otherItem = item(2)
+        let profile = BarlineProfile(
+            name: "Displays",
+            layout: ProfileLayout(visible: [expectedItem]),
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: primaryDisplay,
+                    layout: ProfileLayout(visible: [expectedItem])
+                ),
+            ]
+        )
+        let wrongDisplaySnapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: otherItem, section: .visible, order: 0, displayID: primaryDisplay),
+                MenuBarItemDescriptor(id: expectedItem, section: .visible, order: 0, displayID: secondaryDisplay),
+            ],
+            displayIDs: [primaryDisplay, secondaryDisplay],
+            activeSpaceIsValid: true
+        )
+        let workspace = ProfileWorkspaceState(profile: profile)
+
+        #expect(ProfileAuthorityMatcher.matches(
+            profile: profile,
+            checkpoint: MenuBarWorkspaceCheckpoint(
+                snapshot: wrongDisplaySnapshot,
+                activeProfileID: profile.id,
+                activeDisplayID: primaryDisplay,
+                workspace: workspace
+            )
+        ) == false)
+
+        let matchingSnapshot = MenuBarSnapshot(
+            generation: 2,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: expectedItem, section: .visible, order: 0, displayID: primaryDisplay),
+                MenuBarItemDescriptor(id: otherItem, section: .visible, order: 0, displayID: secondaryDisplay),
+            ],
+            displayIDs: [primaryDisplay, secondaryDisplay],
+            activeSpaceIsValid: true
+        )
+        let matchingCheckpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: matchingSnapshot,
+            activeProfileID: profile.id,
+            activeDisplayID: primaryDisplay,
+            workspace: workspace
+        )
+        #expect(ProfileAuthorityMatcher.matches(profile: profile, checkpoint: matchingCheckpoint))
+
+        let globalCheckpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: matchingSnapshot,
+            activeProfileID: profile.id,
+            workspace: workspace
+        )
+        #expect(ProfileAuthorityMatcher.matches(profile: profile, checkpoint: globalCheckpoint))
+
+        var mismatchedWorkspace = workspace
+        mismatchedWorkspace.shelfBehavior.isEnabled.toggle()
+        let workspaceMismatch = MenuBarWorkspaceCheckpoint(
+            snapshot: matchingSnapshot,
+            activeProfileID: profile.id,
+            activeDisplayID: primaryDisplay,
+            workspace: mismatchedWorkspace
+        )
+        #expect(ProfileAuthorityMatcher.matches(profile: profile, checkpoint: workspaceMismatch) == false)
+    }
+
     @Test("Search metadata includes every display override exactly once")
     func searchableOverrideMetadata() {
         let base = item(1)

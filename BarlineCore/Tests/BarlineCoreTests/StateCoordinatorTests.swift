@@ -1115,6 +1115,57 @@ struct StateCoordinatorTests {
         #expect(await coordinator.canUndo)
     }
 
+    @Test("External layout refresh revokes active profile authority")
+    func externalRefreshClearsProfileAuthority() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(130),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let activated = makeProfileSnapshot(generation: 2, layout: profile.layout)
+        let changed = makeProfileSnapshot(
+            generation: 3,
+            layout: ProfileLayout(hidden: before.items.map(\.id))
+        )
+        let backend = FakeBackend(snapshots: [before, activated, changed])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: activated.capturedAt)
+
+        _ = try await coordinator.refresh(now: changed.capturedAt)
+
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.currentSnapshot == changed)
+    }
+
+    @Test("Unchanged external refresh retains active profile authority")
+    func unchangedRefreshRetainsProfileAuthority() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(131),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let activated = makeProfileSnapshot(generation: 2, layout: profile.layout)
+        let unchanged = makeProfileSnapshot(generation: 3, layout: profile.layout)
+        let backend = FakeBackend(snapshots: [before, activated, unchanged])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: activated.capturedAt)
+
+        _ = try await coordinator.refresh(now: unchanged.capturedAt)
+
+        #expect(await coordinator.activeProfileID == profile.id)
+        #expect(await coordinator.currentSnapshot == unchanged)
+    }
+
     @Test("Failed history rollback clears unverified current authority")
     func clearsAuthorityWhenHistoryRollbackFails() async throws {
         let before = makeSnapshot(generation: 1, count: 2)

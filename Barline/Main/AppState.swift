@@ -81,9 +81,9 @@ final class AppState: ObservableObject {
             }
         }
 
+        appearanceManager.performSetup(with: self)
         await profileManager.performSetup(with: self)
 
-        appearanceManager.performSetup(with: self)
         let initialAccessibilityPermission = permissions.accessibility.hasPermission
         hidEventManager.performSetup(
             with: self,

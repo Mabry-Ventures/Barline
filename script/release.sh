@@ -56,7 +56,7 @@ for required in LICENSE NOTICE.md THIRD_PARTY_NOTICES.md PRIVACY.md SECURITY.md 
 done
 
 mkdir -p "$RELEASE_ROOT"
-/bin/rm -rf "$ARCHIVE" "$RELEASE_DERIVED_DATA"
+/bin/rm -rf "$ARCHIVE" "$RELEASE_DERIVED_DATA" "$RELEASE_ROOT/distribution-boundaries.json"
 archive_arguments=(
     -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release
     -destination 'generic/platform=macOS' -archivePath "$ARCHIVE"
@@ -89,11 +89,15 @@ for product in "$HELPER" "$INTENTS"; do
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$product/Contents/Info.plist")" == "$VERSION" ]]
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$product/Contents/Info.plist")" == "$BUILD" ]]
 done
+validate_exact_candidate
 
 if "$UNSIGNED"; then
-    SHA_VALUE="$SHA" ARCHIVE_VALUE="$ARCHIVE" VERSION_VALUE="$VERSION" /usr/bin/ruby -rjson -e '
+    END_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+    SHA_VALUE="$SHA" END_SHA_VALUE="$END_SHA" ARCHIVE_VALUE="$ARCHIVE" VERSION_VALUE="$VERSION" /usr/bin/ruby -rjson -e '
       document = {
-        commit_sha: ENV.fetch("SHA_VALUE"), version: ENV.fetch("VERSION_VALUE"),
+        start_commit_sha: ENV.fetch("SHA_VALUE"), end_commit_sha: ENV.fetch("END_SHA_VALUE"),
+        clean_at_end: true, exact_candidate_revalidated_after_archive: true,
+        version: ENV.fetch("VERSION_VALUE"),
         unsigned_archive: ENV.fetch("ARCHIVE_VALUE"), archive_topology_validated: true,
         externally_blocked: [
           "Developer ID signing and App Group provisioning profiles",

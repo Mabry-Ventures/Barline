@@ -67,6 +67,7 @@ final class ProfileManager: ObservableObject {
         self.appState = appState
         configureBridgeObservers()
         await reload()
+        configureWorkspaceAuthorityObservers()
         await processBridgeCommands()
     }
 
@@ -667,6 +668,59 @@ final class ProfileManager: ObservableObject {
             .store(in: &cancellables)
     }
 
+    private func configureWorkspaceAuthorityObservers() {
+        guard let appState else { return }
+        let general = appState.settings.general
+        let advanced = appState.settings.advanced
+        let changes: [AnyPublisher<Void, Never>] = [
+            appState.appearanceManager.$configuration.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$useBarlineShelf.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$showOnClick.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$showOnHover.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$showOnScroll.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$itemSpacingOffset.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$autoRehide.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$rehideStrategy.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            general.$rehideInterval.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            advanced.$hideApplicationMenus.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
+        ]
+
+        Publishers.MergeMany(changes)
+            .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
+            .sink { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.reconcileModeledWorkspaceAuthority()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func reconcileModeledWorkspaceAuthority() async {
+        await profileOperationSemaphore.wait()
+        defer { profileOperationSemaphore.signal() }
+        guard activeProfileID != nil else { return }
+
+        do {
+            let retainedProfileID = try await synchronizeProfileAuthority(
+                clearsActivationRequests: false
+            )
+            activeProfileID = retainedProfileID
+            activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
+            if retainedProfileID == nil {
+                activationRequests.removeAll()
+            }
+        } catch {
+            if let appState, let activeProfileID {
+                _ = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                    ifMatches: activeProfileID
+                )
+            }
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            activationRequests.removeAll()
+        }
+    }
+
     func processPendingBridgeCommands() async {
         await processBridgeCommands()
     }
@@ -884,18 +938,7 @@ final class ProfileManager: ObservableObject {
         _ profile: BarlineProfile,
         checkpoint: MenuBarWorkspaceCheckpoint
     ) -> Bool {
-        guard ProfileWorkspaceState(profile: profile) == checkpoint.workspace else {
-            return false
-        }
-        let visible = checkpoint.snapshot.items.filter { $0.section == .visible }.map(\.id)
-        let hidden = checkpoint.snapshot.items.filter { $0.section == .hidden }.map(\.id)
-        let alwaysHidden = checkpoint.snapshot.items
-            .filter { $0.section == .alwaysHidden }
-            .map(\.id)
-        let layout = profile.layout(for: checkpoint.activeDisplayID)
-        return visible.starts(with: layout.visible)
-            && hidden.starts(with: layout.hidden)
-            && alwaysHidden.starts(with: layout.alwaysHidden)
+        ProfileAuthorityMatcher.matches(profile: profile, checkpoint: checkpoint)
     }
 
     private func decodeFocusCheckpoint(_ data: Data) -> MenuBarWorkspaceCheckpoint? {
