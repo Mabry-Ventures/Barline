@@ -1,112 +1,110 @@
-<div align="center">
-    <img src="Ice/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width=200 height=200>
-    <h1>Ice</h1>
-</div>
+# Barline
 
-Ice is a powerful menu bar management tool. While its primary function is hiding and showing menu bar items, it aims to cover a wide variety of additional features to make it one of the most versatile menu bar tools available.
+**Your menu bar, in order.**
 
-![Banner](https://github.com/user-attachments/assets/4423085c-4e4b-4f3d-ad0f-90a217c03470)
+Barline is an Apple-native, privacy-first menu bar workspace manager for Apple
+Silicon Macs. It can organize visible, hidden, and always-hidden status items;
+reveal them on demand; present an overflow shelf; search items; and customize
+menu bar appearance and spacing.
 
-[![Download](https://img.shields.io/badge/download-macOS%2026%20prerelease-brightgreen?style=flat-square)](https://github.com/lxy1992/Ice/releases/tag/0.11.13-macos26.4)
-![Platform](https://img.shields.io/badge/platform-macOS-blue?style=flat-square)
-![Requirements](https://img.shields.io/badge/requirements-macOS%2014%2B-fa4e49?style=flat-square)
-[![Sponsor](https://img.shields.io/badge/Sponsor%20%E2%9D%A4%EF%B8%8F-8A2BE2?style=flat-square)](https://github.com/sponsors/jordanbaird)
-[![Website](https://img.shields.io/badge/Website-015FBA?style=flat-square)](https://icemenubar.app)
-[![License](https://img.shields.io/github/license/lxy1992/Ice?style=flat-square)](LICENSE)
+Barline is a GPLv3 successor derived from
+[Ice](https://github.com/jordanbaird/Ice) and its
+[macOS compatibility fork](https://github.com/lxy1992/Ice). See
+[NOTICE.md](NOTICE.md), [docs/UPSTREAM.md](docs/UPSTREAM.md), and
+[docs/CHANGES_FROM_ICE.md](docs/CHANGES_FROM_ICE.md) for full attribution and
+source provenance.
 
-> [!NOTE]
-> This fork includes macOS 26 compatibility work and is currently distributed as a prerelease. Download `0.11.13-macos26.4` [here](https://github.com/lxy1992/Ice/releases/tag/0.11.13-macos26.4). Automatic updates remain disabled until this fork has its own signed update feed.
+> Barline is under active development and does not yet have a public binary
+> release or signed update feed. Do not download binaries from an Ice release
+> page expecting them to be Barline.
 
-<a href="https://www.buymeacoffee.com/jordanbaird" target="_blank">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;">
-</a>
+## Requirements
 
-## Install
+- macOS 26.0 or later
+- Apple Silicon (`arm64`)
+- Accessibility permission for cross-application menu bar arrangement
+- Screen & System Audio Recording permission for item-image previews
 
-### Manual Installation
+Barline uses unsupported WindowServer behavior for cross-application status
+item management. The compatibility layer is designed to fail safely, but macOS
+updates can temporarily reduce that capability. Settings and recovery must
+remain available in a degraded state.
 
-Download the "Ice.zip" file from the [`0.11.13-macos26.4` prerelease](https://github.com/lxy1992/Ice/releases/tag/0.11.13-macos26.4) and move the unzipped app into your `Applications` folder.
+## Privacy
 
-### Homebrew
+Barline has no account, cloud service, analytics SDK, advertising, remote AI,
+or menu bar inventory upload. Local development builds make no network request
+other than resolving source dependencies. Release builds will use the network
+only for Barline's signed update feed and explicit user-opened links.
 
-The following cask installs the upstream official build, not this macOS 26 fork:
+## Current features
 
-```sh
-brew install --cask jordanbaird-ice
+- Visible, hidden, and always-hidden sections
+- Click, hover, scroll, swipe, and hotkey reveal controls
+- Automatic rehide and application-menu overlap handling
+- Drag-and-drop and keyboard-assisted layout editing
+- Secondary shelf for overflow and notched displays
+- Fast local item search
+- Menu bar tint, gradient, border, shadow, and shape controls
+- Item spacing, launch at login, and update infrastructure
+
+Profiles, Focus Filters, App Intents, stable per-display layouts, Core Spotlight,
+on-device natural-language interpretation, diagnostics, and transactional
+recovery are being implemented in the tracked milestones. Documentation is
+updated only when the corresponding code and tests exist.
+
+## Build and run
+
+Install Xcode 26.6, clone the repository with its submodule-free Git history,
+then run:
+
+```bash
+./script/build_and_run.sh --verify
 ```
 
-## Features/Roadmap
+Useful variants:
 
-### Menu bar item management
+```bash
+./script/build_and_run.sh --clean --verify
+./script/build_and_run.sh --release --verify
+./script/build_and_run.sh --logs
+./script/build_and_run.sh --telemetry
+./script/build_and_run.sh --debug
+```
 
-- [x] Hide menu bar items
-- [x] "Always-hidden" menu bar section
-- [x] Show hidden menu bar items when hovering over the menu bar
-- [x] Show hidden menu bar items when an empty area in the menu bar is clicked
-- [x] Show hidden menu bar items by scrolling or swiping in the menu bar
-- [x] Automatically rehide menu bar items
-- [x] Hide application menus when they overlap with shown menu bar items
-- [x] Drag and drop interface to arrange individual menu bar items
-- [x] Display hidden menu bar items in a separate bar (e.g. for MacBooks with the notch)
-- [x] Search menu bar items
-- [x] Menu bar item spacing (BETA)
-- [ ] Profiles for menu bar layout
-- [ ] Individual spacer items
-- [ ] Menu bar item groups
-- [ ] Show menu bar items when trigger conditions are met
+The script uses an explicit Xcode path, a repository-local DerivedData folder,
+an ad-hoc local signature, and the committed Swift package lock. It never
+changes the machine-wide selected Xcode.
 
-### Menu bar appearance
+## Local validation
 
-- [x] Menu bar tint (solid and gradient)
-- [x] Menu bar shadow
-- [x] Menu bar border
-- [x] Custom menu bar shapes (rounded and/or split)
-- [ ] Remove background behind menu bar
-- [ ] Rounded screen corners
-- [ ] Different settings for light/dark mode
+The current rebrand gate is:
 
-### Hotkeys
+```bash
+swiftlint lint --strict --config .swiftlint.yml
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  xcodebuild -project Barline.xcodeproj -scheme Barline \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+```
 
-- [x] Toggle individual menu bar sections
-- [x] Show the search panel
-- [x] Enable/disable the Ice Bar
-- [x] Show/hide section divider icons
-- [x] Toggle application menus
-- [ ] Enable/disable auto rehide
-- [ ] Temporarily show individual menu bar items
+The canonical `script/ci.sh` command surface and full local evidence bundle are
+introduced in Milestone 4. No GitHub-hosted macOS or self-hosted runner is used.
 
-### Other
+## Installation and releases
 
-- [x] Launch at login
-- [ ] Automatic updates (disabled until this fork has its own signed update feed)
-- [ ] Menu bar widgets
+No installable Barline release is published yet. Release packages will include
+the exact source tag and archive, GPLv3 license, notices, build instructions,
+checksums, and signed update metadata. Signing and notarization remain local.
 
-## Why does Ice only support macOS 14 and later?
+## Contributing and support
 
-Ice uses a number of system APIs that are available starting in macOS 14. As such, there are no plans to support earlier versions of macOS.
-
-## Gallery
-
-#### Show hidden menu bar items below the menu bar
-
-![Ice Bar](https://github.com/user-attachments/assets/f1429589-6186-4e1b-8aef-592219d49b9b)
-
-#### Drag-and-drop interface to arrange menu bar items
-
-![Menu Bar Layout](https://github.com/user-attachments/assets/095442ba-f2d0-4bb4-9632-91e26ef8d45b)
-
-#### Customize the menu bar's appearance
-
-![Menu Bar Appearance](https://github.com/user-attachments/assets/8c22c185-c3d2-49bb-971e-e1fc17df04b3)
-
-#### Menu bar item search
-
-![Menu Bar Item Search](https://github.com/user-attachments/assets/d1a7df3a-4989-4077-a0b1-8e7d5a1ba5b8)
-
-#### Custom menu bar item spacing
-
-![Menu Bar Item Spacing](https://github.com/user-attachments/assets/b196aa7e-184a-4d4c-b040-502f4aae40a6)
+Repository, issue, donation, and security-contact URLs will be added when the
+canonical public repository is established. Donations will never unlock or
+gate functionality.
 
 ## License
 
-Ice is available under the [GPL-3.0 license](LICENSE).
+Barline is licensed under the [GNU General Public License v3](LICENSE). Complete
+corresponding source, project files, lockfiles, and build scripts must accompany
+every distributed binary.

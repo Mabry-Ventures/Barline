@@ -26,7 +26,7 @@ Sparkle is permissively licensed. Copyright holders include Andy Matuschak,
 Elgato Systems GmbH, Kornel Lesinski, Mayur Pawashe, C.W. Betts, Petroules
 Corporation, and Big Nerd Ranch. Sparkle also incorporates separately noticed
 code from bsdiff, sais-lite, orlp/ed25519, and Mark Hamlin. The complete notices
-ship in `Ice/Resources/Acknowledgements.rtf` at the imported baseline and must
+ship in `Barline/Resources/Acknowledgements.rtf` and must
 be regenerated into Barline's shipping acknowledgements when dependencies are
 changed.
 

@@ -3,7 +3,7 @@
 //  Shared
 //
 
-import AXSwift
+@preconcurrency import AXSwift
 import Cocoa
 
 enum AXHelpers {

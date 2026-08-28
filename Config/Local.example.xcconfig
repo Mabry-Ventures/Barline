@@ -1,0 +1,5 @@
+// Copy this file to Local.xcconfig and fill only values available locally.
+// Local.xcconfig is gitignored. Never add private keys or passwords here.
+BARLINE_DEVELOPMENT_TEAM = A886EMZZW6
+BARLINE_SPARKLE_FEED_URL =
+BARLINE_SPARKLE_PUBLIC_KEY =

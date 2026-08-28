@@ -8,8 +8,8 @@ gate result.
 | --- | --- | --- | --- | --- |
 | 0. Import and provenance | Lead; delegated audit | Complete | none | Exact history, remotes, ancestor proof, vendor tag, license/provenance records |
 | 1. Baseline build and audit | Lead; delegated audits | Complete | M0 | Debug/Release/analyze/archive and policy scripts pass; permission-gated launch; result bundles |
-| 2. Rebrand and build system | Lead | In progress | M1 | Barline identity scan, arm64 builds, canonical run verification |
-| 3. Core and compatibility firewall | Lead | Pending | M2 | Core tests, XPC probes/interruption/recovery, private-boundary scan |
+| 2. Rebrand and build system | Lead | Complete | M1 | Debug/Release/analyze pass; strict lint 0 violations; canonical Run verification pass |
+| 3. Core and compatibility firewall | Lead | In progress | M2 | Core tests, XPC probes/interruption/recovery, private-boundary scan |
 | 4. Fixture and local CI | Lead; delegated validation | Pending | M3 | fast/full gates, fixture suite, Linux hygiene |
 | 5. Profiles and Focus | Lead | Pending | M3–4 | migration, activation/rollback, intents and Focus tests |
 | 6. Search and on-device interpretation | Lead | Pending | M3–5 | ranking, Spotlight, validator and evaluation tests |

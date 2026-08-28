@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BarlineAppGroupIdentifier</key>
+	<string>$(BARLINE_APP_GROUP_IDENTIFIER)</string>
+	<key>BarlineLoggingSubsystem</key>
+	<string>$(BARLINE_LOGGING_SUBSYSTEM)</string>
+	<key>BarlineMenuServiceName</key>
+	<string>$(BARLINE_MENU_SERVICE_BUNDLE_IDENTIFIER)</string>
+	<key>BarlineSparkleFeedURL</key>
+	<string>$(BARLINE_SPARKLE_FEED_URL)</string>
+	<key>BarlineSparklePublicKey</key>
+	<string>$(BARLINE_SPARKLE_PUBLIC_KEY)</string>
+</dict>
+</plist>
