@@ -94,6 +94,11 @@ require_gate_script() {
     run_step "$(basename "$path" .sh)" "$path"
 }
 
+report_developer_tools_block() {
+    printf 'BLOCKED: Xcode test-plan execution requires Developer Tools automation mode. Enabling it requires administrator authorization.\n' >&2
+    return 2
+}
+
 publish_commit_status() {
     local state="$1" description="$2"
     gh api --method POST "repos/{owner}/{repo}/statuses/$SHA" \
@@ -216,13 +221,17 @@ run_full() {
         -configuration Debug -destination 'platform=macOS,arch=arm64' \
         -derivedDataPath "$ARTIFACT_DIR/test-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build-for-testing
-    run_step "test-plan-core" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
-        -project Barline.xcodeproj -scheme Barline -testPlan Barline \
-        -configuration Debug -destination 'platform=macOS,arch=arm64' \
-        -derivedDataPath "$ARTIFACT_DIR/test-derived" \
-        -resultBundlePath "$ARTIFACT_DIR/results/tests.xcresult" \
-        -only-testing:BarlineTests -only-testing:BarlineIntegrationTests \
-        CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test-without-building
+    if /usr/sbin/DevToolsSecurity -status 2>&1 | /usr/bin/grep -qi 'enabled'; then
+        run_step "test-plan-core" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
+            -project Barline.xcodeproj -scheme Barline -testPlan Barline \
+            -configuration Debug -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$ARTIFACT_DIR/test-derived" \
+            -resultBundlePath "$ARTIFACT_DIR/results/tests.xcresult" \
+            -only-testing:BarlineTests -only-testing:BarlineIntegrationTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test-without-building
+    else
+        run_step "test-plan-core" report_developer_tools_block
+    fi
     require_gate_script ./script/test-menu-bar-recovery.sh
     require_gate_script ./script/test-notch-overflow.sh
     require_gate_script ./script/test-fixtures.sh

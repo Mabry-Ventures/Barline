@@ -32,6 +32,72 @@ struct StateCoordinatorTests {
         #expect(await coordinator.lastRejection == nil)
     }
 
+    @Test("Authority refresh binds the old generation and returns fresh state")
+    func refreshesBoundAuthority() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let refreshed = makeSnapshot(generation: 2, count: 3)
+        let backend = FakeBackend(snapshots: [original, refreshed])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: original.capturedAt)
+
+        await #expect(
+            throws: MenuBarAuthorityRefreshError.staleGeneration(
+                expected: 0,
+                actual: original.generation
+            )
+        ) {
+            try await coordinator.refreshAuthority(
+                expectedGeneration: 0,
+                now: refreshed.capturedAt
+            )
+        }
+        #expect(await backend.snapshotCallCount == 1)
+
+        let result = try await coordinator.refreshAuthority(
+            expectedGeneration: original.generation,
+            now: refreshed.capturedAt
+        )
+
+        #expect(result == refreshed)
+        #expect(await coordinator.currentSnapshot == refreshed)
+        #expect(await backend.snapshotCallCount == 2)
+    }
+
+    @Test("Stale authority cannot refresh or execute after state advances")
+    func rejectsStaleExecutionAuthority() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let refreshed = makeSnapshot(generation: 2, count: 3)
+        let advanced = makeSnapshot(generation: 3, count: 3)
+        let backend = FakeBackend(snapshots: [original, refreshed, advanced])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: original.capturedAt)
+        _ = try await coordinator.refreshAuthority(
+            expectedGeneration: original.generation,
+            now: refreshed.capturedAt
+        )
+        _ = try await coordinator.refresh(now: advanced.capturedAt)
+
+        await #expect(
+            throws: MenuBarAuthorityRefreshError.staleGeneration(
+                expected: refreshed.generation,
+                actual: advanced.generation
+            )
+        ) {
+            try await coordinator.perform(
+                .reveal(original.items[0].id),
+                expectedGeneration: refreshed.generation,
+                now: advanced.capturedAt
+            )
+        }
+        #expect(await backend.revealedItems.isEmpty)
+    }
+
     @Test("Failed post-mutation validation restores the prior snapshot")
     func rollsBackInvalidMutation() async throws {
         let before = makeSnapshot(generation: 1, count: 4)
@@ -91,6 +157,35 @@ struct StateCoordinatorTests {
         _ = try await (firstMutation, secondMutation)
 
         #expect(await backend.maximumConcurrentMutations == 1)
+    }
+
+    @Test("Public refresh waits for an active mutation before publishing")
+    func serializesRefreshWithMutation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let afterMutation = makeSnapshot(generation: 2, count: 2)
+        let afterRefresh = makeSnapshot(generation: 3, count: 2)
+        let backend = FakeBackend(
+            snapshots: [before, afterMutation, afterRefresh],
+            mutationDelay: .milliseconds(25)
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        let mutation = Task {
+            try await coordinator.perform(.reveal(before.items[0].id), now: afterMutation.capturedAt)
+        }
+        await backend.waitUntilMutationStarted()
+        let refresh = Task {
+            try await coordinator.refresh(now: afterRefresh.capturedAt)
+        }
+
+        #expect(try await mutation.value == afterMutation)
+        #expect(try await refresh.value == afterRefresh)
+        #expect(await coordinator.currentSnapshot == afterRefresh)
+        #expect(await coordinator.lastKnownGoodSnapshot == afterRefresh)
     }
 
     @Test("Stale item references are rejected before backend side effects")
@@ -432,7 +527,8 @@ struct StateCoordinatorTests {
         let after = makeSnapshot(generation: 2, count: 2)
         let wrongLayout = ProfileLayout(hidden: before.items.map(\.id))
         let wrongButValid = makeProfileSnapshot(generation: 3, layout: wrongLayout)
-        let backend = FakeBackend(snapshots: [before, after, wrongButValid])
+        let verifiedAfter = makeSnapshot(generation: 4, count: 2)
+        let backend = FakeBackend(snapshots: [before, after, wrongButValid, verifiedAfter])
         let coordinator = MenuBarStateCoordinator(
             backend: backend,
             retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
@@ -449,8 +545,8 @@ struct StateCoordinatorTests {
         }
 
         #expect(await backend.restoredSnapshots == [before, after])
-        #expect(await coordinator.currentSnapshot == after)
-        #expect(await coordinator.lastKnownGoodSnapshot == after)
+        #expect(await coordinator.currentSnapshot == verifiedAfter)
+        #expect(await coordinator.lastKnownGoodSnapshot == verifiedAfter)
         #expect(await coordinator.canUndo)
         #expect(await coordinator.canRedo == false)
     }
@@ -499,13 +595,14 @@ struct StateCoordinatorTests {
     func rollsBackFailedHistoryRestore() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
         let after = makeSnapshot(generation: 2, count: 2)
+        let verifiedAfter = makeSnapshot(generation: 3, count: 2)
         let profile = BarlineProfile(
             id: UUID(106),
             name: "Current",
             layout: ProfileLayout(visible: before.items.map(\.id))
         )
         let backend = FakeBackend(
-            snapshots: [before, after],
+            snapshots: [before, after, verifiedAfter],
             restoreFailures: 1
         )
         let coordinator = MenuBarStateCoordinator(
@@ -520,7 +617,8 @@ struct StateCoordinatorTests {
         }
 
         #expect(await backend.restoredSnapshots == [before, after])
-        #expect(await coordinator.currentSnapshot == after)
+        #expect(await coordinator.currentSnapshot == verifiedAfter)
+        #expect(await coordinator.lastKnownGoodSnapshot == verifiedAfter)
         #expect(await coordinator.activeProfileID == profile.id)
         #expect(await coordinator.canUndo)
         #expect(await coordinator.canRedo == false)
@@ -531,12 +629,13 @@ struct StateCoordinatorTests {
         let before = makeSnapshot(generation: 1, count: 2)
         let after = makeSnapshot(generation: 2, count: 2)
         let invalid = makeSnapshot(generation: 3, count: 0)
+        let verifiedAfter = makeSnapshot(generation: 4, count: 2)
         let profile = BarlineProfile(
             id: UUID(107),
             name: "Current",
             layout: ProfileLayout(visible: before.items.map(\.id))
         )
-        let backend = FakeBackend(snapshots: [before, after, invalid])
+        let backend = FakeBackend(snapshots: [before, after, invalid, verifiedAfter])
         let coordinator = MenuBarStateCoordinator(
             backend: backend,
             retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
@@ -549,12 +648,36 @@ struct StateCoordinatorTests {
         }
 
         #expect(await backend.restoredSnapshots == [before, after])
-        #expect(await coordinator.currentSnapshot == after)
-        #expect(await coordinator.lastKnownGoodSnapshot == after)
+        #expect(await coordinator.currentSnapshot == verifiedAfter)
+        #expect(await coordinator.lastKnownGoodSnapshot == verifiedAfter)
         #expect(await coordinator.activeProfileID == profile.id)
         #expect(await coordinator.lastRejection == .emptySnapshot)
         #expect(await coordinator.canUndo)
         #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Profile authority can be conservatively cleared without mutating the layout")
+    func clearsProfileAuthority() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(109),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
+
+        await coordinator.clearActiveProfileAuthority()
+
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.currentSnapshot == after)
+        #expect(await backend.restoredSnapshots.isEmpty)
     }
 
     @Test("Failed history rollback clears unverified current authority")
@@ -581,6 +704,46 @@ struct StateCoordinatorTests {
         do {
             _ = try await coordinator.undo(now: invalid.capturedAt)
             Issue.record("Expected history rollback failure")
+        } catch let MenuBarBackendError.operationFailed(message) {
+            #expect(message.contains("history restore failed"))
+            #expect(message.contains("rollback failed"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(await backend.restoredSnapshots == [before, after])
+        #expect(await coordinator.currentSnapshot == nil)
+        #expect(await coordinator.lastKnownGoodSnapshot == after)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.canUndo)
+        #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Semantically unverifiable history rollback clears current authority")
+    func clearsAuthorityWhenHistoryRollbackLayoutDoesNotMatch() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let invalid = makeSnapshot(generation: 3, count: 0)
+        let wrongRollback = makeProfileSnapshot(
+            generation: 4,
+            layout: ProfileLayout(hidden: before.items.map(\.id))
+        )
+        let profile = BarlineProfile(
+            id: UUID(109),
+            name: "Current",
+            layout: ProfileLayout(visible: before.items.map(\.id))
+        )
+        let backend = FakeBackend(snapshots: [before, after, invalid, wrongRollback])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
+
+        do {
+            _ = try await coordinator.undo(now: invalid.capturedAt)
+            Issue.record("Expected history rollback verification failure")
         } catch let MenuBarBackendError.operationFailed(message) {
             #expect(message.contains("history restore failed"))
             #expect(message.contains("rollback failed"))
@@ -739,6 +902,8 @@ private actor FakeBackend: MenuBarBackend {
     private(set) var snapshotCallCount = 0
     private(set) var restartCount = 0
     private var concurrentMutations = 0
+    private var mutationStarted = false
+    private var mutationStartWaiters = [CheckedContinuation<Void, Never>]()
     private let mutationDelay: Duration
     private let revealFailure: MenuBarBackendError?
     private let failMoveAt: Int?
@@ -799,6 +964,10 @@ private actor FakeBackend: MenuBarBackend {
     func reveal(_ item: MenuBarItemID) async throws -> MenuBarMutationResult {
         concurrentMutations += 1
         maximumConcurrentMutations = max(maximumConcurrentMutations, concurrentMutations)
+        mutationStarted = true
+        let waiters = mutationStartWaiters
+        mutationStartWaiters.removeAll()
+        waiters.forEach { $0.resume() }
         defer { concurrentMutations -= 1 }
         try await Task.sleep(for: mutationDelay)
         if let revealFailure {
@@ -806,6 +975,15 @@ private actor FakeBackend: MenuBarBackend {
         }
         revealedItems.append(item)
         return MenuBarMutationResult(generation: 0, changedItemIDs: [item])
+    }
+
+    func waitUntilMutationStarted() async {
+        guard !mutationStarted else {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            mutationStartWaiters.append(continuation)
+        }
     }
 
     func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) {

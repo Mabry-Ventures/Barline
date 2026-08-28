@@ -5,6 +5,10 @@
 
 import Foundation
 
+public enum MenuBarAuthorityRefreshError: Error, Equatable, Sendable {
+    case staleGeneration(expected: UInt64, actual: UInt64?)
+}
+
 public enum MenuBarMutation: Sendable {
     case move(MenuBarMoveOperation)
     case reveal(MenuBarItemID)
@@ -94,6 +98,28 @@ public actor MenuBarStateCoordinator {
 
     @discardableResult
     public func refresh(now: Date = Date()) async throws -> MenuBarSnapshot {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+
+        return try await refreshAssumingMutationTurn(now: now)
+    }
+
+    /// Refreshes only while the caller's previously validated authority is
+    /// still current. The check and refresh share the mutation turn, preventing
+    /// a layout mutation from slipping between them.
+    @discardableResult
+    public func refreshAuthority(
+        expectedGeneration: UInt64,
+        now: Date = Date()
+    ) async throws -> MenuBarSnapshot {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+
+        try requireCurrentGeneration(expectedGeneration)
+        return try await refreshAssumingMutationTurn(now: now)
+    }
+
+    private func refreshAssumingMutationTurn(now: Date) async throws -> MenuBarSnapshot {
         var mostRecentError: (any Error)?
 
         for attempt in 0 ..< retryPolicy.maximumAttempts {
@@ -140,10 +166,32 @@ public actor MenuBarStateCoordinator {
 
     @discardableResult
     public func perform(_ mutation: MenuBarMutation, now: Date = Date()) async throws -> MenuBarSnapshot {
+        try await perform(mutation, expectedGeneration: nil, now: now)
+    }
+
+    /// Executes only if the refreshed snapshot used by the caller is still
+    /// authoritative when the mutation acquires its serialized turn.
+    @discardableResult
+    public func perform(
+        _ mutation: MenuBarMutation,
+        expectedGeneration: UInt64,
+        now: Date = Date()
+    ) async throws -> MenuBarSnapshot {
+        try await perform(mutation, expectedGeneration: expectedGeneration as UInt64?, now: now)
+    }
+
+    private func perform(
+        _ mutation: MenuBarMutation,
+        expectedGeneration: UInt64?,
+        now: Date
+    ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
         try Task.checkCancellation()
+        if let expectedGeneration {
+            try requireCurrentGeneration(expectedGeneration)
+        }
         let before = try await validatedStartingSnapshot(now: now)
         guard !before.menuTrackingIsActive else {
             throw MenuBarBackendError.unsafeMenuTracking
@@ -211,12 +259,16 @@ public actor MenuBarStateCoordinator {
     public func activate(
         profile: BarlineProfile,
         on displayID: MenuBarDisplayID? = nil,
-        now: Date = Date()
+        now: Date = Date(),
+        expectedGeneration: UInt64? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
         try Task.checkCancellation()
+        if let expectedGeneration {
+            try requireCurrentGeneration(expectedGeneration)
+        }
         try ProfileValidator().validate(profile)
         let before = try await validatedStartingSnapshot(now: now)
         guard !before.menuTrackingIsActive else {
@@ -314,7 +366,7 @@ public actor MenuBarStateCoordinator {
         if let lastKnownGoodSnapshot, await backend.capabilities.canRestore {
             _ = try await backend.restore(lastKnownGoodSnapshot)
         }
-        return try await refresh(now: now)
+        return try await refreshAssumingMutationTurn(now: now)
     }
 
     public var canUndo: Bool {
@@ -323,6 +375,14 @@ public actor MenuBarStateCoordinator {
 
     public var canRedo: Bool {
         !redoCheckpoints.isEmpty
+    }
+
+    /// Clears profile identity without claiming that the current layout or
+    /// workspace settings still correspond to a saved profile.
+    public func clearActiveProfileAuthority() async {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        activeProfileID = nil
     }
 
     @discardableResult
@@ -394,8 +454,17 @@ public actor MenuBarStateCoordinator {
             let historyRestoreError = error
             do {
                 _ = try await backend.restore(previous.snapshot)
-                currentSnapshot = previous.snapshot
-                lastKnownGoodSnapshot = previous.snapshot
+                let rollbackCandidate = try await backend.snapshot()
+                let rollbackSnapshot: MenuBarSnapshot
+                switch validator.validate(rollbackCandidate, previous: nil, now: now) {
+                case let .success(snapshot):
+                    try validateHistoryResult(snapshot, matches: previous.snapshot)
+                    rollbackSnapshot = snapshot
+                case let .failure(reason):
+                    throw MenuBarBackendError.invalidSnapshot(reason)
+                }
+                currentSnapshot = rollbackSnapshot
+                lastKnownGoodSnapshot = rollbackSnapshot
                 activeProfileID = previous.activeProfileID
             } catch {
                 currentSnapshot = nil
@@ -464,7 +533,16 @@ public actor MenuBarStateCoordinator {
         if let currentSnapshot {
             return currentSnapshot
         }
-        return try await refresh(now: now)
+        return try await refreshAssumingMutationTurn(now: now)
+    }
+
+    private func requireCurrentGeneration(_ expectedGeneration: UInt64) throws {
+        guard currentSnapshot?.generation == expectedGeneration else {
+            throw MenuBarAuthorityRefreshError.staleGeneration(
+                expected: expectedGeneration,
+                actual: currentSnapshot?.generation
+            )
+        }
     }
 
     private func apply(_ mutation: MenuBarMutation) async throws {

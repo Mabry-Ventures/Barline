@@ -591,13 +591,9 @@ private struct MenuBarSearchContentView: View {
 
         Task {
             do {
-                guard
-                    let snapshot = await appState.compatibilityCoordinator.currentSnapshot,
-                    snapshot.generation == command.authorityGeneration
-                else {
-                    model.resetCommandInterpretation()
-                    return
-                }
+                let snapshot = try await appState.compatibilityCoordinator.refreshAuthority(
+                    expectedGeneration: command.authorityGeneration
+                )
                 if case let .nonRunnable(reason) = SearchCommandExecutionPolicy().disposition(
                     for: command,
                     in: snapshot
@@ -609,10 +605,16 @@ private struct MenuBarSearchContentView: View {
                 switch command.operation {
                 case .reveal:
                     guard let itemID = command.targetItemIDs.first else { return }
-                    _ = try await appState.compatibilityCoordinator.perform(.reveal(itemID))
+                    _ = try await appState.compatibilityCoordinator.perform(
+                        .reveal(itemID),
+                        expectedGeneration: snapshot.generation
+                    )
                 case .activate:
                     guard let itemID = command.targetItemIDs.first else { return }
-                    _ = try await appState.compatibilityCoordinator.perform(.activate(itemID, .left))
+                    _ = try await appState.compatibilityCoordinator.perform(
+                        .activate(itemID, .left),
+                        expectedGeneration: snapshot.generation
+                    )
                 case .show, .hide:
                     guard
                         command.targetItemIDs.count == 1,
@@ -638,7 +640,8 @@ private struct MenuBarSearchContentView: View {
                                 section: targetSection,
                                 index: targetIndex
                             )
-                        )
+                        ),
+                        expectedGeneration: snapshot.generation
                     )
                 case .activateProfile, .replaceWithProfile:
                     guard let profileID = command.targetProfileID,
@@ -646,7 +649,10 @@ private struct MenuBarSearchContentView: View {
                               ProfileID($0.id.uuidString) == profileID
                           })
                     else { return }
-                    guard await profileManager.activate(profile) else {
+                    guard await profileManager.activate(
+                        profile,
+                        expectedGeneration: snapshot.generation
+                    ) else {
                         model.resetCommandInterpretation()
                         return
                     }
@@ -662,11 +668,27 @@ private struct MenuBarSearchContentView: View {
 
     private func openManualEditor(for command: ValidatedMenuBarCommand) {
         closePanel()
-        appState.navigationState.settingsNavigationIdentifier = command.targetProfileID == nil
-            ? .menuBarLayout
-            : .profiles
+        if command.operation == .group {
+            appState.navigationState.settingsNavigationIdentifier = .profiles
+            appState.navigationState.requestedProfileEditorID = groupEditingProfile(for: command)?.id
+        } else {
+            appState.navigationState.settingsNavigationIdentifier = command.targetProfileID == nil
+                ? .menuBarLayout
+                : .profiles
+        }
         appState.activate(withPolicy: .regular)
         appState.openWindow(.settings)
+    }
+
+    private func groupEditingProfile(for command: ValidatedMenuBarCommand) -> BarlineProfile? {
+        let targetItems = Set(command.targetItemIDs)
+        let candidates = profileManager.profiles.filter {
+            targetItems.isSubset(of: Set($0.layout.allItemIDs))
+        }
+        return candidates.first(where: { $0.id == profileManager.activeProfileID })
+            ?? candidates.first
+            ?? profileManager.profiles.first(where: { $0.id == profileManager.activeProfileID })
+            ?? profileManager.profiles.first
     }
 }
 

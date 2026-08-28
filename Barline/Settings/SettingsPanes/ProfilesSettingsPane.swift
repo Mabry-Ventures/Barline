@@ -179,6 +179,13 @@ struct ProfilesSettingsPane: View {
         }
         .formStyle(.grouped)
         .disabled(manager.isBusy)
+        .onChange(of: appState.navigationState.requestedProfileEditorID, initial: true) {
+            guard let profileID = appState.navigationState.requestedProfileEditorID,
+                  let profile = manager.profiles.first(where: { $0.id == profileID })
+            else { return }
+            editedProfile = profile
+            appState.navigationState.requestedProfileEditorID = nil
+        }
         .sheet(item: $editedProfile) { profile in
             ProfileEditorSheet(
                 profile: profile,

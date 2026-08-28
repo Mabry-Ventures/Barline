@@ -62,6 +62,16 @@ struct ProfileTests {
         #expect(ProfileActivationSource.focus.precedence > ProfileActivationSource.configuredDefault.precedence)
     }
 
+    @Test("Only active automation contexts retain arbitration requests")
+    func activationRequestLifetime() {
+        #expect(ProfileActivationSource.configuredDefault.retainsArbitrationRequestWhileActive)
+        #expect(ProfileActivationSource.focus.retainsArbitrationRequestWhileActive)
+        #expect(!ProfileActivationSource.manual.retainsArbitrationRequestWhileActive)
+        #expect(!ProfileActivationSource.shortcut.retainsArbitrationRequestWhileActive)
+        #expect(!ProfileActivationSource.appIntent.retainsArbitrationRequestWhileActive)
+        #expect(!ProfileActivationSource.recovery.retainsArbitrationRequestWhileActive)
+    }
+
     @Test("Equal activation sources choose the newest request")
     func activationRecency() {
         let profileID = UUID(20)

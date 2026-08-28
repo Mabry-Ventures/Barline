@@ -4,6 +4,7 @@
 //
 
 import Combine
+import Foundation
 
 /// The model for app-wide navigation.
 @MainActor
@@ -13,4 +14,5 @@ final class AppNavigationState: ObservableObject {
     @Published var isBarlineShelfPresented = false
     @Published var isSearchPresented = false
     @Published var settingsNavigationIdentifier: SettingsNavigationIdentifier = .general
+    @Published var requestedProfileEditorID: UUID?
 }
