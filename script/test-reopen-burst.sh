@@ -16,3 +16,14 @@ trap cleanup EXIT
 "$ROOT/script/build_and_run.sh" --release --verify
 BARLINE_PERFORMANCE_CYCLES=100 BARLINE_PERFORMANCE_WARMUPS=5 \
     "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe apple-event-reopen
+
+# The release soak also interleaves helper interruption with reopen requests.
+# Keep a bounded version in the full gate so cross-path work accumulation fails
+# quickly instead of appearing only in the 30-minute candidate run.
+for cycle in {1..8}; do
+    printf 'Recovery/reopen burst cycle %d\n' "$cycle"
+    "$ROOT/script/test-xpc-interruption.sh" \
+        --reuse-running --recovery-probe apple-event-reopen
+    BARLINE_PERFORMANCE_CYCLES=5 BARLINE_PERFORMANCE_WARMUPS=1 \
+        "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe apple-event-reopen
+done
