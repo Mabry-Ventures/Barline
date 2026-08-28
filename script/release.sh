@@ -148,21 +148,7 @@ cp "$ROOT/CHANGELOG.md" "$DIST/Barline-$VERSION.md"
     --link 'https://github.com/Mabry-Ventures/Barline' --embed-release-notes -o "$DIST/appcast.xml" "$DIST"
 
 git -C "$ROOT" archive --format=tar.gz --prefix="Barline-$VERSION/" -o "$DIST/Barline-$VERSION-source.tar.gz" "$SHA"
-SHA_VALUE="$SHA" VERSION_VALUE="$VERSION" BUILD_VALUE="$BUILD" ROOT_VALUE="$ROOT" /usr/bin/ruby -rjson -e '
-  lockfiles = ["Barline.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved", "BarlineCore/Package.resolved"]
-  packages = lockfiles.flat_map do |relative|
-    document = JSON.parse(File.read(File.join(ENV.fetch("ROOT_VALUE"), relative)))
-    (document["pins"] || []).map do |pin|
-      state = pin.fetch("state", {})
-      {name: pin["identity"], version: state["version"], revision: state["revision"], source: pin["location"]}
-    end
-  end.uniq { |item| item[:name] }
-  sbom = {spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT",
-          name: "Barline-#{ENV.fetch("VERSION_VALUE")}", documentNamespace: "https://github.com/Mabry-Ventures/Barline/releases/tag/v#{ENV.fetch("VERSION_VALUE")}",
-          creationInfo: {created: Time.now.utc.strftime("%Y-%m-%dT%H:%M:%SZ"), creators: ["Tool: Barline release.sh"]},
-          comment: "Commit #{ENV.fetch("SHA_VALUE")}, build #{ENV.fetch("BUILD_VALUE")}", packages: packages}
-  File.write(ARGV.fetch(0), JSON.pretty_generate(sbom) + "\n")
-' "$DIST/Barline-$VERSION.spdx.json"
+"$ROOT/script/generate-spdx-sbom.rb" "$ROOT" "$VERSION" "$BUILD" "$SHA" "$DIST/Barline-$VERSION.spdx.json"
 (cd "$DIST" && shasum -a 256 "Barline-$VERSION.zip" "Barline-$VERSION-source.tar.gz" "Barline-$VERSION.spdx.json" appcast.xml > SHA256SUMS)
 
 printf 'PASS: signed, notarized, stapled, Gatekeeper-assessed release package generated at %s\n' "$DIST"

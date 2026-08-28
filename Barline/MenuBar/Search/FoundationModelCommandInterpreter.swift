@@ -27,11 +27,6 @@ enum FoundationModelCommandInterpreterError: Error, Equatable, Sendable {
 actor FoundationModelCommandInterpreter: MenuBarCommandInterpreting {
     private let resolver = SearchCommandResolver(maximumContextDocuments: 30)
 
-    #if canImport(FoundationModels)
-        @available(macOS 26.0, *)
-        private var session: LanguageModelSession?
-    #endif
-
     func interpret(query: String, documents: [SearchDocument]) async throws -> MenuBarCommand {
         let boundedQuery = String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(500))
         guard !boundedQuery.isEmpty else {
@@ -65,8 +60,8 @@ actor FoundationModelCommandInterpreter: MenuBarCommandInterpreting {
 
             let generated: GeneratedMenuBarCommand
             do {
-                let activeSession = session ?? makeSession()
-                session = activeSession
+                // Independent requests must not inherit transcript or tool state.
+                let activeSession = makeSession()
                 generated = try await activeSession.respond(
                     to: prompt,
                     generating: GeneratedMenuBarCommand.self

@@ -12,6 +12,7 @@ private enum Configuration {
     static let openTimeout = Duration.milliseconds(1500)
     static let closeTimeout = Duration.milliseconds(1000)
     static let pollingIntervalMicroseconds: useconds_t = 10000
+    static let probe = ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_PROBE"] ?? "runtime-smoke"
 
     private static func positiveEnvironmentInteger(_ name: String) -> Int? {
         guard
@@ -90,14 +91,19 @@ private func isBarlineShelfVisible() -> Bool {
     }
 }
 
-private func click(at point: CGPoint) {
-    _ = point
-    DistributedNotificationCenter.default().postNotificationName(
-        Notification.Name("com.mabryventures.Barline.runtime-smoke.toggle-shelf"),
-        object: nil,
-        userInfo: nil,
-        deliverImmediately: true
-    )
+private func click(at _: CGPoint) throws {
+    switch Configuration.probe {
+    case "runtime-smoke":
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name("com.mabryventures.Barline.runtime-smoke.toggle-shelf"),
+            object: nil,
+            userInfo: nil,
+            deliverImmediately: true
+        )
+    default:
+        fputs("error: shelf click is available only with the runtime-smoke probe\n", stderr)
+        exit(2)
+    }
 }
 
 private func waitForVisibility(_ target: Bool, timeout: Duration) -> Duration? {
@@ -129,55 +135,91 @@ private func ensureClosed(iconPoint: CGPoint) throws {
     guard isBarlineShelfVisible() else {
         return
     }
-    click(at: iconPoint)
+    try click(at: iconPoint)
     guard waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
         throw ProbeError.unableToCloseBaseline
     }
 }
 
-private func runSingleClick(iconPoint: CGPoint) -> Double? {
-    click(at: iconPoint)
+private func runSingleClick(iconPoint: CGPoint) throws -> Double? {
+    try click(at: iconPoint)
     guard let latency = waitForVisibility(true, timeout: Configuration.openTimeout) else {
         return nil
     }
-    click(at: iconPoint)
+    try click(at: iconPoint)
     _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
     return milliseconds(latency)
 }
 
-private func runRapidRetry(iconPoint: CGPoint) -> (feedbackInBudget: Bool, silentCancellation: Bool) {
-    click(at: iconPoint)
+private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool, silentCancellation: Bool) {
+    try click(at: iconPoint)
     if waitForVisibility(true, timeout: Configuration.feedbackBudget) != nil {
-        click(at: iconPoint)
+        try click(at: iconPoint)
         _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
         return (true, false)
     }
 
     // Reproduce a user retrying because the first click produced no visible feedback.
-    click(at: iconPoint)
+    try click(at: iconPoint)
     let silentCancellation = waitForVisibility(true, timeout: Configuration.closeTimeout) == nil
 
     if isBarlineShelfVisible() {
-        click(at: iconPoint)
+        try click(at: iconPoint)
         _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
     }
     return (false, silentCancellation)
 }
 
 do {
+    if Configuration.probe == "status-observation" {
+        for _ in 0 ..< Configuration.warmupCycles {
+            _ = try barlineIconCenter()
+        }
+        var latencies = [Double]()
+        for cycle in 1 ... Configuration.measuredCycles {
+            let start = ContinuousClock.now
+            _ = try barlineIconCenter()
+            let latency = milliseconds(start.duration(to: .now))
+            latencies.append(latency)
+            print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
+            usleep(50000)
+        }
+        let median = percentile(latencies, 0.50)
+        let p95 = percentile(latencies, 0.95)
+        let maximum = latencies.max() ?? 0
+        let budgetMilliseconds = milliseconds(Configuration.feedbackBudget)
+        let passed = p95 <= budgetMilliseconds
+        print(
+            String(
+                format: "RESULT samples=%d timeouts=0 median_ms=%.1f p95_ms=%.1f max_ms=%.1f feedback_in_250ms=%@ silent_cancellation=false verdict=%@",
+                latencies.count,
+                median,
+                p95,
+                maximum,
+                passed.description,
+                passed ? "PASS" : "FAIL"
+            )
+        )
+        exit(passed ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+    guard Configuration.probe == "runtime-smoke" else {
+        fputs("error: BARLINE_PERFORMANCE_PROBE must be runtime-smoke or status-observation\n", stderr)
+        exit(2)
+    }
+
     let iconPoint = try barlineIconCenter()
 
     try ensureClosed(iconPoint: iconPoint)
 
     for _ in 0 ..< Configuration.warmupCycles {
-        _ = runSingleClick(iconPoint: iconPoint)
+        _ = try runSingleClick(iconPoint: iconPoint)
     }
 
     var latencies = [Double]()
     var timeouts = 0
 
     for cycle in 1 ... Configuration.measuredCycles {
-        if let latency = runSingleClick(iconPoint: iconPoint) {
+        if let latency = try runSingleClick(iconPoint: iconPoint) {
             latencies.append(latency)
             print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
         } else {
@@ -187,7 +229,7 @@ do {
         }
     }
 
-    let rapidRetry = runRapidRetry(iconPoint: iconPoint)
+    let rapidRetry = try runRapidRetry(iconPoint: iconPoint)
     let median = percentile(latencies, 0.50)
     let p95 = percentile(latencies, 0.95)
     let maximum = latencies.max() ?? 0

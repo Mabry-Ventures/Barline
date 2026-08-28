@@ -4,6 +4,7 @@
 //
 
 @testable import BarlineCore
+import Foundation
 import Testing
 
 @Suite("Model command resolution and evaluations")
@@ -119,12 +120,56 @@ struct SearchCommandResolutionTests {
         #expect(!report.passes)
         #expect(report.unsafeRejectionRate == 0.5)
     }
+
+    @Test("Execution policy exposes only commands with complete bounded semantics")
+    func executionDisposition() throws {
+        let fixture = SearchResolutionFixture()
+        let immediate = try fixture.validatedCommand(
+            operation: .show,
+            itemIDs: [fixture.itemID]
+        )
+        #expect(
+            SearchCommandExecutionPolicy().disposition(for: immediate)
+                == .executableImmediately
+        )
+
+        let bulk = try fixture.validatedCommand(
+            operation: .hide,
+            itemIDs: [fixture.itemID, fixture.secondItemID]
+        )
+        #expect(
+            SearchCommandExecutionPolicy().disposition(for: bulk)
+                == .nonRunnable(.atomicBatchMutationUnavailable)
+        )
+
+        let rearrange = try fixture.validatedCommand(
+            operation: .rearrange,
+            itemIDs: [fixture.itemID]
+        )
+        #expect(
+            SearchCommandExecutionPolicy().disposition(for: rearrange)
+                == .nonRunnable(.missingArrangementDestination)
+        )
+
+        let replace = try fixture.validatedCommand(
+            operation: .replaceWithProfile,
+            profileID: fixture.profileID
+        )
+        #expect(
+            SearchCommandExecutionPolicy().disposition(for: replace)
+                == .explicitConfirmationRequired
+        )
+    }
 }
 
 private struct SearchResolutionFixture {
     let itemID = MenuBarItemID(
         bundleIdentifier: "com.example.display",
         accessibilityIdentifier: "display"
+    )
+    let secondItemID = MenuBarItemID(
+        bundleIdentifier: "com.example.clock",
+        accessibilityIdentifier: "clock"
     )
     let profileID = ProfileID("presentation")
     let item: SearchDocument
@@ -148,5 +193,42 @@ private struct SearchResolutionFixture {
             entity: .profile(profileID),
             title: "Presentation"
         )
+    }
+
+    func validatedCommand(
+        operation: MenuBarCommandOperation,
+        itemIDs: [MenuBarItemID] = [],
+        profileID: ProfileID? = nil
+    ) throws -> ValidatedMenuBarCommand {
+        let displayID = MenuBarDisplayID("display")
+        let snapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(timeIntervalSince1970: 1000),
+            items: [itemID, secondItemID].enumerated().map { index, itemID in
+                MenuBarItemDescriptor(
+                    id: itemID,
+                    section: .visible,
+                    order: index,
+                    displayID: displayID
+                )
+            },
+            displayIDs: [displayID],
+            activeSpaceIsValid: true
+        )
+        let authority = MenuBarCommandAuthority(
+            validatedSnapshot: snapshot,
+            expectedGeneration: 1,
+            availableProfileIDs: [self.profileID],
+            now: snapshot.capturedAt
+        )
+        return try MenuBarCommandValidator().validate(
+            MenuBarCommand(
+                operation: operation,
+                targetItemIDs: itemIDs,
+                targetProfileID: profileID,
+                confidence: 0.95
+            ),
+            authority: authority
+        ).get()
     }
 }

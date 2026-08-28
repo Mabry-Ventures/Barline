@@ -22,6 +22,13 @@ public struct ProfileArchive: Codable, Hashable, Sendable {
 }
 
 public struct ProfileCodec: Sendable {
+    public static let maximumArchiveByteCount = 4 * 1024 * 1024
+    public static let maximumProfileCount = 256
+    public static let maximumCollectionCount = 2048
+    public static let maximumStringLength = 1024
+
+    private static let maximumObjectFieldCount = 64
+    private static let maximumNestingDepth = 16
     private let validator: ProfileValidator
 
     public init(validator: ProfileValidator = ProfileValidator()) {
@@ -41,11 +48,21 @@ public struct ProfileCodec: Sendable {
     }
 
     public func export(_ profiles: [BarlineProfile], at date: Date = Date()) throws -> Data {
+        guard profiles.count <= Self.maximumProfileCount else {
+            throw ProfileValidationError.archiveLimitExceeded("profile count")
+        }
         try validator.validate(profiles)
-        return try makeEncoder().encode(ProfileArchive(exportedAt: date, profiles: profiles))
+        let data = try makeEncoder().encode(ProfileArchive(exportedAt: date, profiles: profiles))
+        guard data.count <= Self.maximumArchiveByteCount else {
+            throw ProfileValidationError.archiveTooLarge(data.count)
+        }
+        return data
     }
 
     public func importArchive(_ data: Data) throws -> ProfileArchive {
+        guard data.count <= Self.maximumArchiveByteCount else {
+            throw ProfileValidationError.archiveTooLarge(data.count)
+        }
         let document: [String: Any]
         do {
             guard let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -58,6 +75,7 @@ public struct ProfileCodec: Sendable {
             }
             throw ProfileValidationError.malformedDocument(String(describing: error))
         }
+        try preflight(document, depth: 0)
         guard let formatVersion = document["formatVersion"] as? Int else {
             throw ProfileValidationError.malformedDocument("formatVersion is required")
         }
@@ -68,6 +86,9 @@ public struct ProfileCodec: Sendable {
               let profileDocuments = document["profiles"] as? [[String: Any]]
         else {
             throw ProfileValidationError.malformedDocument("exportedAt and profiles are required")
+        }
+        guard profileDocuments.count <= Self.maximumProfileCount else {
+            throw ProfileValidationError.archiveLimitExceeded("profile count")
         }
 
         let exportedAtData = try JSONSerialization.data(withJSONObject: ["value": exportedAtValue])
@@ -85,6 +106,38 @@ public struct ProfileCodec: Sendable {
         }
         try validator.validate(profiles)
         return ProfileArchive(formatVersion: formatVersion, exportedAt: exportedAt, profiles: profiles)
+    }
+
+    private func preflight(_ value: Any, depth: Int) throws {
+        guard depth <= Self.maximumNestingDepth else {
+            throw ProfileValidationError.archiveLimitExceeded("nesting depth")
+        }
+        if let string = value as? String {
+            guard string.count <= Self.maximumStringLength else {
+                throw ProfileValidationError.archiveLimitExceeded("string length")
+            }
+            return
+        }
+        if let array = value as? [Any] {
+            guard array.count <= Self.maximumCollectionCount else {
+                throw ProfileValidationError.archiveLimitExceeded("collection count")
+            }
+            for element in array {
+                try preflight(element, depth: depth + 1)
+            }
+            return
+        }
+        if let object = value as? [String: Any] {
+            guard object.count <= Self.maximumObjectFieldCount else {
+                throw ProfileValidationError.archiveLimitExceeded("object field count")
+            }
+            for (key, nestedValue) in object {
+                guard key.count <= Self.maximumStringLength else {
+                    throw ProfileValidationError.archiveLimitExceeded("field name length")
+                }
+                try preflight(nestedValue, depth: depth + 1)
+            }
+        }
     }
 
     private func makeEncoder() -> JSONEncoder {

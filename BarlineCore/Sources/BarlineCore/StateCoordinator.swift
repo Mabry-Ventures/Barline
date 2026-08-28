@@ -44,6 +44,11 @@ public struct RetryPolicy: Sendable {
 }
 
 public actor MenuBarStateCoordinator {
+    private struct HistoryCheckpoint: Sendable {
+        let snapshot: MenuBarSnapshot
+        let activeProfileID: UUID?
+    }
+
     public private(set) var currentSnapshot: MenuBarSnapshot?
     public private(set) var lastKnownGoodSnapshot: MenuBarSnapshot?
     public private(set) var lastRejection: SnapshotRejectionReason?
@@ -60,8 +65,8 @@ public actor MenuBarStateCoordinator {
     private let historyLimit = 50
     private var mutationIsActive = false
     private var mutationWaiters = [CheckedContinuation<Void, Never>]()
-    private var undoSnapshots = [MenuBarSnapshot]()
-    private var redoSnapshots = [MenuBarSnapshot]()
+    private var undoCheckpoints = [HistoryCheckpoint]()
+    private var redoCheckpoints = [HistoryCheckpoint]()
 
     public init(
         backend: any MenuBarBackend,
@@ -146,7 +151,7 @@ public actor MenuBarStateCoordinator {
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
-                recordUndoCheckpoint(before)
+                recordUndoCheckpoint(before, activeProfileID: activeProfileID)
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
@@ -247,7 +252,7 @@ public actor MenuBarStateCoordinator {
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
                 activeProfileID = profile.id
-                recordUndoCheckpoint(before)
+                recordUndoCheckpoint(before, activeProfileID: priorProfileID)
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
@@ -297,11 +302,11 @@ public actor MenuBarStateCoordinator {
     }
 
     public var canUndo: Bool {
-        !undoSnapshots.isEmpty
+        !undoCheckpoints.isEmpty
     }
 
     public var canRedo: Bool {
-        !redoSnapshots.isEmpty
+        !redoCheckpoints.isEmpty
     }
 
     @discardableResult
@@ -309,14 +314,17 @@ public actor MenuBarStateCoordinator {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
-        guard let target = undoSnapshots.last else {
+        guard let target = undoCheckpoints.last else {
             throw MenuBarBackendError.operationFailed("no layout undo checkpoint")
         }
-        let before = try await validatedStartingSnapshot(now: now)
-        let restored = try await restoreHistorySnapshot(target, previous: before, now: now)
-        undoSnapshots.removeLast()
-        redoSnapshots.append(before)
-        trimHistory(&redoSnapshots)
+        let before = try await HistoryCheckpoint(
+            snapshot: validatedStartingSnapshot(now: now),
+            activeProfileID: activeProfileID
+        )
+        let restored = try await restoreHistoryCheckpoint(target, previous: before, now: now)
+        undoCheckpoints.removeLast()
+        redoCheckpoints.append(before)
+        trimHistory(&redoCheckpoints)
         return restored
     }
 
@@ -325,53 +333,76 @@ public actor MenuBarStateCoordinator {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
-        guard let target = redoSnapshots.last else {
+        guard let target = redoCheckpoints.last else {
             throw MenuBarBackendError.operationFailed("no layout redo checkpoint")
         }
-        let before = try await validatedStartingSnapshot(now: now)
-        let restored = try await restoreHistorySnapshot(target, previous: before, now: now)
-        redoSnapshots.removeLast()
-        undoSnapshots.append(before)
-        trimHistory(&undoSnapshots)
+        let before = try await HistoryCheckpoint(
+            snapshot: validatedStartingSnapshot(now: now),
+            activeProfileID: activeProfileID
+        )
+        let restored = try await restoreHistoryCheckpoint(target, previous: before, now: now)
+        redoCheckpoints.removeLast()
+        undoCheckpoints.append(before)
+        trimHistory(&undoCheckpoints)
         return restored
     }
 
-    private func restoreHistorySnapshot(
-        _ target: MenuBarSnapshot,
-        previous: MenuBarSnapshot,
+    private func restoreHistoryCheckpoint(
+        _ target: HistoryCheckpoint,
+        previous: HistoryCheckpoint,
         now: Date
     ) async throws -> MenuBarSnapshot {
         guard await backend.capabilities.canRestore else {
             throw MenuBarBackendError.unavailableCapability("restore")
         }
         mutationGeneration &+= 1
-        _ = try await backend.restore(target)
-        let candidate = try await backend.snapshot()
-        // History restoration intentionally targets an older logical layout;
-        // structural validation remains strict, but monotonic comparison with
-        // the newer pre-undo snapshot would reject a correct restore.
-        switch validator.validate(candidate, previous: nil, now: now) {
-        case let .success(snapshot):
-            currentSnapshot = snapshot
-            lastKnownGoodSnapshot = snapshot
-            lastRejection = nil
-            return snapshot
-        case let .failure(reason):
-            lastRejection = reason
-            _ = try? await backend.restore(previous)
-            currentSnapshot = previous
-            lastKnownGoodSnapshot = previous
-            throw MenuBarBackendError.invalidSnapshot(reason)
+        do {
+            _ = try await backend.restore(target.snapshot)
+            let candidate = try await backend.snapshot()
+            // History restoration intentionally targets an older logical layout;
+            // structural validation remains strict, but monotonic comparison with
+            // the newer pre-undo snapshot would reject a correct restore.
+            switch validator.validate(candidate, previous: nil, now: now) {
+            case let .success(snapshot):
+                currentSnapshot = snapshot
+                lastKnownGoodSnapshot = snapshot
+                lastRejection = nil
+                activeProfileID = target.activeProfileID
+                return snapshot
+            case let .failure(reason):
+                lastRejection = reason
+                throw MenuBarBackendError.invalidSnapshot(reason)
+            }
+        } catch {
+            let historyRestoreError = error
+            do {
+                _ = try await backend.restore(previous.snapshot)
+                currentSnapshot = previous.snapshot
+                lastKnownGoodSnapshot = previous.snapshot
+                activeProfileID = previous.activeProfileID
+            } catch {
+                currentSnapshot = nil
+                activeProfileID = nil
+                throw MenuBarBackendError.operationFailed(
+                    "history restore failed: \(historyRestoreError); rollback failed: \(error)"
+                )
+            }
+            throw historyRestoreError
         }
     }
 
-    private func recordUndoCheckpoint(_ snapshot: MenuBarSnapshot) {
-        undoSnapshots.append(snapshot)
-        trimHistory(&undoSnapshots)
-        redoSnapshots.removeAll(keepingCapacity: true)
+    private func recordUndoCheckpoint(
+        _ snapshot: MenuBarSnapshot,
+        activeProfileID: UUID?
+    ) {
+        undoCheckpoints.append(
+            HistoryCheckpoint(snapshot: snapshot, activeProfileID: activeProfileID)
+        )
+        trimHistory(&undoCheckpoints)
+        redoCheckpoints.removeAll(keepingCapacity: true)
     }
 
-    private func trimHistory(_ history: inout [MenuBarSnapshot]) {
+    private func trimHistory(_ history: inout [HistoryCheckpoint]) {
         if history.count > historyLimit {
             history.removeFirst(history.count - historyLimit)
         }

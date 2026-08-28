@@ -22,6 +22,17 @@ struct ProfileTests {
         #expect(decoded.displayOverrides.count == 1)
     }
 
+    @Test("Signed item spacing round-trips across the supported General settings range")
+    func signedItemSpacingRoundTrip() throws {
+        var profile = completeProfile()
+        profile.appearance.itemSpacing = -16
+
+        let decoded = try ProfileCodec().decode(ProfileCodec().encode(profile))
+
+        #expect(decoded.appearance.itemSpacing == -16)
+        #expect(ProfileAppearance.itemSpacingRange == -16 ... 16)
+    }
+
     @Test("Display override resolves exactly and unknown displays use the base layout")
     func displayResolution() {
         let profile = completeProfile()
@@ -91,7 +102,7 @@ struct ProfileTests {
         let template = PresentationProfileTemplateBuilder().makeTemplate(
             from: snapshot,
             now: Date(timeIntervalSince1970: 200),
-            id: UUID(30)
+            id: PresentationProfileTemplateBuilder.profileID
         )
 
         #expect(template.profile.layout.visible == [system, control])
@@ -100,6 +111,7 @@ struct ProfileTests {
         #expect(template.requiresConfirmation)
         #expect(template.restoresPreviousLayoutOnDeactivation)
         #expect(template.sourceGeneration == 42)
+        #expect(template.profile.id == PresentationProfileTemplateBuilder.profileID)
     }
 
     @Test("Version 1 migrates flat layout fields through every schema step")
@@ -228,6 +240,9 @@ struct ProfileTests {
         let badAppearance = BarlineProfile(
             name: "Appearance", appearance: .init(itemSpacing: -.infinity)
         )
+        let excessiveSpacing = BarlineProfile(
+            name: "Spacing", appearance: .init(itemSpacing: 17)
+        )
         let badHotkey = BarlineProfile(
             name: "Hotkey", hotkey: ProfileHotkey(key: "", modifiers: [])
         )
@@ -235,6 +250,9 @@ struct ProfileTests {
         #expect(throws: ProfileValidationError.emptyDisplayID) { try ProfileValidator().validate(emptyDisplay) }
         #expect(throws: ProfileValidationError.invalidAutoRehideDelay) { try ProfileValidator().validate(badDelay) }
         #expect(throws: ProfileValidationError.invalidAppearance) { try ProfileValidator().validate(badAppearance) }
+        #expect(throws: ProfileValidationError.invalidAppearance) {
+            try ProfileValidator().validate(excessiveSpacing)
+        }
         #expect(throws: ProfileValidationError.invalidHotkey) { try ProfileValidator().validate(badHotkey) }
     }
 
@@ -347,6 +365,43 @@ struct ProfileTests {
         }
     }
 
+    @Test("Archive import bounds bytes, profile count, collections, and string fields")
+    func rejectsOversizedArchives() throws {
+        let oversizedBytes = Data(repeating: 0x20, count: ProfileCodec.maximumArchiveByteCount + 1)
+        #expect(throws: ProfileValidationError.archiveTooLarge(oversizedBytes.count)) {
+            try ProfileCodec().importArchive(oversizedBytes)
+        }
+
+        let profileDocument = try #require(
+            JSONSerialization.jsonObject(with: rawEncode(completeProfile())) as? [String: Any]
+        )
+        let tooManyProfiles = archiveDocument(
+            profiles: Array(repeating: profileDocument, count: ProfileCodec.maximumProfileCount + 1)
+        )
+        #expect(throws: ProfileValidationError.archiveLimitExceeded("profile count")) {
+            try ProfileCodec().importArchive(JSONSerialization.data(withJSONObject: tooManyProfiles))
+        }
+
+        var excessiveCollection = profileDocument
+        excessiveCollection["groups"] = Array(
+            repeating: ["id": UUID().uuidString, "name": "Group", "itemIDs": []],
+            count: ProfileCodec.maximumCollectionCount + 1
+        )
+        #expect(throws: ProfileValidationError.archiveLimitExceeded("collection count")) {
+            try ProfileCodec().importArchive(
+                JSONSerialization.data(withJSONObject: archiveDocument(profiles: [excessiveCollection]))
+            )
+        }
+
+        var excessiveField = profileDocument
+        excessiveField["name"] = String(repeating: "x", count: ProfileCodec.maximumStringLength + 1)
+        #expect(throws: ProfileValidationError.archiveLimitExceeded("string length")) {
+            try ProfileCodec().importArchive(
+                JSONSerialization.data(withJSONObject: archiveDocument(profiles: [excessiveField]))
+            )
+        }
+    }
+
     @Test("Future and missing schema versions are rejected before decode")
     func rejectsBadSchemaVersions() {
         let future = Data("{\"schemaVersion\":999}".utf8)
@@ -431,6 +486,14 @@ struct ProfileTests {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return try encoder.encode(profile)
+    }
+
+    private func archiveDocument(profiles: [[String: Any]]) -> [String: Any] {
+        [
+            "formatVersion": ProfileSchema.archiveFormatVersion,
+            "exportedAt": "2026-01-01T00:00:00Z",
+            "profiles": profiles,
+        ]
     }
 }
 

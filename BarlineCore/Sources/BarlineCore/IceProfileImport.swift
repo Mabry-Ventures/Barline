@@ -217,7 +217,11 @@ public struct IceProfileImporter: Sendable {
             name: "Imported from \(preferences.source.displayName)",
             symbol: "snowflake",
             layout: layout,
-            appearance: ProfileAppearance(itemSpacing: max(0, preferences.itemSpacingOffset ?? 0)),
+            appearance: ProfileAppearance(
+                itemSpacing: preferences.itemSpacingOffset.flatMap {
+                    ProfileAppearance.itemSpacingRange.contains($0) ? $0 : nil
+                } ?? 0
+            ),
             shelfBehavior: ProfileShelfBehavior(isEnabled: preferences.shelfEnabled ?? false),
             revealTriggers: ProfileRevealTriggers(
                 click: preferences.revealOnClick ?? true,

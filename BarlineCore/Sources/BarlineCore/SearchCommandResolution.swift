@@ -189,3 +189,40 @@ public enum SearchEvaluationRunner {
         )
     }
 }
+
+public enum SearchCommandNonRunnableReason: String, Equatable, Sendable {
+    case atomicBatchMutationUnavailable
+    case missingArrangementDestination
+    case missingGroupDefinition
+}
+
+public enum SearchCommandExecutionDisposition: Equatable, Sendable {
+    case executableImmediately
+    case explicitConfirmationRequired
+    case nonRunnable(SearchCommandNonRunnableReason)
+}
+
+/// Converts a validated proposal into an honest UI capability. Operations that
+/// need data absent from the generated schema are never presented as runnable.
+public struct SearchCommandExecutionPolicy: Sendable {
+    public init() {}
+
+    public func disposition(
+        for command: ValidatedMenuBarCommand
+    ) -> SearchCommandExecutionDisposition {
+        switch command.operation {
+        case .reveal, .activate, .activateProfile:
+            .executableImmediately
+        case .show, .hide:
+            command.targetItemIDs.count == 1
+                ? .executableImmediately
+                : .nonRunnable(.atomicBatchMutationUnavailable)
+        case .replaceWithProfile:
+            .explicitConfirmationRequired
+        case .rearrange:
+            .nonRunnable(.missingArrangementDestination)
+        case .group:
+            .nonRunnable(.missingGroupDefinition)
+        }
+    }
+}

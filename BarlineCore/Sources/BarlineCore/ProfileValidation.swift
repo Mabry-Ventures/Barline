@@ -25,6 +25,8 @@ public enum ProfileValidationError: Error, Codable, Equatable, Sendable {
     case duplicateProfile(UUID)
     case unsupportedArchiveVersion(Int)
     case emptyArchive
+    case archiveTooLarge(Int)
+    case archiveLimitExceeded(String)
     case malformedDocument(String)
 }
 
@@ -41,7 +43,8 @@ public struct ProfileValidator: Sendable {
         guard profile.createdAt <= profile.updatedAt else {
             throw ProfileValidationError.invalidTimestampOrder
         }
-        guard profile.appearance.itemSpacing.isFinite, profile.appearance.itemSpacing >= 0,
+        guard profile.appearance.itemSpacing.isFinite,
+              ProfileAppearance.itemSpacingRange.contains(profile.appearance.itemSpacing),
               profile.appearance.gradientHex.count <= 8
         else {
             throw ProfileValidationError.invalidAppearance
