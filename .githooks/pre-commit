@@ -5,6 +5,6 @@ git diff --check --cached
 swift_files=()
 while IFS= read -r -d '' file; do swift_files+=("$file"); done < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.swift')
 if ((${#swift_files[@]})); then
-    swiftformat --lint "${swift_files[@]}"
+    swiftformat --lint --swift-version 6.0 "${swift_files[@]}"
     swiftlint lint --strict --config .swiftlint.yml "${swift_files[@]}"
 fi

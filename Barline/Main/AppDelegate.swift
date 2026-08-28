@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     name: Self.runtimeSmokeToggleNotification,
                     object: nil
                 )
-                appState.performSetup(hasPermissions: true)
+                appState.performSetup()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
                     self?.openSettingsWindow()
                 }
@@ -61,18 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         #endif
 
-        // Depending on the permissions state, either perform setup
-        // or prompt to grant permissions.
-        switch appState.permissions.permissionsState {
-        case .hasAll:
-            appState.permissions.logger.debug("Passed all permissions checks")
-            appState.performSetup(hasPermissions: true)
-        case .hasRequired:
-            appState.permissions.logger.debug("Passed required permissions checks")
-            appState.performSetup(hasPermissions: true)
-        case .missing:
-            appState.permissions.logger.debug("Failed required permissions checks")
-            appState.performSetup(hasPermissions: false)
+        // The settings, saved profiles, search metadata, and diagnostics remain
+        // available without Accessibility. Features that manage other apps'
+        // status items request that grant only when the user chooses them.
+        appState.performSetup()
+        if appState.permissions.permissionsState == .missing {
+            appState.permissions.logger.debug("Starting in degraded mode without Accessibility")
+            openSettingsWindow()
         }
     }
 

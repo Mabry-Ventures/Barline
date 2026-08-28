@@ -14,16 +14,15 @@ Barline is a GPLv3 successor derived from
 [docs/CHANGES_FROM_ICE.md](docs/CHANGES_FROM_ICE.md) for full attribution and
 source provenance.
 
-> Barline is under active development and does not yet have a public binary
-> release or signed update feed. Do not download binaries from an Ice release
-> page expecting them to be Barline.
+> Barline does not yet have a notarized public binary release. Do not download
+> binaries from an Ice release page expecting them to be Barline.
 
 ## Requirements
 
 - macOS 26.0 or later
 - Apple Silicon (`arm64`)
-- Accessibility permission for cross-application menu bar arrangement
-- Screen & System Audio Recording permission for item-image previews
+- Accessibility permission for cross-application discovery and arrangement
+- Optional Screen & System Audio Recording permission for item-image previews
 
 Barline uses unsupported WindowServer behavior for cross-application status
 item management. The compatibility layer is designed to fail safely, but macOS
@@ -44,14 +43,15 @@ only for Barline's signed update feed and explicit user-opened links.
 - Automatic rehide and application-menu overlap handling
 - Drag-and-drop and keyboard-assisted layout editing
 - Secondary shelf for overflow and notched displays
-- Fast local item search
+- Saved profiles, Presentation templates, Focus Filters, and App Intents
+- Validated profile archive import/export and last-known-good recovery
+- Fast local search, Core Spotlight, and bounded on-device interpretation
 - Menu bar tint, gradient, border, shadow, and shape controls
 - Item spacing, launch at login, and update infrastructure
 
-Profiles, Focus Filters, App Intents, stable per-display layouts, Core Spotlight,
-on-device natural-language interpretation, diagnostics, and transactional
-recovery are being implemented in the tracked milestones. Documentation is
-updated only when the corresponding code and tests exist.
+The compatibility backend remains isolated behind a typed XPC firewall. Search
+continues deterministically when Apple Intelligence is unavailable; generated
+commands remain inert until stable identifiers and confirmation policy pass.
 
 ## Build and run
 
@@ -88,8 +88,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
 ```
 
-The canonical `script/ci.sh` command surface and full local evidence bundle are
-introduced in Milestone 4. No GitHub-hosted macOS or self-hosted runner is used.
+The `fast`, `full`, `release`, `xcode27`, and `soak` CI modes produce local,
+candidate-bound evidence. No GitHub-hosted macOS or self-hosted runner is used.
 
 ## Installation and releases
 
@@ -99,9 +99,9 @@ checksums, and signed update metadata. Signing and notarization remain local.
 
 ## Contributing and support
 
-Repository, issue, donation, and security-contact URLs will be added when the
-canonical public repository is established. Donations will never unlock or
-gate functionality.
+Use [GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues) for support
+and [SECURITY.md](SECURITY.md) for vulnerability reporting. Donations never
+unlock or gate functionality.
 
 ## License
 

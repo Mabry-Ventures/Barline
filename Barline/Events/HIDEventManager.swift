@@ -119,9 +119,11 @@ final class HIDEventManager: ObservableObject {
     // MARK: Setup
 
     /// Sets up the manager.
-    func performSetup(with appState: AppState) {
+    func performSetup(with appState: AppState, startsEnabled: Bool = true) {
         self.appState = appState
-        startAll()
+        if startsEnabled {
+            startAll()
+        }
         configureCancellables()
     }
 

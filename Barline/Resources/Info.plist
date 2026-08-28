@@ -12,5 +12,9 @@
 	<string>$(BARLINE_SPARKLE_FEED_URL)</string>
 	<key>BarlineSparklePublicKey</key>
 	<string>$(BARLINE_SPARKLE_PUBLIC_KEY)</string>
+	<key>SUFeedURL</key>
+	<string>$(BARLINE_SPARKLE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(BARLINE_SPARKLE_PUBLIC_KEY)</string>
 </dict>
 </plist>

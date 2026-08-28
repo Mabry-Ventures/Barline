@@ -18,6 +18,18 @@ helper interruption plus the responsiveness probe. Its latest integration run
 completed all 10 cycles. Candidate-bound results are still required after the
 implementation SHA is committed and clean.
 
+The default `./script/ci.sh soak` remains a short development smoke. Release
+preparation uses `./script/ci.sh soak --release`, which defaults to a bounded
+1,800-second run. It repeatedly executes snapshot/state/profile/search tests,
+forces XPC helper replacement, and cycles the shelf while sampling app/helper
+RSS and CPU plus Barline cache size. It writes `resources.csv` and `summary.json`
+under `.artifacts/soak/<sha>/`, including the exact SHA, dirty state, host,
+toolchain, cycle counts, resource extrema/growth, configured guards, and whether
+the full 30-minute duration actually completed. A reduced duration is useful
+only to validate the harness when explicitly enabled with
+`BARLINE_SOAK_HARNESS_VALIDATION=1`; its verdict is `HARNESS_PASS`, never
+candidate evidence.
+
 ## Required measurements
 
 Release evidence must measure launch responsiveness, idle CPU/wakeups, physical

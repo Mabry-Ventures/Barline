@@ -13,9 +13,14 @@ development line and are not release certification.
   last-known-good state coordination, profile schema version 3, profile JSON
   migration/validation, atomic profile-file storage and recovery, deterministic
   search, Spotlight record bounds, and typed command validation.
-- Core Spotlight indexing and runtime capability probes for Spotlight and
-  Foundation Models; these adapters are not yet connected to the app search UI.
-- Compatibility contracts and an XPC-oriented backend migration in progress.
+- Core Spotlight indexing and a bounded typed Foundation Models interpreter
+  connected behind deterministic validation and confirmation.
+- Compatibility contracts and a strict XPC compatibility firewall.
+- Saved profile editing/import/export, transactional activation, Focus and App
+  Intent delivery, Presentation templates, and last-known-good recovery.
+- Contextual permissions and degraded settings/search/diagnostics behavior.
+- Privacy-safe reviewed support-bundle export and a deterministic fixture app.
+- Release-only Sparkle trust configuration and credentialed packaging tooling.
 - Linux-only repository-hygiene workflow and fail-closed local CI command
   surface.
 
@@ -27,12 +32,9 @@ development line and are not release certification.
   remains in provenance, attribution, historical migration keys, and historical
   documentation where necessary.
 
-### Known incomplete work
+### Release boundaries
 
-- Profile persistence exists as a tested domain component but is not connected
-  to an app storage location or exposed in the app UI.
-- Focus Filters, App Intents, Foundation Models inference, the fixture app,
-  complete scenario matrix, support-bundle export, and local release
-  automation are not implemented.
-- Signing, notarization, Sparkle updates, clean installation/update testing, and
-  macOS 27 runtime validation have not been completed.
+- Real Focus/Shortcuts, VoiceOver, display/sleep-wake, signed installation, and
+  update-from-previous execution require candidate-bound system testing.
+- App Group provisioning, notarization credentials, Developer Tools automation,
+  host Accessibility trust, and macOS 27 runtime validation remain external.

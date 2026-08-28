@@ -195,6 +195,7 @@ private final class MenuBarSearchHostingView: NSHostingView<AnyView> {
 private struct MenuBarSearchContentView: View {
     private typealias ListItem = SectionedListItem<MenuBarSearchModel.ItemID>
 
+    @EnvironmentObject var appState: AppState
     @EnvironmentObject var itemManager: MenuBarItemManager
     @EnvironmentObject var model: MenuBarSearchModel
     @EnvironmentObject var profileManager: ProfileManager
@@ -218,6 +219,7 @@ private struct MenuBarSearchContentView: View {
         VStack(spacing: 0) {
             searchField
             mainContent
+            commandStatus
             bottomBar
         }
         .background {
@@ -244,6 +246,38 @@ private struct MenuBarSearchContentView: View {
             if model.selection == nil {
                 selectFirstDisplayedItem()
             }
+        }
+    }
+
+    @ViewBuilder
+    private var commandStatus: some View {
+        switch model.commandInterpretationState {
+        case .interpreting:
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Interpreting on this Mac…")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .accessibilityIdentifier("search-command-interpreting")
+        case let .validated(command):
+            HStack {
+                Label(commandSummary(command), systemImage: "sparkles")
+                Spacer()
+                Button("Run") { executeValidatedCommand(command) }
+            }
+            .padding(8)
+            .accessibilityIdentifier("search-command-validated")
+        case let .previewRequired(command):
+            HStack {
+                Label(commandSummary(command), systemImage: "exclamationmark.shield")
+                Spacer()
+                Button("Review") { openReview(for: command) }
+            }
+            .padding(8)
+            .accessibilityIdentifier("search-command-preview")
+        case .idle, .deterministicOnly, .unavailable, .fallback:
+            EmptyView()
         }
     }
 
@@ -399,13 +433,24 @@ private struct MenuBarSearchContentView: View {
         if model.searchText.isEmpty {
             model.displayedItems = searchItems.map(\.listItem)
             model.synchronizeSpotlightIfNeeded(with: documents)
+            model.resetCommandInterpretation()
         } else {
             let itemsByDocumentID = Dictionary(uniqueKeysWithValues: searchItems.compactMap { searchItem in
                 searchItem.document.map { ($0.id, searchItem.listItem) }
             })
-            model.displayedItems = model
-                .rankedDocumentIDs(for: model.searchText, documents: documents)
+            let results = model.rankedResults(for: model.searchText, documents: documents)
+            model.displayedItems = results
+                .map(\.document.id)
                 .compactMap { itemsByDocumentID[$0] }
+            model.considerCommandInterpretation(
+                query: model.searchText,
+                documents: documents,
+                deterministicResults: results,
+                coordinator: appState.compatibilityCoordinator,
+                availableProfileIDs: Set(
+                    profileManager.profiles.map { ProfileID($0.id.uuidString) }
+                )
+            )
         }
     }
 
@@ -419,6 +464,7 @@ private struct MenuBarSearchContentView: View {
     }
 
     private func performAction(for profile: BarlineProfile) {
+        guard requireAccessibilityForAction() else { return }
         closePanel()
         Task {
             await profileManager.activate(profile)
@@ -426,6 +472,7 @@ private struct MenuBarSearchContentView: View {
     }
 
     private func performAction(for item: MenuBarItem) {
+        guard requireAccessibilityForAction() else { return }
         closePanel()
         Task {
             try await Task.sleep(for: .milliseconds(25))
@@ -435,6 +482,74 @@ private struct MenuBarSearchContentView: View {
                 await itemManager.temporarilyShow(item: item, clickingWith: .left)
             }
         }
+    }
+
+    private func requireAccessibilityForAction() -> Bool {
+        guard appState.permissions.accessibility.hasPermission else {
+            closePanel()
+            appState.navigationState.settingsNavigationIdentifier = .advanced
+            appState.activate(withPolicy: .regular)
+            appState.openWindow(.settings)
+            return false
+        }
+        return true
+    }
+
+    private func commandSummary(_ command: ValidatedMenuBarCommand) -> String {
+        let count = command.targetItemIDs.count
+        return switch command.operation {
+        case .activateProfile: "Switch to the suggested profile"
+        case .replaceWithProfile: "Review the suggested profile replacement"
+        case .reveal: "Reveal the suggested menu bar item"
+        case .activate: "Open the suggested menu bar item"
+        case .show: "Show \(count) suggested item\(count == 1 ? "" : "s")"
+        case .hide: "Hide \(count) suggested item\(count == 1 ? "" : "s")"
+        case .rearrange: "Rearrange \(count) suggested items"
+        case .group: "Group \(count) suggested items"
+        }
+    }
+
+    private func executeValidatedCommand(_ command: ValidatedMenuBarCommand) {
+        guard requireAccessibilityForAction() else { return }
+        Task {
+            do {
+                let snapshot = await appState.compatibilityCoordinator.currentSnapshot
+                guard snapshot?.generation == command.authorityGeneration else {
+                    model.resetCommandInterpretation()
+                    return
+                }
+                switch command.operation {
+                case .reveal:
+                    guard let itemID = command.targetItemIDs.first else { return }
+                    _ = try await appState.compatibilityCoordinator.perform(.reveal(itemID))
+                case .activate:
+                    guard let itemID = command.targetItemIDs.first else { return }
+                    _ = try await appState.compatibilityCoordinator.perform(.activate(itemID, .left))
+                case .activateProfile:
+                    guard let profileID = command.targetProfileID,
+                          let profile = profileManager.profiles.first(where: {
+                              ProfileID($0.id.uuidString) == profileID
+                          })
+                    else { return }
+                    await profileManager.activate(profile)
+                case .show, .hide, .rearrange, .group, .replaceWithProfile:
+                    openReview(for: command)
+                    return
+                }
+                closePanel()
+            } catch {
+                model.resetCommandInterpretation()
+            }
+        }
+    }
+
+    private func openReview(for command: ValidatedMenuBarCommand) {
+        closePanel()
+        appState.navigationState.settingsNavigationIdentifier = command.targetProfileID == nil
+            ? .menuBarLayout
+            : .profiles
+        appState.activate(withPolicy: .regular)
+        appState.openWindow(.settings)
     }
 }
 

@@ -5,14 +5,34 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME=Barline
 HELPER_NAME=BarlineMenuService
+REUSE_RUNNING=false
+
+case "${1:-}" in
+    "") ;;
+    --reuse-running) REUSE_RUNNING=true ;;
+    -h|--help)
+        printf 'usage: %s [--reuse-running]\n' "$0"
+        exit 0
+        ;;
+    *) printf 'usage: %s [--reuse-running]\n' "$0" >&2; exit 2 ;;
+esac
 
 cleanup() {
-    /usr/bin/pkill -x "$APP_NAME" >/dev/null 2>&1 || true
-    /usr/bin/pkill -x "$HELPER_NAME" >/dev/null 2>&1 || true
+    if ! "$REUSE_RUNNING"; then
+        /usr/bin/pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+        /usr/bin/pkill -x "$HELPER_NAME" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
 
-"$ROOT/script/build_and_run.sh" --verify
+if "$REUSE_RUNNING"; then
+    /usr/bin/pgrep -x "$APP_NAME" >/dev/null || {
+        printf 'error: --reuse-running requires an active Barline process\n' >&2
+        exit 1
+    }
+else
+    "$ROOT/script/build_and_run.sh" --verify
+fi
 
 helper_pid=""
 for _ in {1..40}; do
@@ -38,6 +58,13 @@ fi
     printf 'error: Barline terminated when its XPC helper was interrupted\n' >&2
     exit 1
 }
+
+if "$REUSE_RUNNING"; then
+    # The long-running soak app has no launch-time work left to drive a new
+    # request across the invalidated connection. Exercise its DEBUG-only
+    # runtime-smoke action so recovery is measured on a real user path.
+    xcrun swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.mabryventures.Barline.runtime-smoke.toggle-shelf"), object: nil, userInfo: nil, deliverImmediately: true)'
+fi
 
 replacement_pid=""
 for _ in {1..40}; do

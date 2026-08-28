@@ -1,32 +1,91 @@
+//
+//  BarlineIntents.swift
+//  Barline
+//
+
 import AppIntents
 import Foundation
 
 private enum BarlineIntentBridge {
-    static let appGroupIdentifier = "group.com.mabryventures.Barline"
-    static let pendingDestinationKey = "intent.pendingDestination"
-    static let pendingDestinationTokenKey = "intent.pendingDestinationToken"
-    static let pendingProfileKey = "intent.pendingProfile"
-    static let pendingProfileTokenKey = "intent.pendingProfileToken"
-    static let presentationModeKey = "focus.presentationMode"
-    static let presentationModeTokenKey = "focus.presentationModeToken"
+    static var appGroupIdentifier: String {
+        guard let identifier = Bundle.main.object(forInfoDictionaryKey: "BarlineAppGroupIdentifier") as? String,
+              !identifier.isEmpty,
+              !identifier.contains("$(")
+        else {
+            return "group.com.mabryventures.Barline"
+        }
+        return identifier
+    }
+
     static let profileCatalogKey = "intent.profileCatalog"
+    static let commandDirectoryName = "IntentCommands"
+    static let notificationName = "com.mabryventures.Barline.intent-command-enqueued"
 
-    static func store(destination: BarlineDestination) {
-        let defaults = UserDefaults(suiteName: appGroupIdentifier)
-        defaults?.set(destination.rawValue, forKey: pendingDestinationKey)
-        defaults?.set(UUID().uuidString, forKey: pendingDestinationTokenKey)
+    private struct Command: Codable {
+        let schemaVersion: Int
+        let id: UUID
+        let createdAt: Date
+        let kind: String
+        let destination: String?
+        let profileID: UUID?
+        let presentationModeEnabled: Bool?
     }
 
-    static func store(profileID: UUID) {
-        let defaults = UserDefaults(suiteName: appGroupIdentifier)
-        defaults?.set(profileID.uuidString, forKey: pendingProfileKey)
-        defaults?.set(UUID().uuidString, forKey: pendingProfileTokenKey)
+    enum BridgeError: Error {
+        case appGroupUnavailable
     }
 
-    static func storePresentationMode(_ isEnabled: Bool) {
-        let defaults = UserDefaults(suiteName: appGroupIdentifier)
-        defaults?.set(isEnabled, forKey: presentationModeKey)
-        defaults?.set(UUID().uuidString, forKey: presentationModeTokenKey)
+    static func store(destination: BarlineDestination) throws {
+        try enqueue(
+            kind: "openDestination",
+            destination: destination.rawValue
+        )
+    }
+
+    static func store(profileID: UUID) throws {
+        try enqueue(kind: "activateProfile", profileID: profileID)
+    }
+
+    static func storePresentationMode(_ isEnabled: Bool) throws {
+        try enqueue(kind: "setPresentationMode", presentationModeEnabled: isEnabled)
+    }
+
+    private static func enqueue(
+        kind: String,
+        destination: String? = nil,
+        profileID: UUID? = nil,
+        presentationModeEnabled: Bool? = nil
+    ) throws {
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) else {
+            throw BridgeError.appGroupUnavailable
+        }
+
+        let directoryURL = containerURL.appendingPathComponent(commandDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let command = Command(
+            schemaVersion: 1,
+            id: UUID(),
+            createdAt: Date(),
+            kind: kind,
+            destination: destination,
+            profileID: profileID,
+            presentationModeEnabled: presentationModeEnabled
+        )
+        let data = try JSONEncoder().encode(command)
+        try data.write(
+            to: directoryURL.appendingPathComponent(command.id.uuidString).appendingPathExtension("json"),
+            options: [.atomic]
+        )
+
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(notificationName as CFString),
+            nil,
+            nil,
+            true
+        )
     }
 }
 
@@ -100,7 +159,7 @@ struct OpenBarlineIntent: AppIntent {
     var destination: BarlineDestination
 
     func perform() async throws -> some IntentResult {
-        BarlineIntentBridge.store(destination: destination)
+        try BarlineIntentBridge.store(destination: destination)
         return .result()
     }
 }
@@ -115,7 +174,7 @@ struct SetBarlinePresentationModeIntent: AppIntent {
     var isEnabled: Bool
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        BarlineIntentBridge.storePresentationMode(isEnabled)
+        try BarlineIntentBridge.storePresentationMode(isEnabled)
         return .result(
             dialog: isEnabled
                 ? "Barline will enable Presentation Mode."
@@ -134,7 +193,7 @@ struct SwitchBarlineProfileIntent: AppIntent {
     var profile: BarlineProfileEntity
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        BarlineIntentBridge.store(profileID: profile.id)
+        try BarlineIntentBridge.store(profileID: profile.id)
         return .result(dialog: "Barline will apply \(profile.name).")
     }
 }
@@ -153,7 +212,7 @@ struct BarlineFocusFilter: SetFocusFilterIntent {
     }
 
     func perform() async throws -> some IntentResult {
-        BarlineIntentBridge.storePresentationMode(presentationMode)
+        try BarlineIntentBridge.storePresentationMode(presentationMode)
         return .result()
     }
 }

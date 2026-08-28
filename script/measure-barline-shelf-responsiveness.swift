@@ -5,13 +5,25 @@ import CoreGraphics
 import Foundation
 
 private enum Configuration {
-    static let measuredCycles = 20
-    static let warmupCycles = 2
+    static let measuredCycles = positiveEnvironmentInteger("BARLINE_PERFORMANCE_CYCLES") ?? 20
+    static let warmupCycles = positiveEnvironmentInteger("BARLINE_PERFORMANCE_WARMUPS") ?? 2
     static let feedbackBudget = Duration.milliseconds(250)
     static let iconTimeout = Duration.seconds(5)
     static let openTimeout = Duration.milliseconds(1500)
     static let closeTimeout = Duration.milliseconds(1000)
     static let pollingIntervalMicroseconds: useconds_t = 10000
+
+    private static func positiveEnvironmentInteger(_ name: String) -> Int? {
+        guard
+            let value = ProcessInfo.processInfo.environment[name],
+            let integer = Int(value),
+            integer > 0,
+            integer <= 1000
+        else {
+            return nil
+        }
+        return integer
+    }
 }
 
 private struct WindowSnapshot {

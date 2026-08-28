@@ -64,8 +64,6 @@ final class AppState: ObservableObject {
 
     /// Async setup actions, run once on first access.
     private lazy var setupTask = Task { @MainActor in
-        permissions.stopAllChecks()
-
         settings.performSetup(with: self)
         menuBarManager.performSetup(with: self)
 
@@ -81,7 +79,10 @@ final class AppState: ObservableObject {
         await profileManager.performSetup(with: self)
 
         appearanceManager.performSetup(with: self)
-        hidEventManager.performSetup(with: self)
+        hidEventManager.performSetup(
+            with: self,
+            startsEnabled: permissions.accessibility.hasPermission
+        )
         await itemManager.performSetup(with: self)
         imageCache.performSetup(with: self)
         updatesManager.performSetup(with: self)
@@ -90,25 +91,13 @@ final class AppState: ObservableObject {
         configureCancellables()
     }
 
-    /// Performs app state setup.
-    ///
-    /// - Parameter hasPermissions: If `true`, continues with setup normally.
-    ///   If `false`, prompts the user to grant permissions.
-    func performSetup(hasPermissions: Bool) {
-        if hasPermissions {
-            Task {
-                logger.debug("Setting up app state")
-                await setupTask.value
-                logger.debug("Finished setting up app state")
-            }
-        } else {
-            Task {
-                // Delay to prevent conflicts with the app delegate.
-                try? await Task.sleep(for: .milliseconds(100))
-                activate(withPolicy: .regular)
-                dismissWindow(.settings) // Shouldn't be open anyway.
-                openWindow(.permissions)
-            }
+    /// Performs app state setup. Compatibility-dependent features fail closed
+    /// when Accessibility is unavailable; the rest of the app remains usable.
+    func performSetup() {
+        Task {
+            logger.debug("Setting up app state")
+            await setupTask.value
+            logger.debug("Finished setting up app state")
         }
     }
 
@@ -175,6 +164,16 @@ final class AppState: ObservableObject {
             }
             .store(in: &c)
 
+        permissions.accessibility.$hasPermission
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] isGranted in
+                Task {
+                    await self?.accessibilityPermissionDidChange(isGranted)
+                }
+            }
+            .store(in: &c)
+
         Publishers.CombineLatest(
             navigationState.$isAppFrontmost,
             navigationState.$isSettingsPresented
@@ -219,6 +218,28 @@ final class AppState: ObservableObject {
             .store(in: &c)
 
         cancellables = c
+    }
+
+    /// Refreshes compatibility-owned state after a grant and immediately closes
+    /// mutation UI after revocation. Cached item names remain available for
+    /// read-only search while mutation entry points check the live permission.
+    private func accessibilityPermissionDidChange(_ isGranted: Bool) async {
+        guard isGranted else {
+            logger.notice("Accessibility permission was revoked; continuing in degraded mode")
+            hidEventManager.stopAll()
+            menuBarManager.barlineShelfPanel.close()
+            return
+        }
+
+        logger.notice("Accessibility permission was granted; refreshing menu bar state")
+        hidEventManager.startAll()
+        await BarlineMenuService.Connection.shared.start()
+        do {
+            _ = try await compatibilityCoordinator.refresh()
+        } catch {
+            logger.warning("Compatibility snapshot unavailable after permission grant")
+        }
+        await itemManager.cacheItemsRegardless()
     }
 
     /// Returns a Boolean value indicating whether the app has been

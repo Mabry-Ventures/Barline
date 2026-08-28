@@ -1,11 +1,10 @@
 # Releasing Barline
 
-Barline is not distribution-ready and has no published binary release.
-`script/release.sh` now performs the clean-SHA unsigned archive dry run,
-validates app/XPC/App-Intents topology, arm64 output, plists, App Group source
-entitlements, and required GPL/privacy/security documents, then records the
-credential-bound steps it did not perform. Sparkle has no Barline appcast, feed
-URL, public key, or private EdDSA material.
+Barline has no published binary release. `script/release.sh --unsigned` is an
+explicit non-distributable topology diagnostic. The default path validates
+nested Developer ID signatures and App Group profiles, rejects
+`get-task-allow`, notarizes, staples, runs Gatekeeper, signs the update, and
+generates an appcast, checksums, SPDX SBOM, and exact source archive.
 
 ## Preconditions
 
@@ -24,9 +23,9 @@ without GitHub Actions. It must validate arm64-only output, nested signing order
 signing, Hardened Runtime, release entitlements, absence of `get-task-allow`,
 `codesign --verify --deep --strict`, notarization, stapling, and `spctl`.
 
-It must also generate a Sparkle EdDSA signature and appcast, SHA-256 checksum,
-SBOM, source archive, release notes, and GPL source links, then record clean
-installation and update-from-previous-version results.
+The Sparkle private key is stored in Keychain account
+`mabry-ventures-barline`; only its public key is committed. The canonical feed
+is the `appcast.xml` asset on the latest GitHub release.
 
 ## Credentials
 
@@ -36,7 +35,7 @@ GitHub publishing uses existing `gh` authentication. Never place credentials in
 source, tracked configuration, environment files, shell history, artifacts, or
 GitHub Actions secrets.
 
-When credentials are absent, only unsigned archive topology and a dry run may
-be reported. Current baseline evidence proves an unsigned arm64 archive can be
-created; it does not prove signing, Gatekeeper acceptance, notarization, update,
-installation, or publication.
+Use `--notary-profile NAME` or `BARLINE_NOTARY_PROFILE` to select an existing
+notarytool Keychain profile; never pass a password. When profiles or credentials
+are absent, only `--unsigned` may pass and is not a release claim. Clean install
+and update-from-previous remain separately recorded manual gates.
