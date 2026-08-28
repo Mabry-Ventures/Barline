@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         // rebase that known replacement monotonically.
                         _ = try await appState.compatibilityCoordinator.recover()
                     }
+                    await appState.profileManager.reconcileActiveProfileAuthority()
                 } catch {
                     succeeded = false
                     failureDescription = String(describing: error)

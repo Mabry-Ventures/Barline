@@ -689,13 +689,13 @@ final class ProfileManager: ObservableObject {
             .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
             .sink { [weak self] in
                 Task { @MainActor [weak self] in
-                    await self?.reconcileModeledWorkspaceAuthority()
+                    await self?.reconcileActiveProfileAuthority()
                 }
             }
             .store(in: &cancellables)
     }
 
-    private func reconcileModeledWorkspaceAuthority() async {
+    func reconcileActiveProfileAuthority() async {
         await profileOperationSemaphore.wait()
         defer { profileOperationSemaphore.signal() }
         guard activeProfileID != nil else { return }
@@ -704,8 +704,10 @@ final class ProfileManager: ObservableObject {
             let retainedProfileID = try await synchronizeProfileAuthority(
                 clearsActivationRequests: false
             )
+            if retainedProfileID != activeProfileID {
+                activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
+            }
             activeProfileID = retainedProfileID
-            activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
             if retainedProfileID == nil {
                 activationRequests.removeAll()
             }
@@ -1077,8 +1079,10 @@ final class ProfileManager: ObservableObject {
             let retainedProfileID = try await synchronizeProfileAuthority(
                 clearsActivationRequests: false
             )
+            if retainedProfileID != activeProfileID {
+                activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
+            }
             activeProfileID = retainedProfileID
-            activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
             if retainedProfileID == nil {
                 activationRequests.removeAll()
             }
