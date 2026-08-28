@@ -10,8 +10,9 @@ development line and are not release certification.
 - Barline product identity, original temporary icon sources, centralized build
   configuration, provenance, GPL notices, and local build commands.
 - `BarlineCore` foundations for stable item identity, snapshot validation,
-  last-known-good state coordination, profile schema version 5, profile JSON
-  migration/validation, atomic profile-file storage and recovery, deterministic
+  last-known-good state coordination, profile schema version 6, profile JSON
+  migration/validation with exact appearance checkpoints, atomic profile-file
+  storage and recovery, deterministic
   search, Spotlight record bounds, and typed command validation.
 - Core Spotlight indexing and a bounded typed Foundation Models interpreter
   connected behind deterministic validation and confirmation.

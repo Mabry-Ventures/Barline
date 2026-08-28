@@ -55,13 +55,18 @@ struct ProfileTests {
         #expect(decoded.appearance.dynamicAppearance?.dark.gradientHex == ["#010203", "#AABBCCDD"])
     }
 
-    @Test("Version 4 appearance migrates to static version 5")
+    @Test("Version 4 appearance migrates through the current schema")
     func version4AppearanceMigration() throws {
         let encoded = try ProfileCodec().encode(completeProfile())
         var document = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         document["schemaVersion"] = 4
         if var appearance = document["appearance"] as? [String: Any] {
-            appearance.removeValue(forKey: "dynamicAppearance")
+            for key in [
+                "dynamicAppearance", "isDynamic", "gradientStops", "borderHex",
+                "borderWidth", "shapeDetails",
+            ] {
+                appearance.removeValue(forKey: key)
+            }
             document["appearance"] = appearance
         }
         let legacy = try JSONSerialization.data(withJSONObject: document)
@@ -72,6 +77,32 @@ struct ProfileTests {
         #expect(migrated.appearance.dynamicAppearance == nil)
         #expect(!migrated.appearance.isDynamic)
         #expect(migrated.appearance.tintHex == "#102030")
+    }
+
+    @Test("Version 5 appearance canonicalizes exact version 6 details")
+    func version5AppearanceMigration() throws {
+        let encoded = try ProfileCodec().encode(completeProfile())
+        var document = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        document["schemaVersion"] = 5
+        if var appearance = document["appearance"] as? [String: Any] {
+            appearance["gradientHex"] = ["#010203", "#AABBCC"]
+            appearance["tintHex"] = "#FFFFFF"
+            for key in ["gradientStops", "borderHex", "borderWidth", "shapeDetails"] {
+                appearance.removeValue(forKey: key)
+            }
+            document["appearance"] = appearance
+        }
+
+        let migrated = try ProfileCodec().decode(JSONSerialization.data(withJSONObject: document))
+
+        #expect(migrated.schemaVersion == 6)
+        #expect(migrated.appearance.tintHex == nil)
+        #expect(migrated.appearance.gradientStops == [
+            ProfileGradientStop(colorHex: "#010203", location: 0),
+            ProfileGradientStop(colorHex: "#AABBCC", location: 1),
+        ])
+        #expect(migrated.appearance.borderHex == "#000000")
+        #expect(migrated.appearance.shapeDetails == .default)
     }
 
     @Test("Static mode preserves dormant dynamic variants")
@@ -100,6 +131,42 @@ struct ProfileTests {
         #expect(throws: ProfileValidationError.invalidAppearance) {
             try ProfileValidator().validate(profile)
         }
+    }
+
+    @Test("Validation rejects contradictory solid and gradient tints")
+    func rejectsContradictoryTintRepresentations() {
+        var profile = completeProfile()
+        profile.appearance.gradientHex = ["#000000", "#FFFFFF"]
+        profile.appearance.gradientStops = ProfileGradientStop.evenlySpaced(
+            colors: profile.appearance.gradientHex
+        )
+
+        #expect(throws: ProfileValidationError.invalidAppearance) {
+            try ProfileValidator().validate(profile)
+        }
+    }
+
+    @Test("Exact appearance details round-trip")
+    func exactAppearanceDetailsRoundTrip() throws {
+        var profile = completeProfile()
+        profile.appearance.tintHex = nil
+        profile.appearance.gradientHex = ["#102030", "#405060"]
+        profile.appearance.gradientStops = [
+            ProfileGradientStop(colorHex: "#102030", location: 0.2),
+            ProfileGradientStop(colorHex: "#405060", location: 0.8),
+        ]
+        profile.appearance.borderHex = "#AABBCCDD"
+        profile.appearance.borderWidth = 3
+        profile.appearance.shapeDetails = ProfileShapeDetails(
+            full: ProfileFullShape(leading: .square, trailing: .round),
+            splitLeading: ProfileFullShape(leading: .round, trailing: .square),
+            splitTrailing: ProfileFullShape(leading: .square, trailing: .square),
+            isInset: false
+        )
+
+        let decoded = try ProfileCodec().decode(ProfileCodec().encode(profile))
+
+        #expect(decoded == profile)
     }
 
     @Test("Authority includes inactive dynamic appearance variants")
@@ -771,7 +838,6 @@ struct ProfileTests {
             ],
             appearance: ProfileAppearance(
                 tintHex: "#102030",
-                gradientHex: ["#102030", "#405060"],
                 showsBorder: true,
                 showsShadow: true,
                 shape: .split,

@@ -486,9 +486,13 @@ final class ProfileManager: ObservableObject {
             appearance: ProfileAppearance(
                 tintHex: profileTintHex(from: appearanceConfiguration.staticConfiguration),
                 gradientHex: profileGradientHex(from: appearanceConfiguration.staticConfiguration),
+                gradientStops: profileGradientStops(from: appearanceConfiguration.staticConfiguration),
                 showsBorder: appearanceConfiguration.staticConfiguration.hasBorder,
+                borderHex: hexString(from: appearanceConfiguration.staticConfiguration.borderColor) ?? "#000000",
+                borderWidth: appearanceConfiguration.staticConfiguration.borderWidth,
                 showsShadow: appearanceConfiguration.staticConfiguration.hasShadow,
                 shape: profileShape(from: appearanceConfiguration.shapeKind),
+                shapeDetails: profileShapeDetails(from: appearanceConfiguration),
                 itemSpacing: min(
                     max(general.itemSpacingOffset, ProfileAppearance.itemSpacingRange.lowerBound),
                     ProfileAppearance.itemSpacingRange.upperBound
@@ -539,9 +543,13 @@ final class ProfileManager: ObservableObject {
             appearance: ProfileAppearance(
                 tintHex: profileTintHex(from: appearanceConfiguration.staticConfiguration),
                 gradientHex: profileGradientHex(from: appearanceConfiguration.staticConfiguration),
+                gradientStops: profileGradientStops(from: appearanceConfiguration.staticConfiguration),
                 showsBorder: appearanceConfiguration.staticConfiguration.hasBorder,
+                borderHex: hexString(from: appearanceConfiguration.staticConfiguration.borderColor) ?? "#000000",
+                borderWidth: appearanceConfiguration.staticConfiguration.borderWidth,
                 showsShadow: appearanceConfiguration.staticConfiguration.hasShadow,
                 shape: profileShape(from: appearanceConfiguration.shapeKind),
+                shapeDetails: profileShapeDetails(from: appearanceConfiguration),
                 itemSpacing: general.itemSpacingOffset,
                 dynamicAppearance: dynamicProfileAppearance(from: appearanceConfiguration),
                 isDynamic: appearanceConfiguration.isDynamic
@@ -610,13 +618,66 @@ final class ProfileManager: ObservableObject {
         return configuration.tintGradient.stops.compactMap { hexString(from: $0.color) }
     }
 
+    private func profileGradientStops(
+        from configuration: MenuBarAppearancePartialConfiguration
+    ) -> [ProfileGradientStop] {
+        guard configuration.tintKind == .gradient else { return [] }
+        return configuration.tintGradient.stops.compactMap { stop in
+            hexString(from: stop.color).map {
+                ProfileGradientStop(colorHex: $0, location: Double(stop.location))
+            }
+        }
+    }
+
+    private func profileEndCap(from endCap: MenuBarEndCap) -> ProfileEndCap {
+        switch endCap {
+        case .square: .square
+        case .round: .round
+        }
+    }
+
+    private func menuBarEndCap(from endCap: ProfileEndCap) -> MenuBarEndCap {
+        switch endCap {
+        case .square: .square
+        case .round: .round
+        }
+    }
+
+    private func profileFullShape(from shape: MenuBarFullShapeInfo) -> ProfileFullShape {
+        ProfileFullShape(
+            leading: profileEndCap(from: shape.leadingEndCap),
+            trailing: profileEndCap(from: shape.trailingEndCap)
+        )
+    }
+
+    private func menuBarFullShape(from shape: ProfileFullShape) -> MenuBarFullShapeInfo {
+        MenuBarFullShapeInfo(
+            leadingEndCap: menuBarEndCap(from: shape.leading),
+            trailingEndCap: menuBarEndCap(from: shape.trailing)
+        )
+    }
+
+    private func profileShapeDetails(
+        from configuration: MenuBarAppearanceConfigurationV2
+    ) -> ProfileShapeDetails {
+        ProfileShapeDetails(
+            full: profileFullShape(from: configuration.fullShapeInfo),
+            splitLeading: profileFullShape(from: configuration.splitShapeInfo.leading),
+            splitTrailing: profileFullShape(from: configuration.splitShapeInfo.trailing),
+            isInset: configuration.isInset
+        )
+    }
+
     private func profileAppearanceMode(
         from configuration: MenuBarAppearancePartialConfiguration
     ) -> ProfileAppearanceMode {
         ProfileAppearanceMode(
             tintHex: profileTintHex(from: configuration),
             gradientHex: profileGradientHex(from: configuration),
+            gradientStops: profileGradientStops(from: configuration),
             showsBorder: configuration.hasBorder,
+            borderHex: hexString(from: configuration.borderColor) ?? "#000000",
+            borderWidth: configuration.borderWidth,
             showsShadow: configuration.hasShadow
         )
     }
@@ -637,14 +698,14 @@ final class ProfileManager: ObservableObject {
         var configuration = existing
         var partial = configuration.current
         partial.hasBorder = appearance.showsBorder
+        partial.borderColor = try color(from: appearance.borderHex)
+        partial.borderWidth = appearance.borderWidth
         partial.hasShadow = appearance.showsShadow
-        if !appearance.gradientHex.isEmpty {
-            let colors = try appearance.gradientHex.map { try color(from: $0) }
-            let denominator = max(colors.count - 1, 1)
+        if !appearance.gradientStops.isEmpty {
             partial.tintKind = .gradient
-            partial.tintGradient = BarlineGradient(
-                stops: colors.enumerated().map { index, color in
-                    .stop(color, location: CGFloat(index) / CGFloat(denominator))
+            partial.tintGradient = try BarlineGradient(
+                stops: appearance.gradientStops.map { stop in
+                    try .stop(color(from: stop.colorHex), location: CGFloat(stop.location))
                 }
             )
         } else if let tintHex = appearance.tintHex {
@@ -674,6 +735,12 @@ final class ProfileManager: ObservableObject {
         case .rounded: .full
         case .split: .split
         }
+        configuration.fullShapeInfo = menuBarFullShape(from: appearance.shapeDetails.full)
+        configuration.splitShapeInfo = MenuBarSplitShapeInfo(
+            leading: menuBarFullShape(from: appearance.shapeDetails.splitLeading),
+            trailing: menuBarFullShape(from: appearance.shapeDetails.splitTrailing)
+        )
+        configuration.isInset = appearance.shapeDetails.isInset
         return configuration
     }
 
@@ -683,14 +750,14 @@ final class ProfileManager: ObservableObject {
     ) throws -> MenuBarAppearancePartialConfiguration {
         var partial = existing
         partial.hasBorder = appearance.showsBorder
+        partial.borderColor = try color(from: appearance.borderHex)
+        partial.borderWidth = appearance.borderWidth
         partial.hasShadow = appearance.showsShadow
-        if !appearance.gradientHex.isEmpty {
-            let colors = try appearance.gradientHex.map { try color(from: $0) }
-            let denominator = max(colors.count - 1, 1)
+        if !appearance.gradientStops.isEmpty {
             partial.tintKind = .gradient
-            partial.tintGradient = BarlineGradient(
-                stops: colors.enumerated().map { index, color in
-                    .stop(color, location: CGFloat(index) / CGFloat(denominator))
+            partial.tintGradient = try BarlineGradient(
+                stops: appearance.gradientStops.map { stop in
+                    try .stop(color(from: stop.colorHex), location: CGFloat(stop.location))
                 }
             )
         } else if let tintHex = appearance.tintHex {

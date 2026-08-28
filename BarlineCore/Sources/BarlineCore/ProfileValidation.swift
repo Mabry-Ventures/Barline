@@ -99,13 +99,30 @@ public struct ProfileValidator: Sendable {
     }
 
     private func isValidAppearanceMode(_ mode: ProfileAppearanceMode) -> Bool {
-        mode.gradientHex.count <= 8
+        let hasGradient = !mode.gradientStops.isEmpty || !mode.gradientHex.isEmpty
+        return !(mode.tintHex != nil && hasGradient)
+            && mode.gradientHex.count <= 8
             && mode.gradientHex.allSatisfy {
                 $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
+            }
+            && mode.gradientStops.count <= 8
+            && mode.gradientHex == mode.gradientStops.map(\.colorHex)
+            && mode.gradientStops.allSatisfy {
+                $0.colorHex.count <= ProfileCodec.maximumStringLength
+                    && isValidHexColor($0.colorHex)
+                    && $0.location.isFinite
+                    && (0 ... 1).contains($0.location)
+            }
+            && zip(mode.gradientStops, mode.gradientStops.dropFirst()).allSatisfy {
+                $0.location <= $1.location
             }
             && (mode.tintHex.map {
                 $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
             } ?? true)
+            && mode.borderHex.count <= ProfileCodec.maximumStringLength
+            && isValidHexColor(mode.borderHex)
+            && mode.borderWidth.isFinite
+            && (1 ... 3).contains(mode.borderWidth)
     }
 
     private func validateAppearance(_ appearance: ProfileAppearance) throws {
@@ -116,7 +133,10 @@ public struct ProfileValidator: Sendable {
                   ProfileAppearanceMode(
                       tintHex: appearance.tintHex,
                       gradientHex: appearance.gradientHex,
+                      gradientStops: appearance.gradientStops,
                       showsBorder: appearance.showsBorder,
+                      borderHex: appearance.borderHex,
+                      borderWidth: appearance.borderWidth,
                       showsShadow: appearance.showsShadow
                   )
               )

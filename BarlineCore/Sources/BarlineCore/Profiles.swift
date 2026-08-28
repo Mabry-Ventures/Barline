@@ -6,7 +6,7 @@
 import Foundation
 
 public enum ProfileSchema {
-    public static let currentVersion = 5
+    public static let currentVersion = 6
     public static let archiveFormatVersion = 1
 }
 
@@ -88,9 +88,13 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
 
     public var tintHex: String?
     public var gradientHex: [String]
+    public var gradientStops: [ProfileGradientStop]
     public var showsBorder: Bool
+    public var borderHex: String
+    public var borderWidth: Double
     public var showsShadow: Bool
     public var shape: Shape
+    public var shapeDetails: ProfileShapeDetails
     public var itemSpacing: Double
     public var dynamicAppearance: ProfileDynamicAppearance?
     public var isDynamic: Bool
@@ -98,18 +102,31 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
     public init(
         tintHex: String? = nil,
         gradientHex: [String] = [],
+        gradientStops: [ProfileGradientStop]? = nil,
         showsBorder: Bool = false,
+        borderHex: String = "#000000",
+        borderWidth: Double = 1,
         showsShadow: Bool = false,
         shape: Shape = .standard,
+        shapeDetails: ProfileShapeDetails = .default,
         itemSpacing: Double = 0,
         dynamicAppearance: ProfileDynamicAppearance? = nil,
         isDynamic: Bool = false
     ) {
         self.tintHex = tintHex
-        self.gradientHex = gradientHex
+        let resolvedStops = if let gradientStops, !gradientStops.isEmpty || gradientHex.isEmpty {
+            gradientStops
+        } else {
+            ProfileGradientStop.evenlySpaced(colors: gradientHex)
+        }
+        self.gradientHex = resolvedStops.isEmpty ? gradientHex : resolvedStops.map(\.colorHex)
+        self.gradientStops = resolvedStops
         self.showsBorder = showsBorder
+        self.borderHex = borderHex
+        self.borderWidth = borderWidth
         self.showsShadow = showsShadow
         self.shape = shape
+        self.shapeDetails = shapeDetails
         self.itemSpacing = itemSpacing
         self.dynamicAppearance = dynamicAppearance
         self.isDynamic = isDynamic
@@ -118,9 +135,13 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
     private enum CodingKeys: CodingKey {
         case tintHex
         case gradientHex
+        case gradientStops
         case showsBorder
+        case borderHex
+        case borderWidth
         case showsShadow
         case shape
+        case shapeDetails
         case itemSpacing
         case dynamicAppearance
         case isDynamic
@@ -131,9 +152,13 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
         try self.init(
             tintHex: container.decodeIfPresent(String.self, forKey: .tintHex),
             gradientHex: container.decodeIfPresent([String].self, forKey: .gradientHex) ?? [],
+            gradientStops: container.decodeIfPresent([ProfileGradientStop].self, forKey: .gradientStops),
             showsBorder: container.decodeIfPresent(Bool.self, forKey: .showsBorder) ?? false,
+            borderHex: container.decodeIfPresent(String.self, forKey: .borderHex) ?? "#000000",
+            borderWidth: container.decodeIfPresent(Double.self, forKey: .borderWidth) ?? 1,
             showsShadow: container.decodeIfPresent(Bool.self, forKey: .showsShadow) ?? false,
             shape: container.decodeIfPresent(Shape.self, forKey: .shape) ?? .standard,
+            shapeDetails: container.decodeIfPresent(ProfileShapeDetails.self, forKey: .shapeDetails) ?? .default,
             itemSpacing: container.decodeIfPresent(Double.self, forKey: .itemSpacing) ?? 0,
             dynamicAppearance: container.decodeIfPresent(
                 ProfileDynamicAppearance.self,
@@ -147,13 +172,70 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(tintHex, forKey: .tintHex)
         try container.encode(gradientHex, forKey: .gradientHex)
+        try container.encode(gradientStops, forKey: .gradientStops)
         try container.encode(showsBorder, forKey: .showsBorder)
+        try container.encode(borderHex, forKey: .borderHex)
+        try container.encode(borderWidth, forKey: .borderWidth)
         try container.encode(showsShadow, forKey: .showsShadow)
         try container.encode(shape, forKey: .shape)
+        try container.encode(shapeDetails, forKey: .shapeDetails)
         try container.encode(itemSpacing, forKey: .itemSpacing)
         try container.encodeIfPresent(dynamicAppearance, forKey: .dynamicAppearance)
         try container.encode(isDynamic, forKey: .isDynamic)
     }
+}
+
+public struct ProfileGradientStop: Codable, Hashable, Sendable {
+    public var colorHex: String
+    public var location: Double
+
+    public init(colorHex: String, location: Double) {
+        self.colorHex = colorHex
+        self.location = location
+    }
+
+    static func evenlySpaced(colors: [String]) -> [Self] {
+        let denominator = max(colors.count - 1, 1)
+        return colors.enumerated().map { index, color in
+            Self(colorHex: color, location: Double(index) / Double(denominator))
+        }
+    }
+}
+
+public enum ProfileEndCap: String, Codable, Hashable, Sendable {
+    case square
+    case round
+}
+
+public struct ProfileFullShape: Codable, Hashable, Sendable {
+    public var leading: ProfileEndCap
+    public var trailing: ProfileEndCap
+
+    public init(leading: ProfileEndCap = .round, trailing: ProfileEndCap = .round) {
+        self.leading = leading
+        self.trailing = trailing
+    }
+}
+
+public struct ProfileShapeDetails: Codable, Hashable, Sendable {
+    public var full: ProfileFullShape
+    public var splitLeading: ProfileFullShape
+    public var splitTrailing: ProfileFullShape
+    public var isInset: Bool
+
+    public init(
+        full: ProfileFullShape = ProfileFullShape(),
+        splitLeading: ProfileFullShape = ProfileFullShape(),
+        splitTrailing: ProfileFullShape = ProfileFullShape(),
+        isInset: Bool = true
+    ) {
+        self.full = full
+        self.splitLeading = splitLeading
+        self.splitTrailing = splitTrailing
+        self.isInset = isInset
+    }
+
+    public static let `default` = Self()
 }
 
 public struct ProfileShelfBehavior: Codable, Hashable, Sendable {
@@ -258,19 +340,61 @@ public struct ProfileWorkspaceState: Codable, Hashable, Sendable {
 public struct ProfileAppearanceMode: Codable, Hashable, Sendable {
     public var tintHex: String?
     public var gradientHex: [String]
+    public var gradientStops: [ProfileGradientStop]
     public var showsBorder: Bool
+    public var borderHex: String
+    public var borderWidth: Double
     public var showsShadow: Bool
 
     public init(
         tintHex: String? = nil,
         gradientHex: [String] = [],
+        gradientStops: [ProfileGradientStop]? = nil,
         showsBorder: Bool = false,
+        borderHex: String = "#000000",
+        borderWidth: Double = 1,
         showsShadow: Bool = false
     ) {
         self.tintHex = tintHex
-        self.gradientHex = gradientHex
+        let resolvedStops = if let gradientStops, !gradientStops.isEmpty || gradientHex.isEmpty {
+            gradientStops
+        } else {
+            ProfileGradientStop.evenlySpaced(colors: gradientHex)
+        }
+        self.gradientHex = resolvedStops.isEmpty ? gradientHex : resolvedStops.map(\.colorHex)
+        self.gradientStops = resolvedStops
         self.showsBorder = showsBorder
+        self.borderHex = borderHex
+        self.borderWidth = borderWidth
         self.showsShadow = showsShadow
+    }
+
+    private enum CodingKeys: CodingKey {
+        case tintHex, gradientHex, gradientStops, showsBorder, borderHex, borderWidth, showsShadow
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            tintHex: container.decodeIfPresent(String.self, forKey: .tintHex),
+            gradientHex: container.decodeIfPresent([String].self, forKey: .gradientHex) ?? [],
+            gradientStops: container.decodeIfPresent([ProfileGradientStop].self, forKey: .gradientStops),
+            showsBorder: container.decodeIfPresent(Bool.self, forKey: .showsBorder) ?? false,
+            borderHex: container.decodeIfPresent(String.self, forKey: .borderHex) ?? "#000000",
+            borderWidth: container.decodeIfPresent(Double.self, forKey: .borderWidth) ?? 1,
+            showsShadow: container.decodeIfPresent(Bool.self, forKey: .showsShadow) ?? false
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(tintHex, forKey: .tintHex)
+        try container.encode(gradientHex, forKey: .gradientHex)
+        try container.encode(gradientStops, forKey: .gradientStops)
+        try container.encode(showsBorder, forKey: .showsBorder)
+        try container.encode(borderHex, forKey: .borderHex)
+        try container.encode(borderWidth, forKey: .borderWidth)
+        try container.encode(showsShadow, forKey: .showsShadow)
     }
 }
 
