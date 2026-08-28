@@ -423,13 +423,18 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.operationFailed("requested profile display is unavailable")
         }
         let matchingDisplayOverride = activeDisplayID.flatMap { activeDisplayID in
-            profile.displayOverrides.first { $0.displayID == activeDisplayID }
+            DisplayProfileOverrideResolver().resolve(
+                profile: profile,
+                requestedDisplayID: activeDisplayID,
+                snapshot: before
+            )
         }
         // A base profile can contain items from every display. Only a matching
         // display override is scoped and retargeted to the active display;
         // applying the base layout preserves each item's source display.
-        let profileDisplayID = matchingDisplayOverride?.displayID
-        let layout = matchingDisplayOverride?.layout ?? profile.layout
+        let presentation = profile.resolvedPresentation(using: matchingDisplayOverride)
+        let profileDisplayID = presentation.destinationDisplayID
+        let layout = presentation.layout
         let knownItemIDs = Set(before.items.map(\.id))
         for itemID in layout.allItemIDs where !knownItemIDs.contains(itemID) {
             throw MenuBarBackendError.staleItem(itemID)
@@ -446,12 +451,13 @@ public actor MenuBarStateCoordinator {
                 MenuBarWorkspaceCheckpoint(
                     snapshot: before,
                     activeProfileID: priorProfileID,
-                    activeDisplayID: profileDisplayID,
+                    activeDisplayID: workspaceBefore.presentation?.destinationDisplayID,
                     workspace: workspaceBefore
                 )
             )
         }
-        let targetWorkspace = ProfileWorkspaceState(profile: profile)
+        var targetWorkspace = ProfileWorkspaceState(profile: profile)
+        targetWorkspace.presentation = presentation
         mutationGeneration &+= 1
         let generation = mutationGeneration
         var didBeginLayoutMutation = false
@@ -490,6 +496,31 @@ public actor MenuBarStateCoordinator {
             case let .success(snapshot):
                 guard generation == mutationGeneration else {
                     throw CancellationError()
+                }
+                if let matchingDisplayOverride, let profileDisplayID {
+                    guard let verifiedMatch = DisplayProfileOverrideResolver().resolve(
+                        profile: profile,
+                        requestedDisplayID: profileDisplayID,
+                        snapshot: snapshot
+                    ),
+                        verifiedMatch.override.displayID == matchingDisplayOverride.override.displayID,
+                        verifiedMatch.override.displayFingerprint
+                        == matchingDisplayOverride.override.displayFingerprint
+                    else {
+                        throw MenuBarBackendError.operationFailed(
+                            "profile display identity changed during activation"
+                        )
+                    }
+                    if let fingerprint = matchingDisplayOverride.override.displayFingerprint {
+                        let matchingIdentities = snapshot.displayIdentities?.count {
+                            $0.hardwareFingerprint == fingerprint
+                        } ?? 0
+                        guard matchingIdentities == 1 else {
+                            throw MenuBarBackendError.operationFailed(
+                                "profile display identity became ambiguous during activation"
+                            )
+                        }
+                    }
                 }
                 try validateProfileResult(layout, in: snapshot, displayID: profileDisplayID)
                 currentSnapshot = snapshot
@@ -672,9 +703,11 @@ public actor MenuBarStateCoordinator {
         defer { releaseMutationTurn() }
         let snapshot = try await refreshAssumingMutationTurn(now: now)
         let workspace = try await workspaceTransaction.capture()
-        let activeDisplayID: MenuBarDisplayID? = if let environment = try? await backend.environment(),
-                                                    let displayID = environment.activeStableDisplayID,
-                                                    snapshot.displayIDs.contains(displayID)
+        let activeDisplayID: MenuBarDisplayID? = if let presentation = workspace.presentation {
+            presentation.destinationDisplayID
+        } else if let environment = try? await backend.environment(),
+                  let displayID = environment.activeStableDisplayID,
+                  snapshot.displayIDs.contains(displayID)
         {
             displayID
         } else {
@@ -759,19 +792,10 @@ public actor MenuBarStateCoordinator {
             workspace: workspaceTransaction.capture(),
             now: now
         )
-        let activeDisplayID: MenuBarDisplayID? = if let environment = try? await backend.environment(),
-                                                    let displayID = environment.activeStableDisplayID,
-                                                    expectedProfile.displayOverrides.contains(where: {
-                                                        $0.displayID == displayID
-                                                    })
-        {
-            displayID
-        } else {
-            nil
-        }
         guard let liveWorkspace = live.workspace else {
             throw MenuBarBackendError.operationFailed("workspace capture is unavailable")
         }
+        let activeDisplayID = liveWorkspace.presentation?.destinationDisplayID
         let liveCheckpoint = MenuBarWorkspaceCheckpoint(
             snapshot: live.snapshot,
             activeProfileID: live.activeProfileID,
@@ -934,6 +958,26 @@ public actor MenuBarStateCoordinator {
                 "history restore did not reach requested displays"
             )
         }
+        if let targetIdentities = target.displayIdentities {
+            for identity in targetIdentities {
+                guard let fingerprint = identity.hardwareFingerprint else { continue }
+                let targetMatches = targetIdentities.count {
+                    $0.hardwareFingerprint == fingerprint
+                }
+                let restoredMatches = snapshot.displayIdentities?.count {
+                    $0.hardwareFingerprint == fingerprint
+                } ?? 0
+                guard targetMatches == 1,
+                      restoredMatches == 1,
+                      snapshot.displayIdentity(for: identity.runtimeID)?.hardwareFingerprint
+                      == fingerprint
+                else {
+                    throw MenuBarBackendError.operationFailed(
+                        "history restore did not reach requested display identity"
+                    )
+                }
+            }
+        }
         let restoredLayout = Set(snapshot.items.map {
             LogicalLayoutItem(
                 id: $0.id,
@@ -1048,6 +1092,7 @@ public actor MenuBarStateCoordinator {
             capturedAt: snapshot.capturedAt,
             items: snapshot.items,
             displayIDs: snapshot.displayIDs,
+            displayIdentities: snapshot.displayIdentities,
             activeSpaceIsValid: snapshot.activeSpaceIsValid,
             menuTrackingIsActive: snapshot.menuTrackingIsActive
         )

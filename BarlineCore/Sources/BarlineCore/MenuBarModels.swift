@@ -56,6 +56,41 @@ public struct MenuBarDisplayID: Codable, Hashable, Sendable, CustomStringConvert
     }
 }
 
+/// An opaque alias used to recognize a physical display when macOS assigns it
+/// a different runtime identifier after reconnecting.
+public struct MenuBarDisplayHardwareFingerprint: Codable, Hashable, Sendable,
+    CustomStringConvertible
+{
+    public let value: String
+
+    public init(_ value: String) {
+        self.value = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    public var isWellFormed: Bool {
+        guard value.hasPrefix("v1:") else { return false }
+        let digest = value.dropFirst(3)
+        return digest.count == 64 && digest.allSatisfy(\.isHexDigit)
+    }
+
+    public var description: String {
+        "<redacted-display-fingerprint>"
+    }
+}
+
+public struct MenuBarDisplayIdentity: Codable, Hashable, Sendable {
+    public let runtimeID: MenuBarDisplayID
+    public let hardwareFingerprint: MenuBarDisplayHardwareFingerprint?
+
+    public init(
+        runtimeID: MenuBarDisplayID,
+        hardwareFingerprint: MenuBarDisplayHardwareFingerprint? = nil
+    ) {
+        self.runtimeID = runtimeID
+        self.hardwareFingerprint = hardwareFingerprint
+    }
+}
+
 public enum MenuBarSection: String, Codable, CaseIterable, Sendable {
     case visible
     case hidden
@@ -154,6 +189,7 @@ public struct MenuBarSnapshot: Codable, Hashable, Sendable {
     public let capturedAt: Date
     public let items: [MenuBarItemDescriptor]
     public let displayIDs: Set<MenuBarDisplayID>
+    public let displayIdentities: [MenuBarDisplayIdentity]?
     public let activeSpaceIsValid: Bool
     public let menuTrackingIsActive: Bool
 
@@ -162,6 +198,7 @@ public struct MenuBarSnapshot: Codable, Hashable, Sendable {
         capturedAt: Date,
         items: [MenuBarItemDescriptor],
         displayIDs: Set<MenuBarDisplayID>,
+        displayIdentities: [MenuBarDisplayIdentity]? = nil,
         activeSpaceIsValid: Bool,
         menuTrackingIsActive: Bool = false
     ) {
@@ -169,8 +206,13 @@ public struct MenuBarSnapshot: Codable, Hashable, Sendable {
         self.capturedAt = capturedAt
         self.items = items
         self.displayIDs = displayIDs
+        self.displayIdentities = displayIdentities
         self.activeSpaceIsValid = activeSpaceIsValid
         self.menuTrackingIsActive = menuTrackingIsActive
+    }
+
+    public func displayIdentity(for runtimeID: MenuBarDisplayID) -> MenuBarDisplayIdentity? {
+        displayIdentities?.first { $0.runtimeID == runtimeID }
     }
 }
 

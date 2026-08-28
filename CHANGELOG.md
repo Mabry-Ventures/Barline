@@ -10,7 +10,7 @@ development line and are not release certification.
 - Barline product identity, original temporary icon sources, centralized build
   configuration, provenance, GPL notices, and local build commands.
 - `BarlineCore` foundations for stable item identity, snapshot validation,
-  last-known-good state coordination, profile schema version 6, profile JSON
+  last-known-good state coordination, profile schema version 7, profile JSON
   migration/validation with exact appearance checkpoints, atomic profile-file
   storage and recovery, deterministic
   search, Spotlight record bounds, and typed command validation.
@@ -18,7 +18,8 @@ development line and are not release certification.
   connected behind deterministic validation and confirmation.
 - Compatibility contracts and a strict XPC compatibility firewall.
 - Saved profile editing/import/export, transactional activation, Focus and App
-  Intent delivery, Presentation templates, and last-known-good recovery.
+  Intent delivery, Presentation templates, opaque display reconnect aliases,
+  operational shelf groups/spacers, and last-known-good recovery.
 - Contextual permissions and degraded settings/search/diagnostics behavior.
 - Privacy-safe reviewed support-bundle export and a deterministic fixture app.
 - Release-only Sparkle trust configuration and credentialed packaging tooling.
@@ -32,10 +33,10 @@ development line and are not release certification.
 - Product-facing Ice names and identifiers were replaced with Barline; Ice
   remains in provenance, attribution, historical migration keys, and historical
   documentation where necessary.
-- Profile and Focus changes now serialize layout and workspace settings as one
-  verified transaction, retain a crash-stable pre-Presentation journal, and
-  clear authority when rollback or a restored profile definition cannot be
-  proven current.
+- Profile and Focus changes now serialize layout, workspace settings, and
+  resolved group/spacer presentation as one verified transaction, retain a
+  crash-stable pre-Presentation journal, and clear authority when rollback or a
+  restored profile definition cannot be proven current.
 - Menu-bar restoration now uses global cross-display planning, section-relative
   postconditions, explicit stable destination-display targeting,
   already-correct no-op handling, and monotonic helper generation rebasing.

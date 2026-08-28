@@ -19,6 +19,8 @@ public enum ProfileValidationError: Error, Codable, Equatable, Sendable {
     case spacerReferencesUnknownItem(UUID, MenuBarItemID)
     case duplicateDisplay(MenuBarDisplayID)
     case emptyDisplayID
+    case invalidDisplayFingerprint(MenuBarDisplayID)
+    case invalidPresentationScope
     case invalidAppearance
     case unsupportedShelfBehavior
     case invalidAutoRehideDelay
@@ -66,6 +68,11 @@ public struct ProfileValidator: Sendable {
             guard displays.insert(override.displayID).inserted else {
                 throw ProfileValidationError.duplicateDisplay(override.displayID)
             }
+            if let fingerprint = override.displayFingerprint,
+               !fingerprint.isWellFormed
+            {
+                throw ProfileValidationError.invalidDisplayFingerprint(override.displayID)
+            }
             try validateLayout(override.layout, groups: override.groups, spacers: override.spacers)
         }
     }
@@ -90,6 +97,26 @@ public struct ProfileValidator: Sendable {
         }
         guard workspace.shelfBehavior.followsActiveDisplay else {
             throw ProfileValidationError.unsupportedShelfBehavior
+        }
+        if let presentation = workspace.presentation {
+            switch presentation.source {
+            case .base:
+                guard presentation.destinationDisplayID == nil else {
+                    throw ProfileValidationError.invalidPresentationScope
+                }
+            case let .displayOverride(sourceDisplayID):
+                guard !sourceDisplayID.value.isEmpty,
+                      let destinationDisplayID = presentation.destinationDisplayID,
+                      !destinationDisplayID.value.isEmpty
+                else {
+                    throw ProfileValidationError.invalidPresentationScope
+                }
+            }
+            try validateLayout(
+                presentation.layout,
+                groups: presentation.groups,
+                spacers: presentation.spacers
+            )
         }
     }
 

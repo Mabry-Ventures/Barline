@@ -95,7 +95,7 @@ struct ProfileTests {
 
         let migrated = try ProfileCodec().decode(JSONSerialization.data(withJSONObject: document))
 
-        #expect(migrated.schemaVersion == 6)
+        #expect(migrated.schemaVersion == ProfileSchema.currentVersion)
         #expect(migrated.appearance.tintHex == nil)
         #expect(migrated.appearance.gradientStops == [
             ProfileGradientStop(colorHex: "#010203", location: 0),
@@ -242,7 +242,7 @@ struct ProfileTests {
             displayIDs: [primaryDisplay, secondaryDisplay],
             activeSpaceIsValid: true
         )
-        let workspace = ProfileWorkspaceState(profile: profile)
+        let workspace = ProfileWorkspaceState(profile: profile, displayID: primaryDisplay)
 
         #expect(ProfileAuthorityMatcher.matches(
             profile: profile,
@@ -275,7 +275,7 @@ struct ProfileTests {
         let globalCheckpoint = MenuBarWorkspaceCheckpoint(
             snapshot: matchingSnapshot,
             activeProfileID: profile.id,
-            workspace: workspace
+            workspace: ProfileWorkspaceState(profile: profile)
         )
         #expect(ProfileAuthorityMatcher.matches(profile: profile, checkpoint: globalCheckpoint))
 
@@ -288,6 +288,246 @@ struct ProfileTests {
             workspace: mismatchedWorkspace
         )
         #expect(ProfileAuthorityMatcher.matches(profile: profile, checkpoint: workspaceMismatch) == false)
+    }
+
+    @Test("Display reconnect resolution is exact, unique, and fail-closed")
+    func displayReconnectResolution() throws {
+        let oldDisplay = MenuBarDisplayID("old-display")
+        let liveDisplay = MenuBarDisplayID("live-display")
+        let otherDisplay = MenuBarDisplayID("other-display")
+        let expectedFingerprint = fingerprint("a")
+        let otherFingerprint = fingerprint("b")
+        let profile = BarlineProfile(
+            name: "Reconnect",
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: oldDisplay,
+                    displayFingerprint: expectedFingerprint,
+                    layout: ProfileLayout(visible: [item(1)])
+                ),
+            ]
+        )
+        let resolver = DisplayProfileOverrideResolver()
+        let unique = displaySnapshot(
+            identities: [
+                MenuBarDisplayIdentity(
+                    runtimeID: liveDisplay,
+                    hardwareFingerprint: expectedFingerprint
+                ),
+                MenuBarDisplayIdentity(
+                    runtimeID: otherDisplay,
+                    hardwareFingerprint: otherFingerprint
+                ),
+            ]
+        )
+
+        let match = try #require(resolver.resolve(
+            profile: profile,
+            requestedDisplayID: liveDisplay,
+            snapshot: unique
+        ))
+        #expect(match.override.displayID == oldDisplay)
+        #expect(match.liveDisplayID == liveDisplay)
+        #expect(match.method == .uniqueHardwareFingerprint)
+        #expect(resolver.resolve(
+            profile: profile,
+            requestedDisplayID: MenuBarDisplayID("missing"),
+            snapshot: unique
+        ) == nil)
+
+        let ambiguous = displaySnapshot(
+            identities: [
+                MenuBarDisplayIdentity(
+                    runtimeID: liveDisplay,
+                    hardwareFingerprint: expectedFingerprint
+                ),
+                MenuBarDisplayIdentity(
+                    runtimeID: otherDisplay,
+                    hardwareFingerprint: expectedFingerprint
+                ),
+            ]
+        )
+        #expect(resolver.resolve(
+            profile: profile,
+            requestedDisplayID: liveDisplay,
+            snapshot: ambiguous
+        ) == nil)
+
+        let reusedIDProfile = BarlineProfile(
+            name: "Swapped IDs",
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: liveDisplay,
+                    displayFingerprint: otherFingerprint,
+                    layout: ProfileLayout(visible: [item(2)])
+                ),
+                DisplayProfileOverride(
+                    displayID: oldDisplay,
+                    displayFingerprint: expectedFingerprint,
+                    layout: ProfileLayout(visible: [item(1)])
+                ),
+            ]
+        )
+        let recovered = try #require(resolver.resolve(
+            profile: reusedIDProfile,
+            requestedDisplayID: liveDisplay,
+            snapshot: unique
+        ))
+        #expect(recovered.override.displayID == oldDisplay)
+        #expect(recovered.method == .uniqueHardwareFingerprint)
+
+        let legacyExactCollision = BarlineProfile(
+            name: "Legacy collision",
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: liveDisplay,
+                    layout: ProfileLayout(visible: [item(2)])
+                ),
+                DisplayProfileOverride(
+                    displayID: oldDisplay,
+                    displayFingerprint: expectedFingerprint,
+                    layout: ProfileLayout(visible: [item(1)])
+                ),
+            ]
+        )
+        let fingerprintVerified = try #require(resolver.resolve(
+            profile: legacyExactCollision,
+            requestedDisplayID: liveDisplay,
+            snapshot: unique
+        ))
+        #expect(fingerprintVerified.override.displayID == oldDisplay)
+        #expect(fingerprintVerified.method == .uniqueHardwareFingerprint)
+
+        let missingIdentityMetadata = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [],
+            displayIDs: [liveDisplay],
+            activeSpaceIsValid: true
+        )
+        #expect(resolver.resolve(
+            profile: reusedIDProfile,
+            requestedDisplayID: liveDisplay,
+            snapshot: missingIdentityMetadata
+        ) == nil)
+    }
+
+    @Test("Resolved presentation projects groups and section-scoped spacers deterministically")
+    func presentationProjection() {
+        let first = item(1)
+        let second = item(2)
+        let group = ProfileGroup(id: UUID(80), name: "Utilities", itemIDs: [second, first])
+        let beginning = ProfileSpacer(
+            id: UUID(81),
+            placement: .beginning(.visible),
+            width: 8
+        )
+        let after = ProfileSpacer(id: UUID(82), placement: .after(first), width: 12)
+        let hiddenEnd = ProfileSpacer(id: UUID(83), placement: .end(.hidden), width: 16)
+        let presentation = ResolvedProfilePresentation(
+            source: .base,
+            destinationDisplayID: nil,
+            layout: ProfileLayout(visible: [first, second]),
+            groups: [group],
+            spacers: [beginning, after, hiddenEnd]
+        )
+
+        #expect(ProfilePresentationProjector().elements(
+            presentation: presentation,
+            section: .visible,
+            orderedItemIDs: [first, second]
+        ) == [
+            .spacer(id: beginning.id, width: 8),
+            .groupMarker(id: group.id, name: group.name, symbol: nil),
+            .item(first),
+            .spacer(id: after.id, width: 12),
+            .item(second),
+        ])
+        #expect(ProfilePresentationProjector().elements(
+            presentation: presentation,
+            section: .hidden,
+            orderedItemIDs: []
+        ) == [.spacer(id: hiddenEnd.id, width: 16)])
+        let projected = ProfilePresentationProjector().elements(
+            presentation: presentation,
+            section: .visible,
+            orderedItemIDs: [first, second]
+        )
+        #expect(Set(projected.map(\.id)).count == projected.count)
+        #expect(projected.map(\.id) == [
+            .spacer(beginning.id),
+            .group(group.id),
+            .item(first),
+            .spacer(after.id),
+            .item(second),
+        ])
+    }
+
+    @Test("Version 6 profiles migrate with optional display aliases")
+    func migratesV6DisplayAliases() throws {
+        var document = try #require(
+            JSONSerialization.jsonObject(with: rawEncode(completeProfile())) as? [String: Any]
+        )
+        document["schemaVersion"] = 6
+        if var overrides = document["displayOverrides"] as? [[String: Any]] {
+            for index in overrides.indices {
+                overrides[index].removeValue(forKey: "displayFingerprint")
+            }
+            document["displayOverrides"] = overrides
+        }
+
+        let migrated = try ProfileCodec().decode(
+            JSONSerialization.data(withJSONObject: document)
+        )
+
+        #expect(migrated.schemaVersion == ProfileSchema.currentVersion)
+        #expect(migrated.displayOverrides.first?.displayFingerprint == nil)
+    }
+
+    @Test("Version 6 migration rejects malformed display override collections")
+    func rejectsMalformedV6DisplayOverrides() throws {
+        var missing = try #require(
+            JSONSerialization.jsonObject(with: rawEncode(completeProfile())) as? [String: Any]
+        )
+        missing["schemaVersion"] = 6
+        missing.removeValue(forKey: "displayOverrides")
+        #expect(throws: ProfileValidationError.self) {
+            try ProfileCodec().decode(JSONSerialization.data(withJSONObject: missing))
+        }
+
+        var scalar = missing
+        scalar["displayOverrides"] = 7
+        #expect(throws: ProfileValidationError.self) {
+            try ProfileCodec().decode(JSONSerialization.data(withJSONObject: scalar))
+        }
+
+        var mixed = missing
+        mixed["displayOverrides"] = [["displayID": "display-1"], "invalid"]
+        #expect(throws: ProfileValidationError.self) {
+            try ProfileCodec().decode(JSONSerialization.data(withJSONObject: mixed))
+        }
+    }
+
+    @Test("Workspace presentation scope rejects contradictory decoded state")
+    func rejectsInvalidPresentationScope() {
+        let profile = BarlineProfile(name: "Scope", layout: ProfileLayout(visible: [item(1)]))
+        var base = ProfileWorkspaceState(profile: profile)
+        base.presentation?.destinationDisplayID = primaryDisplay
+        #expect(throws: ProfileValidationError.invalidPresentationScope) {
+            try ProfileValidator().validate(base)
+        }
+
+        var override = ProfileWorkspaceState(profile: profile)
+        override.presentation = ResolvedProfilePresentation(
+            source: .displayOverride(primaryDisplay),
+            destinationDisplayID: nil,
+            layout: profile.layout,
+            groups: [],
+            spacers: []
+        )
+        #expect(throws: ProfileValidationError.invalidPresentationScope) {
+            try ProfileValidator().validate(override)
+        }
     }
 
     @Test("Search metadata includes every display override exactly once")
@@ -609,6 +849,16 @@ struct ProfileTests {
         let badHotkey = BarlineProfile(
             name: "Hotkey", hotkey: ProfileHotkey(key: "", modifiers: [])
         )
+        let malformedFingerprint = BarlineProfile(
+            name: "Fingerprint",
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: primaryDisplay,
+                    displayFingerprint: MenuBarDisplayHardwareFingerprint("v1:short"),
+                    layout: .init()
+                ),
+            ]
+        )
 
         #expect(throws: ProfileValidationError.emptyDisplayID) { try ProfileValidator().validate(emptyDisplay) }
         #expect(throws: ProfileValidationError.invalidAutoRehideDelay) { try ProfileValidator().validate(badDelay) }
@@ -623,6 +873,9 @@ struct ProfileTests {
             try ProfileValidator().validate(malformedColor)
         }
         #expect(throws: ProfileValidationError.invalidHotkey) { try ProfileValidator().validate(badHotkey) }
+        #expect(throws: ProfileValidationError.invalidDisplayFingerprint(primaryDisplay)) {
+            try ProfileValidator().validate(malformedFingerprint)
+        }
     }
 
     @Test("Profile metadata and stable identity validation rejects corrupt values")
@@ -833,6 +1086,7 @@ struct ProfileTests {
             displayOverrides: [
                 DisplayProfileOverride(
                     displayID: primaryDisplay,
+                    displayFingerprint: fingerprint("a"),
                     layout: ProfileLayout(visible: [two], hidden: [one], alwaysHidden: [three])
                 ),
             ],
@@ -887,6 +1141,23 @@ struct ProfileTests {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return try encoder.encode(profile)
+    }
+
+    private func fingerprint(_ character: Character) -> MenuBarDisplayHardwareFingerprint {
+        MenuBarDisplayHardwareFingerprint("v1:" + String(repeating: character, count: 64))
+    }
+
+    private func displaySnapshot(
+        identities: [MenuBarDisplayIdentity]
+    ) -> MenuBarSnapshot {
+        MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [],
+            displayIDs: Set(identities.map(\.runtimeID)),
+            displayIdentities: identities,
+            activeSpaceIsValid: true
+        )
     }
 
     private func archiveDocument(profiles: [[String: Any]]) -> [String: Any] {

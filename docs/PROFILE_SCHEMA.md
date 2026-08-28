@@ -1,6 +1,6 @@
 # Profile schema
 
-`BarlineCore` defines profile schema version **6** and archive format version
+`BarlineCore` defines profile schema version **7** and archive format version
 **1**. The models, validator, JSON codec, migrations, file store, Ice-import
 preview, and Swift Testing coverage exist. The app uses the Barline App Group
 container (with an Application Support fallback for unsigned local builds),
@@ -22,9 +22,18 @@ A `BarlineProfile` contains:
 
 Item identity combines a normalized bundle identifier with at least one of an
 Accessibility identifier, title, user alias, or fallback fingerprint. A bundle
-identifier alone is rejected as insufficiently stable. Display identifiers are
-normalized strings; the code does not yet persist the hardware metadata needed
-for reconnect reconciliation.
+identifier alone is rejected as insufficiently stable. A display override keeps
+its normalized live identifier plus an optional versioned, opaque SHA-256 alias
+derived inside the helper from public vendor/model/serial values. Raw hardware
+values never cross XPC. Reconnect resolution accepts only an exact live ID or a
+unique alias match; absent, serial-less, reused, or ambiguous identities fail
+closed to the base presentation.
+
+Groups and spacers are part of the resolved presentation selected atomically
+with its layout. The presentation is included in workspace checkpoints,
+activation, rollback, history, Focus restoration, and profile-authority
+matching. The shelf projects group markers and section-scoped spacers without
+reordering or duplicating real menu-bar items.
 
 ## Validation
 
@@ -37,6 +46,9 @@ duplicate profiles, malformed archives, and empty archives.
 
 JSON uses ISO-8601 dates, sorted keys, pretty printing, and no escaped slashes.
 Archives contain `formatVersion`, `exportedAt`, and a nonempty `profiles` array.
+Because the alias is part of a display override, a user-requested profile export
+includes that stable pseudonymous value; it never includes the raw vendor,
+model, or serial components.
 
 ## Migrations
 
@@ -50,6 +62,9 @@ Archives contain `formatVersion`, `exportedAt`, and a nonempty `profiles` array.
   legacy profiles and workspace checkpoints receive deterministic defaults for
   fields the older schemas did not model, and ambiguous solid-plus-gradient
   tints are canonicalized to the historically applied gradient.
+- v6 to v7 adds the optional display hardware alias used for conservative
+  reconnect reconciliation. Existing overrides remain valid with no alias and
+  are backfilled only from an exact live-ID observation.
 
 Migration is forward-only. Unknown future schema/archive versions fail safely;
 there is no downgrade writer. Import validates each migrated profile before it
