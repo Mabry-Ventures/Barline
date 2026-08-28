@@ -44,15 +44,7 @@ public struct ProfileValidator: Sendable {
         guard profile.createdAt <= profile.updatedAt else {
             throw ProfileValidationError.invalidTimestampOrder
         }
-        guard profile.appearance.itemSpacing.isFinite,
-              ProfileAppearance.itemSpacingRange.contains(profile.appearance.itemSpacing),
-              profile.appearance.itemSpacing.rounded() == profile.appearance.itemSpacing,
-              profile.appearance.gradientHex.count <= 8,
-              profile.appearance.gradientHex.allSatisfy(isValidHexColor),
-              profile.appearance.tintHex.map(isValidHexColor) ?? true
-        else {
-            throw ProfileValidationError.invalidAppearance
-        }
+        try validateAppearance(profile.appearance)
         guard profile.autoRehide.delaySeconds.isFinite, profile.autoRehide.delaySeconds >= 0 else {
             throw ProfileValidationError.invalidAutoRehideDelay
         }
@@ -90,19 +82,7 @@ public struct ProfileValidator: Sendable {
     }
 
     public func validate(_ workspace: ProfileWorkspaceState) throws {
-        guard workspace.appearance.itemSpacing.isFinite,
-              ProfileAppearance.itemSpacingRange.contains(workspace.appearance.itemSpacing),
-              workspace.appearance.itemSpacing.rounded() == workspace.appearance.itemSpacing,
-              workspace.appearance.gradientHex.count <= 8,
-              workspace.appearance.gradientHex.allSatisfy({
-                  $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
-              }),
-              workspace.appearance.tintHex.map({
-                  $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
-              }) ?? true
-        else {
-            throw ProfileValidationError.invalidAppearance
-        }
+        try validateAppearance(workspace.appearance)
         guard workspace.autoRehide.delaySeconds.isFinite,
               workspace.autoRehide.delaySeconds >= 0
         else {
@@ -116,6 +96,42 @@ public struct ProfileValidator: Sendable {
     private func isValidHexColor(_ value: String) -> Bool {
         guard value.count == 7 || value.count == 9, value.first == "#" else { return false }
         return value.dropFirst().allSatisfy(\.isHexDigit)
+    }
+
+    private func isValidAppearanceMode(_ mode: ProfileAppearanceMode) -> Bool {
+        mode.gradientHex.count <= 8
+            && mode.gradientHex.allSatisfy {
+                $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
+            }
+            && (mode.tintHex.map {
+                $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
+            } ?? true)
+    }
+
+    private func validateAppearance(_ appearance: ProfileAppearance) throws {
+        guard appearance.itemSpacing.isFinite,
+              ProfileAppearance.itemSpacingRange.contains(appearance.itemSpacing),
+              appearance.itemSpacing.rounded() == appearance.itemSpacing,
+              isValidAppearanceMode(
+                  ProfileAppearanceMode(
+                      tintHex: appearance.tintHex,
+                      gradientHex: appearance.gradientHex,
+                      showsBorder: appearance.showsBorder,
+                      showsShadow: appearance.showsShadow
+                  )
+              )
+        else {
+            throw ProfileValidationError.invalidAppearance
+        }
+        if let dynamicAppearance = appearance.dynamicAppearance {
+            guard isValidAppearanceMode(dynamicAppearance.light),
+                  isValidAppearanceMode(dynamicAppearance.dark)
+            else {
+                throw ProfileValidationError.invalidAppearance
+            }
+        } else if appearance.isDynamic {
+            throw ProfileValidationError.invalidAppearance
+        }
     }
 
     private func validateLayout(

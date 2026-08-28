@@ -473,6 +473,7 @@ final class ProfileManager: ObservableObject {
         }
         let general = appState.settings.general
         let advanced = appState.settings.advanced
+        let appearanceConfiguration = appState.appearanceManager.configuration
         return BarlineProfile(
             id: id,
             name: name,
@@ -483,15 +484,17 @@ final class ProfileManager: ObservableObject {
                 alwaysHidden: ordered.filter { $0.section == .alwaysHidden }.map(\.id)
             ),
             appearance: ProfileAppearance(
-                tintHex: profileTintHex(from: appState.appearanceManager.configuration.current),
-                gradientHex: profileGradientHex(from: appState.appearanceManager.configuration.current),
-                showsBorder: appState.appearanceManager.configuration.current.hasBorder,
-                showsShadow: appState.appearanceManager.configuration.current.hasShadow,
-                shape: profileShape(from: appState.appearanceManager.configuration.shapeKind),
+                tintHex: profileTintHex(from: appearanceConfiguration.staticConfiguration),
+                gradientHex: profileGradientHex(from: appearanceConfiguration.staticConfiguration),
+                showsBorder: appearanceConfiguration.staticConfiguration.hasBorder,
+                showsShadow: appearanceConfiguration.staticConfiguration.hasShadow,
+                shape: profileShape(from: appearanceConfiguration.shapeKind),
                 itemSpacing: min(
                     max(general.itemSpacingOffset, ProfileAppearance.itemSpacingRange.lowerBound),
                     ProfileAppearance.itemSpacingRange.upperBound
-                )
+                ),
+                dynamicAppearance: dynamicProfileAppearance(from: appearanceConfiguration),
+                isDynamic: appearanceConfiguration.isDynamic
             ),
             shelfBehavior: ProfileShelfBehavior(isEnabled: general.useBarlineShelf),
             revealTriggers: ProfileRevealTriggers(
@@ -531,14 +534,17 @@ final class ProfileManager: ObservableObject {
             return ProfileWorkspaceState(profile: BarlineProfile(name: "Unavailable workspace"))
         }
         let general = appState.settings.general
+        let appearanceConfiguration = appState.appearanceManager.configuration
         return ProfileWorkspaceState(
             appearance: ProfileAppearance(
-                tintHex: profileTintHex(from: appState.appearanceManager.configuration.current),
-                gradientHex: profileGradientHex(from: appState.appearanceManager.configuration.current),
-                showsBorder: appState.appearanceManager.configuration.current.hasBorder,
-                showsShadow: appState.appearanceManager.configuration.current.hasShadow,
-                shape: profileShape(from: appState.appearanceManager.configuration.shapeKind),
-                itemSpacing: general.itemSpacingOffset
+                tintHex: profileTintHex(from: appearanceConfiguration.staticConfiguration),
+                gradientHex: profileGradientHex(from: appearanceConfiguration.staticConfiguration),
+                showsBorder: appearanceConfiguration.staticConfiguration.hasBorder,
+                showsShadow: appearanceConfiguration.staticConfiguration.hasShadow,
+                shape: profileShape(from: appearanceConfiguration.shapeKind),
+                itemSpacing: general.itemSpacingOffset,
+                dynamicAppearance: dynamicProfileAppearance(from: appearanceConfiguration),
+                isDynamic: appearanceConfiguration.isDynamic
             ),
             shelfBehavior: ProfileShelfBehavior(isEnabled: general.useBarlineShelf),
             revealTriggers: ProfileRevealTriggers(
@@ -604,6 +610,26 @@ final class ProfileManager: ObservableObject {
         return configuration.tintGradient.stops.compactMap { hexString(from: $0.color) }
     }
 
+    private func profileAppearanceMode(
+        from configuration: MenuBarAppearancePartialConfiguration
+    ) -> ProfileAppearanceMode {
+        ProfileAppearanceMode(
+            tintHex: profileTintHex(from: configuration),
+            gradientHex: profileGradientHex(from: configuration),
+            showsBorder: configuration.hasBorder,
+            showsShadow: configuration.hasShadow
+        )
+    }
+
+    private func dynamicProfileAppearance(
+        from configuration: MenuBarAppearanceConfigurationV2
+    ) -> ProfileDynamicAppearance {
+        ProfileDynamicAppearance(
+            light: profileAppearanceMode(from: configuration.lightModeConfiguration),
+            dark: profileAppearanceMode(from: configuration.darkModeConfiguration)
+        )
+    }
+
     private func appearanceConfiguration(
         applying appearance: ProfileAppearance,
         to existing: MenuBarAppearanceConfigurationV2
@@ -628,15 +654,52 @@ final class ProfileManager: ObservableObject {
             partial.tintKind = .noTint
         }
         configuration.staticConfiguration = partial
-        configuration.lightModeConfiguration = partial
-        configuration.darkModeConfiguration = partial
-        configuration.isDynamic = false
+        if let dynamicAppearance = appearance.dynamicAppearance {
+            configuration.lightModeConfiguration = try appearancePartialConfiguration(
+                applying: dynamicAppearance.light,
+                to: configuration.lightModeConfiguration
+            )
+            configuration.darkModeConfiguration = try appearancePartialConfiguration(
+                applying: dynamicAppearance.dark,
+                to: configuration.darkModeConfiguration
+            )
+            configuration.isDynamic = appearance.isDynamic
+        } else {
+            configuration.lightModeConfiguration = partial
+            configuration.darkModeConfiguration = partial
+            configuration.isDynamic = false
+        }
         configuration.shapeKind = switch appearance.shape {
         case .standard: .noShape
         case .rounded: .full
         case .split: .split
         }
         return configuration
+    }
+
+    private func appearancePartialConfiguration(
+        applying appearance: ProfileAppearanceMode,
+        to existing: MenuBarAppearancePartialConfiguration
+    ) throws -> MenuBarAppearancePartialConfiguration {
+        var partial = existing
+        partial.hasBorder = appearance.showsBorder
+        partial.hasShadow = appearance.showsShadow
+        if !appearance.gradientHex.isEmpty {
+            let colors = try appearance.gradientHex.map { try color(from: $0) }
+            let denominator = max(colors.count - 1, 1)
+            partial.tintKind = .gradient
+            partial.tintGradient = BarlineGradient(
+                stops: colors.enumerated().map { index, color in
+                    .stop(color, location: CGFloat(index) / CGFloat(denominator))
+                }
+            )
+        } else if let tintHex = appearance.tintHex {
+            partial.tintKind = .solid
+            partial.tintColor = try color(from: tintHex)
+        } else {
+            partial.tintKind = .noTint
+        }
+        return partial
     }
 
     private func color(from hex: String) throws -> CGColor {
