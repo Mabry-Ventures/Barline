@@ -34,6 +34,9 @@ final class ProfileManager: ObservableObject {
     private static let presentationProfileIDKey = "focus.presentationProfileID"
     private static let presentationFocusActiveKey = "focus.presentationModeIsActive"
     private static let workspaceBeforeFocusKey = "focus.workspaceBeforeFocus"
+    private static let activeProfileAuthorityTokenKey = "profiles.activeAuthorityToken"
+    private static let focusAuthorityTokenKey = "focus.presentationAuthorityToken"
+    private static let profileBeforeFocusAuthorityTokenKey = "focus.profileBeforeFocusAuthorityToken"
     private static let maximumProcessedCommandCount = 256
 
     private let store: ProfileFileStore
@@ -111,14 +114,30 @@ final class ProfileManager: ObservableObject {
             ).profile
             let updated = self.profiles.filter { $0.id != presentationID } + [profile]
             try await self.store.save(updated)
-            return (profiles: updated, presentationID: presentationID)
+            let clearedAuthority = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                ifMatches: presentationID
+            )
+            return (
+                profiles: updated,
+                presentationID: presentationID,
+                clearedAuthority: clearedAuthority
+            )
         } completion: { [weak self] result in
-            self?.profiles = result.profiles
-            self?.processedDefaults.set(
+            guard let self else { return }
+            profiles = result.profiles
+            if activeProfileID == result.presentationID || result.clearedAuthority {
+                activeProfileID = nil
+                activeProfileActivatedAt = nil
+                setActiveProfileAuthorityToken(nil)
+            }
+            activationRequests = activationRequests.filter {
+                $0.value.profileID != result.presentationID
+            }
+            processedDefaults.set(
                 result.presentationID.uuidString,
                 forKey: Self.presentationProfileIDKey
             )
-            self?.publishCatalog()
+            publishCatalog()
         }
     }
 
@@ -127,9 +146,11 @@ final class ProfileManager: ObservableObject {
         _ profile: BarlineProfile,
         source: ProfileActivationSource = .manual,
         expectedGeneration: UInt64? = nil,
+        authorityToken: UUID? = nil,
         prepareCheckpoint: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = nil
     ) async -> Bool {
         guard let appState else { return false }
+        let resolvedAuthorityToken = authorityToken ?? UUID()
         var didActivate = false
         await performOperation(successMessage: "Profile applied.") {
             self.activationRequests[source] = ProfileActivationRequest(
@@ -147,16 +168,24 @@ final class ProfileManager: ObservableObject {
             else {
                 throw MenuBarBackendError.operationFailed("requested profile is unavailable")
             }
-            _ = try await appState.compatibilityCoordinator.activate(
-                profile: resolvedProfile,
-                expectedGeneration: expectedGeneration,
-                workspaceTransaction: self.workspaceTransaction(),
-                prepareCheckpoint: prepareCheckpoint
-            )
-            return resolvedProfile.id
-        } completion: { [weak self] profileID in
-            self?.activeProfileID = profileID
+            let priorAuthorityToken = self.activeProfileAuthorityToken()
+            self.setActiveProfileAuthorityToken(resolvedAuthorityToken)
+            do {
+                _ = try await appState.compatibilityCoordinator.activate(
+                    profile: resolvedProfile,
+                    expectedGeneration: expectedGeneration,
+                    workspaceTransaction: self.workspaceTransaction(),
+                    prepareCheckpoint: prepareCheckpoint
+                )
+            } catch {
+                self.setActiveProfileAuthorityToken(priorAuthorityToken)
+                throw error
+            }
+            return (profileID: resolvedProfile.id, authorityToken: resolvedAuthorityToken)
+        } completion: { [weak self] result in
+            self?.activeProfileID = result.profileID
             self?.activeProfileActivatedAt = Date()
+            self?.setActiveProfileAuthorityToken(result.authorityToken)
             didActivate = true
         }
         return didActivate
@@ -844,6 +873,9 @@ final class ProfileManager: ObservableObject {
                 return false
             }
             let hasJournal = existingJournal != nil
+            let priorAuthorityToken = activeProfileAuthorityToken()
+            let focusAuthorityToken = processedDefaults.string(forKey: Self.focusAuthorityTokenKey)
+                .flatMap(UUID.init(uuidString:)) ?? UUID()
             let journal: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = hasJournal
                 ? nil
                 : { @MainActor [weak self] checkpoint in
@@ -863,10 +895,19 @@ final class ProfileManager: ObservableObject {
                         checkpoint.activeProfileID?.uuidString,
                         forKey: Self.profileBeforeFocusIDKey
                     )
+                    processedDefaults.set(
+                        focusAuthorityToken.uuidString,
+                        forKey: Self.focusAuthorityTokenKey
+                    )
+                    processedDefaults.set(
+                        priorAuthorityToken?.uuidString,
+                        forKey: Self.profileBeforeFocusAuthorityTokenKey
+                    )
                 }
             guard await activate(
                 presentation,
                 source: .focus,
+                authorityToken: focusAuthorityToken,
                 prepareCheckpoint: journal
             ) else {
                 activationRequests.removeValue(forKey: .focus)
@@ -903,12 +944,29 @@ final class ProfileManager: ObservableObject {
             clearProfileBeforeFocus()
             return true
         }
-        var didRestore = false
+        guard let presentation = resolvedPresentationProfile() else {
+            activationRequests.removeValue(forKey: .focus)
+            clearProfileBeforeFocus()
+            return true
+        }
+        let focusAuthorityToken = processedDefaults.string(forKey: Self.focusAuthorityTokenKey)
+            .flatMap(UUID.init(uuidString:))
+        let authorityIsCurrent = focusAuthorityToken != nil
+            && activeProfileAuthorityToken() == focusAuthorityToken
+        var didFinish = false
         await performOperation(successMessage: nil) {
-            _ = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
+            let result = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
                 checkpoint,
+                ifCurrentMatches: presentation,
+                authorityIsCurrent: authorityIsCurrent,
                 workspaceTransaction: self.workspaceTransaction()
             )
+            guard case .restored = result else {
+                let profileID = try await self.synchronizeProfileAuthority(
+                    clearsActivationRequests: false
+                )
+                return (restored: false, profileID: profileID, authorityToken: self.activeProfileAuthorityToken())
+            }
             let retainedProfileID = checkpoint.activeProfileID.flatMap { profileID in
                 self.profiles.first(where: { $0.id == profileID }).flatMap { profile in
                     self.profileMatchesCheckpoint(profile, checkpoint: checkpoint) ? profileID : nil
@@ -921,13 +979,18 @@ final class ProfileManager: ObservableObject {
                     ifMatches: checkpointProfileID
                 )
             }
-            return retainedProfileID
-        } completion: { [weak self] retainedProfileID in
-            self?.activeProfileID = retainedProfileID
-            self?.activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
-            didRestore = true
+            let priorAuthorityToken = self.processedDefaults
+                .string(forKey: Self.profileBeforeFocusAuthorityTokenKey)
+                .flatMap(UUID.init(uuidString:))
+            return (restored: true, profileID: retainedProfileID, authorityToken: priorAuthorityToken)
+        } completion: { [weak self] result in
+            guard let self else { return }
+            activeProfileID = result.profileID
+            activeProfileActivatedAt = result.profileID == nil ? nil : Date()
+            setActiveProfileAuthorityToken(result.profileID == nil ? nil : result.authorityToken)
+            didFinish = true
         }
-        guard didRestore else {
+        guard didFinish else {
             statusMessage = "Barline could not restore the pre-Presentation workspace."
             return false
         }
@@ -1064,6 +1127,21 @@ final class ProfileManager: ObservableObject {
         profileBeforeFocusID = nil
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusIDKey)
         processedDefaults.removeObject(forKey: Self.workspaceBeforeFocusKey)
+        processedDefaults.removeObject(forKey: Self.focusAuthorityTokenKey)
+        processedDefaults.removeObject(forKey: Self.profileBeforeFocusAuthorityTokenKey)
+    }
+
+    private func activeProfileAuthorityToken() -> UUID? {
+        processedDefaults.string(forKey: Self.activeProfileAuthorityTokenKey)
+            .flatMap(UUID.init(uuidString:))
+    }
+
+    private func setActiveProfileAuthorityToken(_ token: UUID?) {
+        if let token {
+            processedDefaults.set(token.uuidString, forKey: Self.activeProfileAuthorityTokenKey)
+        } else {
+            processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
+        }
     }
 
     func clearActiveProfileAuthority(ifMatches expectedProfileID: UUID?) async {

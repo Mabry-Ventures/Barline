@@ -592,7 +592,13 @@ struct StateCoordinatorTests {
         let profile = BarlineProfile(
             id: UUID(124),
             name: "First display",
-            layout: ProfileLayout(visible: [firstItem])
+            layout: ProfileLayout(visible: [firstItem, secondItem]),
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: firstDisplay,
+                    layout: ProfileLayout(visible: [firstItem])
+                ),
+            ]
         )
         let backend = FakeBackend(snapshots: [before, wrongDisplayResult, verifiedRollback])
         let coordinator = MenuBarStateCoordinator(
@@ -730,6 +736,155 @@ struct StateCoordinatorTests {
         #expect(await recorder.values.isEmpty)
     }
 
+    @Test("Conditional workspace restore preserves a superseding profile")
+    func conditionalRestorePreservesSupersedingProfile() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let presentationLayout = ProfileLayout(hidden: before.items.map(\.id))
+        let newerLayout = ProfileLayout(alwaysHidden: before.items.map(\.id))
+        let freshBefore = makeSnapshot(generation: 2, count: 2)
+        let afterPresentation = makeProfileSnapshot(generation: 3, layout: presentationLayout)
+        let freshPresentation = makeProfileSnapshot(generation: 4, layout: presentationLayout)
+        let afterNewer = makeProfileSnapshot(generation: 5, layout: newerLayout)
+        let liveNewer = makeProfileSnapshot(generation: 6, layout: newerLayout)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let presentation = BarlineProfile(
+            id: UUID(131),
+            name: "Presentation",
+            layout: presentationLayout
+        )
+        let newer = BarlineProfile(id: UUID(132), name: "Newer", layout: newerLayout)
+        let recorder = WorkspaceRecorder(initial: original)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { try await recorder.apply($0) }
+        )
+        let backend = FakeBackend(
+            snapshots: [
+                before, freshBefore, afterPresentation, freshPresentation, afterNewer, liveNewer,
+            ]
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+        _ = try await coordinator.activate(
+            profile: presentation,
+            now: afterPresentation.capturedAt,
+            workspaceTransaction: transaction
+        )
+        _ = try await coordinator.activate(
+            profile: newer,
+            now: afterNewer.capturedAt,
+            workspaceTransaction: transaction
+        )
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: before,
+            activeProfileID: nil,
+            workspace: original
+        )
+
+        let result = try await coordinator.restoreWorkspaceCheckpoint(
+            checkpoint,
+            ifCurrentMatches: presentation,
+            authorityIsCurrent: true,
+            workspaceTransaction: transaction,
+            now: liveNewer.capturedAt
+        )
+
+        #expect(result == .superseded)
+        #expect(await coordinator.activeProfileID == newer.id)
+        #expect(await coordinator.currentSnapshot == liveNewer)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await recorder.values == [
+            ProfileWorkspaceState(profile: presentation),
+            ProfileWorkspaceState(profile: newer),
+        ])
+    }
+
+    @Test("Conditional workspace restore rejects stale activation ownership")
+    func conditionalRestoreRejectsStaleActivationOwnership() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let presentationLayout = ProfileLayout(hidden: before.items.map(\.id))
+        let livePresentation = makeProfileSnapshot(generation: 2, layout: presentationLayout)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let presentation = BarlineProfile(
+            id: UUID(133),
+            name: "Presentation",
+            layout: presentationLayout
+        )
+        let recorder = WorkspaceRecorder(initial: ProfileWorkspaceState(profile: presentation))
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { try await recorder.apply($0) }
+        )
+        let backend = FakeBackend(snapshots: [livePresentation])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: before,
+            activeProfileID: nil,
+            workspace: original
+        )
+
+        let result = try await coordinator.restoreWorkspaceCheckpoint(
+            checkpoint,
+            ifCurrentMatches: presentation,
+            authorityIsCurrent: false,
+            workspaceTransaction: transaction,
+            now: livePresentation.capturedAt
+        )
+
+        #expect(result == .superseded)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await recorder.values.isEmpty)
+        #expect(await coordinator.currentSnapshot == livePresentation)
+    }
+
+    @Test("Durable ownership restores after coordinator relaunch")
+    func conditionalRestoreRehydratesDurableOwnership() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let presentationLayout = ProfileLayout(hidden: before.items.map(\.id))
+        let livePresentation = makeProfileSnapshot(generation: 2, layout: presentationLayout)
+        let restored = makeSnapshot(generation: 3, count: 2)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let presentation = BarlineProfile(
+            id: UUID(134),
+            name: "Presentation",
+            layout: presentationLayout
+        )
+        let recorder = WorkspaceRecorder(initial: ProfileWorkspaceState(profile: presentation))
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { try await recorder.apply($0) }
+        )
+        let backend = FakeBackend(snapshots: [livePresentation, restored])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: before,
+            activeProfileID: nil,
+            workspace: original
+        )
+
+        let result = try await coordinator.restoreWorkspaceCheckpoint(
+            checkpoint,
+            ifCurrentMatches: presentation,
+            authorityIsCurrent: true,
+            workspaceTransaction: transaction,
+            now: restored.capturedAt
+        )
+
+        #expect(result == .restored(restored))
+        #expect(await backend.restoredSnapshots == [before])
+        #expect(await recorder.values == [original])
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
     @Test("Redo captures a live externally changed inverse layout")
     func redoUsesLiveExternalInverse() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
@@ -800,6 +955,71 @@ struct StateCoordinatorTests {
         #expect(await backend.moveOperations.allSatisfy {
             $0.destinationDisplayID == activeDisplay
         })
+        #expect(await coordinator.activeProfileID == profile.id)
+    }
+
+    @Test("Base profile activation preserves source displays")
+    func baseProfileActivationPreservesSourceDisplays() async throws {
+        let firstDisplay = MenuBarDisplayID("first-display")
+        let secondDisplay = MenuBarDisplayID("second-display")
+        let firstItem = MenuBarItemDescriptor(
+            id: MenuBarItemID(
+                bundleIdentifier: "com.example.first",
+                accessibilityIdentifier: "first"
+            ),
+            section: .visible,
+            order: 0,
+            displayID: firstDisplay,
+            isOnScreen: true
+        )
+        let secondItem = MenuBarItemDescriptor(
+            id: MenuBarItemID(
+                bundleIdentifier: "com.example.second",
+                accessibilityIdentifier: "second"
+            ),
+            section: .visible,
+            order: 1,
+            displayID: secondDisplay,
+            isOnScreen: true
+        )
+        let before = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [firstItem, secondItem],
+            displayIDs: [firstDisplay, secondDisplay],
+            activeSpaceIsValid: true
+        )
+        let after = MenuBarSnapshot(
+            generation: 2,
+            capturedAt: before.capturedAt,
+            items: [firstItem, secondItem],
+            displayIDs: before.displayIDs,
+            activeSpaceIsValid: true
+        )
+        let profile = BarlineProfile(
+            id: UUID(102),
+            name: "All Displays",
+            layout: ProfileLayout(visible: [firstItem.id, secondItem.id])
+        )
+        let backend = FakeBackend(
+            snapshots: [before, after],
+            environment: MenuBarEnvironmentSnapshot(
+                activeDisplayID: 7,
+                activeStableDisplayID: firstDisplay,
+                activeSpaceToken: 42,
+                activeSpaceIsFullscreen: false
+            )
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
+
+        #expect(await backend.moveOperations.map(\.itemID) == profile.layout.allItemIDs)
+        #expect(await backend.moveOperations.allSatisfy { $0.destinationDisplayID == nil })
         #expect(await coordinator.activeProfileID == profile.id)
     }
 
