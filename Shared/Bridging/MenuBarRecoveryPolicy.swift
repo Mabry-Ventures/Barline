@@ -10,12 +10,12 @@ import CoreGraphics
 enum MenuBarRecoveryPolicy {
     /// Returns whether every reported menu bar window was resolved into a
     /// usable window description.
-    static func snapshotIsComplete(
-        reportedWindowIDs: [CGWindowID],
-        resolvedWindowIDs: [CGWindowID]
+    static func snapshotIsComplete<ID: Hashable>(
+        reportedIDs: [ID],
+        resolvedIDs: [ID]
     ) -> Bool {
-        reportedWindowIDs.count == resolvedWindowIDs.count &&
-        Set(reportedWindowIDs) == Set(resolvedWindowIDs)
+        reportedIDs.count == resolvedIDs.count &&
+            Set(reportedIDs) == Set(resolvedIDs)
     }
 
     /// Returns whether all control items required by the current settings are
@@ -27,7 +27,7 @@ enum MenuBarRecoveryPolicy {
         requiresAlwaysHiddenControlItem: Bool
     ) -> Bool {
         (!requiresVisibleControlItem || hasVisibleControlItem) &&
-        (!requiresAlwaysHiddenControlItem || hasAlwaysHiddenControlItem)
+            (!requiresAlwaysHiddenControlItem || hasAlwaysHiddenControlItem)
     }
 
     /// Resolves an optional private-API result to a usable display identifier.

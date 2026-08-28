@@ -31,6 +31,40 @@ actor XPCMenuBarBackend: MenuBarBackend {
         try await connection.activate(item, button: button)
     }
 
+    func capture(_ items: [MenuBarItemID]) async throws -> [MenuBarCapturedImage] {
+        try await connection.capture(items)
+    }
+
+    func captureBackground(
+        displayID: UInt32,
+        sampleHeight: Double?
+    ) async throws -> MenuBarBackgroundCapture {
+        try await connection.captureBackground(
+            displayID: displayID,
+            sampleHeight: sampleHeight.map { CGFloat($0) }
+        )
+    }
+
+    func environment() async throws -> MenuBarEnvironmentSnapshot {
+        try await connection.environment()
+    }
+
+    func pointContext(_ point: MenuBarPoint) async throws -> MenuBarPointContext {
+        try await connection.pointContext(at: CGPoint(x: point.x, y: point.y))
+    }
+
+    func beginRevealObservation(_ item: MenuBarItemID) async throws -> MenuBarRevealObservationToken {
+        try await connection.beginRevealObservation(for: item)
+    }
+
+    func revealObservationIsVisible(_ token: MenuBarRevealObservationToken) async throws -> Bool {
+        try await connection.revealObservationIsVisible(token)
+    }
+
+    func endRevealObservation(_ token: MenuBarRevealObservationToken) async {
+        await connection.endRevealObservation(token)
+    }
+
     func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
         try await connection.restore(snapshot)
     }

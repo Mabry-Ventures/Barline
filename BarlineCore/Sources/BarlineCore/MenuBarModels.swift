@@ -62,6 +62,32 @@ public enum MenuBarSection: String, Codable, CaseIterable, Sendable {
     case alwaysHidden
 }
 
+/// A Foundation-only rectangle used at the compatibility boundary.
+///
+/// Raw WindowServer identifiers never leave the helper. Geometry is safe to
+/// project into the app because every mutation re-resolves the stable item ID
+/// against a fresh helper-side enumeration before acting.
+public struct MenuBarRect: Codable, Hashable, Sendable {
+    public let x: Double
+    public let y: Double
+    public let width: Double
+    public let height: Double
+
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+
+    public static let zero = MenuBarRect(x: 0, y: 0, width: 0, height: 0)
+
+    public var isFiniteAndNonnegative: Bool {
+        x.isFinite && y.isFinite && width.isFinite && height.isFinite &&
+            width >= 0 && height >= 0
+    }
+}
+
 public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
     public let id: MenuBarItemID
     public let section: MenuBarSection
@@ -69,6 +95,18 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
     public let displayID: MenuBarDisplayID?
     public let isSystemItem: Bool
     public let isBarlineControlItem: Bool
+    public let tagNamespace: String?
+    public let title: String?
+    public let displayName: String
+    public let ownerProcessIdentifier: Int32?
+    public let sourceProcessIdentifier: Int32?
+    public let bounds: MenuBarRect
+    public let isOnScreen: Bool
+    public let isMovable: Bool
+    public let canBeHidden: Bool
+    public let isBentoBox: Bool
+    public let isSystemClone: Bool
+    public let isResponsive: Bool
 
     public init(
         id: MenuBarItemID,
@@ -76,7 +114,19 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         order: Int,
         displayID: MenuBarDisplayID? = nil,
         isSystemItem: Bool = false,
-        isBarlineControlItem: Bool = false
+        isBarlineControlItem: Bool = false,
+        tagNamespace: String? = nil,
+        title: String? = nil,
+        displayName: String = "Menu Bar Item",
+        ownerProcessIdentifier: Int32? = nil,
+        sourceProcessIdentifier: Int32? = nil,
+        bounds: MenuBarRect = .zero,
+        isOnScreen: Bool = false,
+        isMovable: Bool = true,
+        canBeHidden: Bool = true,
+        isBentoBox: Bool = false,
+        isSystemClone: Bool = false,
+        isResponsive: Bool = true
     ) {
         self.id = id
         self.section = section
@@ -84,6 +134,18 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         self.displayID = displayID
         self.isSystemItem = isSystemItem
         self.isBarlineControlItem = isBarlineControlItem
+        self.tagNamespace = tagNamespace
+        self.title = title
+        self.displayName = displayName
+        self.ownerProcessIdentifier = ownerProcessIdentifier
+        self.sourceProcessIdentifier = sourceProcessIdentifier
+        self.bounds = bounds
+        self.isOnScreen = isOnScreen
+        self.isMovable = isMovable
+        self.canBeHidden = canBeHidden
+        self.isBentoBox = isBentoBox
+        self.isSystemClone = isSystemClone
+        self.isResponsive = isResponsive
     }
 }
 

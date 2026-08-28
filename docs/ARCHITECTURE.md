@@ -12,9 +12,9 @@ Barline currently consists of the SwiftUI/AppKit application, a pure Swift
   search. It imports Foundation only.
 - `BarlineMenuService` owns compatibility probes and WindowServer access. It
   selects Tahoe, Golden Gate, or safe fallback behavior through live probes.
-- `Shared` contains the Codable XPC envelope and utilities needed by both
-  processes. The old direct compatibility wrappers are excluded from the app
-  target and remain helper-only during the stable-identity migration.
+- `Shared` contains the Codable XPC envelope and public utilities needed by
+  both processes. Ephemeral window descriptions and direct compatibility
+  wrappers live only in the helper.
 
 The app communicates with the helper through Codable request and response
 values. Synchronous transport calls run on the connection queue, never on the
@@ -39,12 +39,10 @@ Refreshes are driven by application, workspace, wake, active-space, display,
 theme, permission, and mutation events. One-shot debounce and auto-rehide
 timers remain bounded interaction mechanics, not idle polling.
 
-## Transitional boundary
+## Compatibility boundary
 
-The compatibility migration is deliberately staged to keep the imported app
-usable. A helper-only legacy request set currently carries ephemeral window
-numbers for existing layout and image code while those consumers are being
-converted to stable `MenuBarItemID` values. The architectural gate remains
-open until those requests, app-side raw window fields, and app-side event
-synthesis are removed. See `PRIVATE_API_BOUNDARY.md`.
-
+Stable IDs, semantic geometry, bounded PNG payloads, environment state, and
+typed mutation results are the complete cross-process contract. The helper
+re-enumerates and revalidates a stable ID immediately before acting. Duplicate
+base identities receive deterministic occurrence aliases within a snapshot;
+raw window numbers never cross XPC. See `PRIVATE_API_BOUNDARY.md`.

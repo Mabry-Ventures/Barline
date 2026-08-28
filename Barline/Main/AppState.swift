@@ -130,10 +130,16 @@ final class AppState: ObservableObject {
                 let delayed = initial.delay(for: 0.1, scheduler: DispatchQueue.main)
                 return Publishers.Merge(initial, delayed)
             })
-            .replace { Bridging.getActiveSpaceID() }
-            .removeDuplicates()
-            .sink { [weak self] spaceID in
-                self?.activeSpace = SpaceInfo(spaceID: spaceID)
+            .sink { [weak self] _ in
+                Task {
+                    guard let environment = try? await BarlineMenuService.Connection.shared.environment() else {
+                        return
+                    }
+                    self?.activeSpace = SpaceInfo(
+                        spaceID: environment.activeSpaceToken,
+                        isFullscreen: environment.activeSpaceIsFullscreen
+                    )
+                }
             }
             .store(in: &c)
 

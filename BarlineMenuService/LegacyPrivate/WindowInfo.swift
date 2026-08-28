@@ -58,9 +58,9 @@ struct WindowInfo {
         self.ownerPID = ownerPID
         self.bounds = bounds
         self.layer = layer
-        self.title = info[kCGWindowName] as? String
-        self.ownerName = info[kCGWindowOwnerName] as? String
-        self.isOnScreen = info[kCGWindowIsOnscreen] as? Bool ?? false
+        title = info[kCGWindowName] as? String
+        ownerName = info[kCGWindowOwnerName] as? String
+        isOnScreen = info[kCGWindowIsOnscreen] as? Bool ?? false
     }
 
     /// Creates a window with the given window identifier.
@@ -123,8 +123,8 @@ extension WindowInfo {
         return windows.first { window in
             // Wallpaper window belongs to the Dock process.
             window.owningApplication?.bundleIdentifier == "com.apple.dock" &&
-            window.title?.hasPrefix("Wallpaper") == true &&
-            displayBounds.contains(window.bounds)
+                window.title?.hasPrefix("Wallpaper") == true &&
+                displayBounds.contains(window.bounds)
         }
     }
 
@@ -142,10 +142,10 @@ extension WindowInfo {
         return windows.first { window in
             // Menu bar window belongs to the WindowServer process.
             window.isWindowServerWindow &&
-            window.isOnScreen &&
-            window.layer == kCGMainMenuWindowLevel &&
-            window.title == "Menubar" &&
-            displayBounds.contains(window.bounds)
+                window.isOnScreen &&
+                window.layer == kCGMainMenuWindowLevel &&
+                window.title == "Menubar" &&
+                displayBounds.contains(window.bounds)
         }
     }
 
@@ -156,22 +156,25 @@ extension WindowInfo {
 }
 
 // MARK: WindowInfo: Codable
-extension WindowInfo: Codable { }
+
+extension WindowInfo: Codable {}
 
 // MARK: WindowInfo: Equatable
+
 extension WindowInfo: Equatable {
     static func == (lhs: WindowInfo, rhs: WindowInfo) -> Bool {
         lhs.windowID == rhs.windowID &&
-        lhs.ownerPID == rhs.ownerPID &&
-        NSStringFromRect(lhs.bounds) == NSStringFromRect(rhs.bounds) &&
-        lhs.layer == rhs.layer &&
-        lhs.title == rhs.title &&
-        lhs.ownerName == rhs.ownerName &&
-        lhs.isOnScreen == rhs.isOnScreen
+            lhs.ownerPID == rhs.ownerPID &&
+            NSStringFromRect(lhs.bounds) == NSStringFromRect(rhs.bounds) &&
+            lhs.layer == rhs.layer &&
+            lhs.title == rhs.title &&
+            lhs.ownerName == rhs.ownerName &&
+            lhs.isOnScreen == rhs.isOnScreen
     }
 }
 
 // MARK: WindowInfo: Hashable
+
 extension WindowInfo: Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(windowID)

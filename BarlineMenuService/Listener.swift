@@ -72,6 +72,88 @@ final class Listener: @unchecked Sendable {
                         }
                     }
                 return .activation(result ?? .failure(.timedOut))
+            case let .capture(items):
+                let result: BarlineMenuService.ServiceResult<[MenuBarCapturedImage]>? =
+                    AsyncRequestBridge.run {
+                        do {
+                            return try await .success(self.backend.capture(items))
+                        } catch let error as MenuBarBackendError {
+                            return .failure(error)
+                        } catch {
+                            return .failure(.operationFailed(error.localizedDescription))
+                        }
+                    }
+                return .capturedImages(result ?? .failure(.timedOut))
+            case let .captureBackground(displayID, sampleHeight):
+                let result: BarlineMenuService.ServiceResult<MenuBarBackgroundCapture>? =
+                    AsyncRequestBridge.run {
+                        do {
+                            return try await .success(
+                                self.backend.captureBackground(
+                                    displayID: displayID,
+                                    sampleHeight: sampleHeight
+                                )
+                            )
+                        } catch let error as MenuBarBackendError {
+                            return .failure(error)
+                        } catch {
+                            return .failure(.operationFailed(error.localizedDescription))
+                        }
+                    }
+                return .background(result ?? .failure(.timedOut))
+            case .environment:
+                let result: BarlineMenuService.ServiceResult<MenuBarEnvironmentSnapshot>? =
+                    AsyncRequestBridge.run {
+                        do {
+                            return try await .success(self.backend.environment())
+                        } catch let error as MenuBarBackendError {
+                            return .failure(error)
+                        } catch {
+                            return .failure(.operationFailed(error.localizedDescription))
+                        }
+                    }
+                return .environment(result ?? .failure(.timedOut))
+            case let .configureCursorInBackground(enabled):
+                Bridging.setConnectionProperty(enabled, forKey: "SetsCursorInBackground")
+                return .start
+            case let .pointContext(point):
+                let result: BarlineMenuService.ServiceResult<MenuBarPointContext>? =
+                    AsyncRequestBridge.run {
+                        do {
+                            return try await .success(self.backend.pointContext(point))
+                        } catch let error as MenuBarBackendError {
+                            return .failure(error)
+                        } catch {
+                            return .failure(.operationFailed(error.localizedDescription))
+                        }
+                    }
+                return .pointContext(result ?? .failure(.timedOut))
+            case let .beginRevealObservation(item):
+                let result: BarlineMenuService.ServiceResult<MenuBarRevealObservationToken>? =
+                    AsyncRequestBridge.run {
+                        do {
+                            return try await .success(self.backend.beginRevealObservation(item))
+                        } catch let error as MenuBarBackendError {
+                            return .failure(error)
+                        } catch {
+                            return .failure(.operationFailed(error.localizedDescription))
+                        }
+                    }
+                return .revealObservation(result ?? .failure(.timedOut))
+            case let .revealObservationIsVisible(token):
+                let result: BarlineMenuService.ServiceResult<Bool>? = AsyncRequestBridge.run {
+                    do {
+                        return try await .success(self.backend.revealObservationIsVisible(token))
+                    } catch let error as MenuBarBackendError {
+                        return .failure(error)
+                    } catch {
+                        return .failure(.operationFailed(error.localizedDescription))
+                    }
+                }
+                return .boolean(result ?? .failure(.timedOut))
+            case let .endRevealObservation(token):
+                _ = AsyncRequestBridge.run { await self.backend.endRevealObservation(token) }
+                return .start
             case let .restore(snapshot):
                 return .mutation(runMutation { try await self.backend.restore(snapshot) })
             case .health:
@@ -84,11 +166,6 @@ final class Listener: @unchecked Sendable {
             case .restart:
                 _ = AsyncRequestBridge.run { await self.backend.restart() }
                 return .restart
-            case let .sourcePID(window):
-                let pid = SourcePIDCache.shared.pid(for: window)
-                return .sourcePID(pid)
-            case let .legacy(request):
-                return .legacy(handleLegacyRequest(request))
             }
         } catch {
             Logger.default.error("Listener failed to handle message with error \(error)")
@@ -108,45 +185,6 @@ final class Listener: @unchecked Sendable {
                 return .failure(.operationFailed(error.localizedDescription))
             }
         } ?? .failure(.timedOut)
-    }
-
-    private func handleLegacyRequest(
-        _ request: BarlineMenuService.LegacyRequest
-    ) -> BarlineMenuService.LegacyResponse {
-        switch request {
-        case let .setConnectionProperty(key, value):
-            Bridging.setConnectionProperty(value, forKey: key)
-            return .acknowledgement
-        case .activeMenuBarDisplay:
-            return .displayID(Bridging.getActiveMenuBarDisplayID())
-        case .activeSpace:
-            return .spaceID(Bridging.getActiveSpaceID())
-        case let .currentSpace(displayID):
-            return .spaceID(Bridging.getCurrentSpaceID(for: displayID))
-        case let .isSpaceFullscreen(spaceID):
-            return .boolean(Bridging.isSpaceFullscreen(spaceID))
-        case let .windowBounds(windowID):
-            return .rectangle(Bridging.getWindowBounds(for: windowID))
-        case let .windowLevel(windowID):
-            return .integer(Bridging.getWindowLevel(for: windowID))
-        case let .windowList(options):
-            return .windowIDs(Bridging.getWindowList(option: .init(rawValue: options)))
-        case let .menuBarWindowList(options):
-            return .windowIDs(Bridging.getMenuBarWindowList(option: .init(rawValue: options)))
-        case let .processIsUnresponsive(pid):
-            return .boolean(Bridging.isProcessUnresponsive(pid))
-        case let .setProcessUnresponsiveTimeout(timeout):
-            Bridging.setProcessUnresponsiveTimeout(timeout)
-            return .acknowledgement
-        case let .captureWindows(windowIDs, screenBounds, options):
-            return .data(
-                WindowCaptureService.capturePNG(
-                    windowIDs: windowIDs,
-                    screenBounds: screenBounds,
-                    options: options
-                )
-            )
-        }
     }
 
     /// Activates the listener without checking if it is already active,

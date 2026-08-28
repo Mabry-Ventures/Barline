@@ -108,25 +108,19 @@ final class BarlineShelfColorManager: ObservableObject {
     }
 
     private func updateWindowImage(for screen: NSScreen) {
-        let windows = WindowInfo.createWindows(option: .onScreen)
-        let displayID = screen.displayID
-
-        guard
-            let menuBarWindow = WindowInfo.menuBarWindow(from: windows, for: displayID),
-            let wallpaperWindow = WindowInfo.wallpaperWindow(from: windows, for: displayID)
-        else {
-            return
+        Task { [weak self] in
+            guard
+                let self,
+                let capture = await ScreenCapture.captureMenuBarBackground(
+                    displayID: screen.displayID,
+                    sampleHeight: 1
+                ),
+                let image = capture.image
+            else {
+                return
+            }
+            windowImage = image
         }
-
-        guard let image = ScreenCapture.captureWindows(
-            with: [menuBarWindow.windowID, wallpaperWindow.windowID],
-            screenBounds: withMutableCopy(of: wallpaperWindow.bounds) { $0.size.height = 1 },
-            option: .nominalResolution
-        ) else {
-            return
-        }
-
-        windowImage = image
     }
 
     private func updateColorInfo(with frame: CGRect, screen: NSScreen) {
@@ -156,7 +150,19 @@ final class BarlineShelfColorManager: ObservableObject {
     }
 
     func updateAllProperties(with frame: CGRect, screen: NSScreen) {
-        updateWindowImage(for: screen)
-        updateColorInfo(with: frame, screen: screen)
+        Task { [weak self] in
+            guard
+                let self,
+                let capture = await ScreenCapture.captureMenuBarBackground(
+                    displayID: screen.displayID,
+                    sampleHeight: 1
+                ),
+                let image = capture.image
+            else {
+                return
+            }
+            windowImage = image
+            updateColorInfo(with: frame, screen: screen)
+        }
     }
 }

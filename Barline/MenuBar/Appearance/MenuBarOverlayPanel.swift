@@ -193,12 +193,15 @@ final class MenuBarOverlayPanel: NSPanel {
                     return
                 }
                 Task {
-                    // Must be run async, or this will not remove the flags.
                     self.updateFlags.removeAll()
-                }
-                let windows = WindowInfo.createWindows(option: .onScreen)
-                if validate(for: .updates, with: windows) {
-                    performUpdates(for: flags, windows: windows, screen: owningScreen)
+                    guard let capture = await ScreenCapture.captureMenuBarBackground(
+                        displayID: owningScreen.displayID
+                    ) else {
+                        return
+                    }
+                    if validate(for: .updates, menuBarBounds: capture.menuBarBounds) {
+                        performUpdates(for: flags, capture: capture, screen: owningScreen)
+                    }
                 }
             }
             .store(in: &c)
@@ -221,7 +224,7 @@ final class MenuBarOverlayPanel: NSPanel {
 
     /// Performs validation for the given validation kind. Returns the panel's
     /// owning display if successful. Returns `nil` on failure.
-    private func validate(for kind: ValidationKind, with windows: [WindowInfo]) -> Bool {
+    private func validate(for kind: ValidationKind, menuBarBounds: CGRect) -> Bool {
         lazy var actionMessage = switch kind {
         case .showing: "Preventing overlay panel from showing."
         case .updates: "Preventing overlay panel from updating."
@@ -238,7 +241,7 @@ final class MenuBarOverlayPanel: NSPanel {
             MenuBarOverlayPanel.logger.debug("Active space is fullscreen. \(actionMessage, privacy: .public)")
             return false
         }
-        guard appState.menuBarManager.hasValidMenuBar(in: windows, for: owningScreen.displayID) else {
+        guard appState.menuBarManager.hasValidMenuBar(bounds: menuBarBounds) else {
             MenuBarOverlayPanel.logger.debug("No valid menu bar found. \(actionMessage, privacy: .public)")
             return false
         }
@@ -258,26 +261,24 @@ final class MenuBarOverlayPanel: NSPanel {
 
     /// Stores the area of the desktop wallpaper that is under the menu bar
     /// of the given display.
-    private func updateDesktopWallpaper(for display: CGDirectDisplayID, with windows: [WindowInfo]) {
-        guard
-            let wallpaperWindow = WindowInfo.wallpaperWindow(from: windows, for: display),
-            let menuBarWindow = WindowInfo.menuBarWindow(from: windows, for: display)
-        else {
-            return
-        }
-        let wallpaper = ScreenCapture.captureWindow(with: wallpaperWindow.windowID, screenBounds: menuBarWindow.bounds)
+    private func updateDesktopWallpaper(with capture: ScreenCapture.MenuBarBackground) {
+        let wallpaper = capture.image
         if desktopWallpaper?.dataProvider?.data != wallpaper?.dataProvider?.data {
             desktopWallpaper = wallpaper
         }
     }
 
     /// Updates the panel to prepare for display.
-    private func performUpdates(for flags: Set<UpdateFlag>, windows: [WindowInfo], screen: NSScreen) {
+    private func performUpdates(
+        for flags: Set<UpdateFlag>,
+        capture: ScreenCapture.MenuBarBackground,
+        screen: NSScreen
+    ) {
         if flags.contains(.applicationMenuFrame) {
             updateApplicationMenuFrame(for: screen)
         }
         if flags.contains(.desktopWallpaper) {
-            updateDesktopWallpaper(for: screen.displayID, with: windows)
+            updateDesktopWallpaper(with: capture)
         }
     }
 
@@ -523,11 +524,13 @@ private final class MenuBarOverlayPanelContentView: NSView {
             return CGRect(x: rect.minX, y: rect.minY, width: maxX, height: rect.height)
         }()
         let trailingPathBounds: CGRect = {
-            let itemWindows = MenuBarItem.getMenuBarItemWindows(on: screen.displayID, option: .onScreen)
-            guard !itemWindows.isEmpty else {
+            let items = overlayPanel?.appState?.itemManager.itemCache.managedItems.filter {
+                $0.isOnScreen && $0.bounds.intersects(screen.frame)
+            } ?? []
+            guard !items.isEmpty else {
                 return .zero
             }
-            let totalWidth = itemWindows.reduce(into: 0) { width, item in
+            let totalWidth = items.reduce(into: 0) { width, item in
                 width += item.bounds.width
             }
             var position = rect.maxX - totalWidth

@@ -8,6 +8,7 @@ public enum SnapshotRejectionReason: Error, Codable, Equatable, Sendable {
     case unknownItemDisplay(MenuBarDisplayID)
     case duplicateItemIdentity(MenuBarItemID)
     case unstableItemIdentity(MenuBarItemID)
+    case invalidItemGeometry(MenuBarItemID)
     case missingRequiredControlItem(MenuBarItemID)
     case implausibleItemCountCollapse(previous: Int, candidate: Int)
     case implausibleSystemItemCollapse(previous: Int, candidate: Int)
@@ -76,6 +77,9 @@ public struct SnapshotValidator: Sendable {
             }
             guard item.id.isPlausiblyStable else {
                 return .failure(.unstableItemIdentity(item.id))
+            }
+            guard item.bounds.isFiniteAndNonnegative else {
+                return .failure(.invalidItemGeometry(item.id))
             }
             guard seen.insert(item.id).inserted else {
                 return .failure(.duplicateItemIdentity(item.id))

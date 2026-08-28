@@ -18,6 +18,8 @@ struct MenuBarServiceCodecTests {
     func requestRoundTrips() throws {
         let snapshot = makeCodecSnapshot()
         let operation = MenuBarMoveOperation(itemID: itemID, section: .hidden, index: 2)
+        let revealUUID = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let revealToken = MenuBarRevealObservationToken(value: revealUUID)
         let requests: [MenuBarServiceRequest] = [
             .start,
             .capabilities,
@@ -25,6 +27,14 @@ struct MenuBarServiceCodecTests {
             .move(operation),
             .reveal(itemID),
             .activate(itemID, .right),
+            .capture([itemID]),
+            .captureBackground(displayID: 1, sampleHeight: 1),
+            .environment,
+            .configureCursorInBackground(true),
+            .pointContext(MenuBarPoint(x: 10, y: 20)),
+            .beginRevealObservation(itemID),
+            .revealObservationIsVisible(revealToken),
+            .endRevealObservation(revealToken),
             .restore(snapshot),
             .health,
             .restart,
@@ -49,11 +59,40 @@ struct MenuBarServiceCodecTests {
             canRestore: true
         )
         let snapshot = makeCodecSnapshot()
+        let capturedImage = MenuBarCapturedImage(
+            itemID: itemID,
+            pngData: Data([0x89, 0x50, 0x4E, 0x47]),
+            bounds: MenuBarRect(x: 10, y: 20, width: 24, height: 24)
+        )
+        let background = MenuBarBackgroundCapture(
+            displayID: 1,
+            menuBarBounds: MenuBarRect(x: 0, y: 0, width: 1512, height: 37),
+            pngData: Data([0x89, 0x50, 0x4E, 0x47])
+        )
+        let environment = MenuBarEnvironmentSnapshot(
+            activeDisplayID: 1,
+            activeSpaceToken: 7,
+            activeSpaceIsFullscreen: false
+        )
+        let pointContext = MenuBarPointContext(
+            isInsideMenuBarItem: true,
+            applicationBundleIdentifier: "com.example.status",
+            applicationIsActive: true,
+            applicationUsesRegularActivationPolicy: true
+        )
+        let revealUUID = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let revealToken = MenuBarRevealObservationToken(value: revealUUID)
         let responses: [MenuBarServiceResponse] = [
             .acknowledged,
             .capabilities(capabilities),
             .snapshot(snapshot),
             .mutation(MenuBarMutationResult(generation: 8, changedItemIDs: [itemID])),
+            .capturedImages([capturedImage]),
+            .background(background),
+            .environment(environment),
+            .pointContext(pointContext),
+            .revealObservation(revealToken),
+            .boolean(true),
             .health(MenuBarBackendHealth(backendName: "Tahoe", state: .degraded, message: "probe")),
             .failure(.interrupted),
         ]

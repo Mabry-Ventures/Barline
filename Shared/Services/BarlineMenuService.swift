@@ -27,11 +27,17 @@ extension BarlineMenuService {
         case move(MenuBarMoveOperation)
         case reveal(MenuBarItemID)
         case activate(item: MenuBarItemID, button: MenuBarMouseButton)
+        case capture([MenuBarItemID])
+        case captureBackground(displayID: UInt32, sampleHeight: Double?)
+        case environment
+        case configureCursorInBackground(Bool)
+        case pointContext(MenuBarPoint)
+        case beginRevealObservation(MenuBarItemID)
+        case revealObservationIsVisible(MenuBarRevealObservationToken)
+        case endRevealObservation(MenuBarRevealObservationToken)
         case restore(MenuBarSnapshot)
         case health
         case restart
-        case sourcePID(WindowInfo)
-        case legacy(LegacyRequest)
     }
 
     enum Response: Codable, Sendable {
@@ -40,10 +46,14 @@ extension BarlineMenuService {
         case snapshot(ServiceResult<MenuBarSnapshot>)
         case mutation(ServiceResult<MenuBarMutationResult>)
         case activation(ServiceResult<EmptyResult>)
+        case capturedImages(ServiceResult<[MenuBarCapturedImage]>)
+        case background(ServiceResult<MenuBarBackgroundCapture>)
+        case environment(ServiceResult<MenuBarEnvironmentSnapshot>)
+        case pointContext(ServiceResult<MenuBarPointContext>)
+        case revealObservation(ServiceResult<MenuBarRevealObservationToken>)
+        case boolean(ServiceResult<Bool>)
         case health(MenuBarBackendHealth)
         case restart
-        case sourcePID(pid_t?)
-        case legacy(LegacyResponse)
     }
 
     enum ServiceResult<Value: Codable & Sendable>: Codable, Sendable {
@@ -52,30 +62,4 @@ extension BarlineMenuService {
     }
 
     struct EmptyResult: Codable, Sendable {}
-
-    enum LegacyRequest: Codable, Sendable {
-        case setConnectionProperty(key: String, value: Bool)
-        case activeMenuBarDisplay
-        case activeSpace
-        case currentSpace(displayID: UInt32)
-        case isSpaceFullscreen(Int)
-        case windowBounds(UInt32)
-        case windowLevel(UInt32)
-        case windowList(options: Int)
-        case menuBarWindowList(options: Int)
-        case processIsUnresponsive(pid_t)
-        case setProcessUnresponsiveTimeout(TimeInterval)
-        case captureWindows(windowIDs: [UInt32], screenBounds: CGRect?, options: UInt32)
-    }
-
-    enum LegacyResponse: Codable, Sendable {
-        case acknowledgement
-        case displayID(UInt32?)
-        case spaceID(Int?)
-        case boolean(Bool)
-        case rectangle(CGRect?)
-        case integer(Int32?)
-        case windowIDs([UInt32])
-        case data(Data?)
-    }
 }

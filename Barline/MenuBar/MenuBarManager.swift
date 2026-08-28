@@ -235,43 +235,30 @@ final class MenuBarManager: ObservableObject {
             return
         }
 
-        let windows = WindowInfo.createWindows(option: .onScreen)
         let displayID = screen.displayID
-
-        guard
-            let menuBarWindow = WindowInfo.menuBarWindow(from: windows, for: displayID),
-            let wallpaperWindow = WindowInfo.wallpaperWindow(from: windows, for: displayID)
-        else {
-            return
-        }
-
-        guard
-            let image = ScreenCapture.captureWindows(
-                with: [menuBarWindow.windowID, wallpaperWindow.windowID],
-                screenBounds: withMutableCopy(of: wallpaperWindow.bounds) { $0.size.height = 1 },
-                option: .nominalResolution
-            ),
-            let color = image.averageColor(option: .ignoreAlpha)
-        else {
-            return
-        }
-
-        let info = MenuBarAverageColorInfo(color: color, source: .menuBarWindow)
-
-        if averageColorInfo != info {
-            averageColorInfo = info
+        Task { [weak self] in
+            guard
+                let self,
+                let capture = await ScreenCapture.captureMenuBarBackground(
+                    displayID: displayID,
+                    sampleHeight: 1
+                ),
+                let image = capture.image,
+                let color = image.averageColor(option: .ignoreAlpha)
+            else {
+                return
+            }
+            let info = MenuBarAverageColorInfo(color: color, source: .menuBarWindow)
+            if averageColorInfo != info {
+                averageColorInfo = info
+            }
         }
     }
 
     /// Returns a Boolean value that indicates whether the given display
     /// has a valid menu bar.
-    func hasValidMenuBar(in windows: [WindowInfo], for display: CGDirectDisplayID) -> Bool {
-        guard
-            let window = WindowInfo.menuBarWindow(from: windows, for: display),
-            let element = AXHelpers.element(at: window.bounds.origin)
-        else {
-            return false
-        }
+    func hasValidMenuBar(bounds: CGRect) -> Bool {
+        guard let element = AXHelpers.element(at: bounds.origin) else { return false }
         return AXHelpers.role(for: element) == .menuBar
     }
 

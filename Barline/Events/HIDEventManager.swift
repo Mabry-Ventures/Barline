@@ -170,7 +170,6 @@ final class HIDEventManager: ObservableObject {
 // MARK: - Handler Methods
 
 extension HIDEventManager {
-
     // MARK: Handle Show On Click
 
     private func handleShowOnClick(appState: AppState, screen: NSScreen) {
@@ -236,15 +235,19 @@ extension HIDEventManager {
             return
         }
 
-        let initialSpaceID = Bridging.getActiveSpaceID()
-
         Task {
+            guard let initialEnvironment = try? await BarlineMenuService.Connection.shared.environment() else {
+                return
+            }
             // Give the window under the mouse a chance to focus.
             try await Task.sleep(for: .milliseconds(250))
 
             // Don't bother checking the window if the click caused
             // a space change.
-            if Bridging.getActiveSpaceID() != initialSpaceID {
+            guard let currentEnvironment = try? await BarlineMenuService.Connection.shared.environment() else {
+                return
+            }
+            if currentEnvironment.activeSpaceToken != initialEnvironment.activeSpaceToken {
                 for section in appState.menuBarManager.sections {
                     section.hide()
                 }
@@ -254,21 +257,19 @@ extension HIDEventManager {
             // Get the window that was clicked.
             guard
                 let mouseLocation = MouseHelpers.locationCoreGraphics,
-                let windowUnderMouse = WindowInfo.createWindows(option: .onScreen)
-                    .filter({ $0.layer < CGWindowLevelForKey(.cursorWindow) })
-                    .first(where: { $0.bounds.contains(mouseLocation) && $0.title?.isEmpty == false }),
-                let owningApplication = windowUnderMouse.owningApplication
+                let context = try? await BarlineMenuService.Connection.shared.pointContext(at: mouseLocation),
+                let bundleIdentifier = context.applicationBundleIdentifier
             else {
                 return
             }
 
             // Note: The Dock is an exception to the following check.
-            if owningApplication.bundleIdentifier != "com.apple.dock" {
+            if bundleIdentifier != "com.apple.dock" {
                 // Only continue if the clicked app is active, and has
                 // a regular activation policy.
                 guard
-                    owningApplication.isActive,
-                    owningApplication.activationPolicy == .regular
+                    context.applicationIsActive,
+                    context.applicationUsesRegularActivationPolicy
                 else {
                     return
                 }
@@ -469,14 +470,14 @@ extension HIDEventManager {
 
         // Infer the menu bar frame from the screen frame.
         return mouseLocation.x >= screen.frame.minX &&
-        mouseLocation.x <= screen.frame.maxX &&
-        mouseLocation.y <= screen.frame.maxY &&
-        mouseLocation.y >= screen.visibleFrame.maxY
+            mouseLocation.x <= screen.frame.maxX &&
+            mouseLocation.y <= screen.frame.maxY &&
+            mouseLocation.y >= screen.visibleFrame.maxY
     }
 
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of the current application menu.
-    func isMouseInsideApplicationMenu(appState: AppState, screen: NSScreen) -> Bool {
+    func isMouseInsideApplicationMenu(appState _: AppState, screen: NSScreen) -> Bool {
         guard
             let mouseLocation = MouseHelpers.locationCoreGraphics,
             var applicationMenuFrame = screen.getApplicationMenuFrame()
@@ -490,16 +491,12 @@ extension HIDEventManager {
 
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of a menu bar item.
-    func isMouseInsideMenuBarItem(appState: AppState, screen: NSScreen) -> Bool {
+    func isMouseInsideMenuBarItem(appState: AppState, screen _: NSScreen) -> Bool {
         guard let mouseLocation = MouseHelpers.locationCoreGraphics else {
             return false
         }
-        let windowIDs = Bridging.getMenuBarWindowList(option: [.onScreen, .activeSpace, .itemsOnly])
-        return windowIDs.contains { windowID in
-            guard let bounds = Bridging.getWindowBounds(for: windowID) else {
-                return false
-            }
-            return bounds.contains(mouseLocation)
+        return appState.itemManager.itemCache.managedItems.contains {
+            $0.isOnScreen && $0.bounds.contains(mouseLocation)
         }
     }
 
@@ -507,7 +504,7 @@ extension HIDEventManager {
     /// the bounds of the screen's notch, if it has one.
     ///
     /// If the screen does not have a notch, this property returns `false`.
-    func isMouseInsideNotch(appState: AppState, screen: NSScreen) -> Bool {
+    func isMouseInsideNotch(appState _: AppState, screen: NSScreen) -> Bool {
         guard
             let mouseLocation = MouseHelpers.locationAppKit,
             var frameOfNotch = screen.frameOfNotch
@@ -522,9 +519,9 @@ extension HIDEventManager {
     /// the bounds of an empty space in the menu bar.
     func isMouseInsideEmptyMenuBarSpace(appState: AppState, screen: NSScreen) -> Bool {
         isMouseInsideMenuBar(appState: appState, screen: screen) &&
-        !isMouseInsideApplicationMenu(appState: appState, screen: screen) &&
-        !isMouseInsideMenuBarItem(appState: appState, screen: screen) &&
-        !isMouseInsideNotch(appState: appState, screen: screen)
+            !isMouseInsideApplicationMenu(appState: appState, screen: screen) &&
+            !isMouseInsideMenuBarItem(appState: appState, screen: screen) &&
+            !isMouseInsideNotch(appState: appState, screen: screen)
     }
 
     /// A Boolean value that indicates whether the mouse pointer is within
@@ -564,7 +561,7 @@ private protocol EventMonitorProtocol {
     func stop()
 }
 
-extension EventMonitor: EventMonitorProtocol { }
+extension EventMonitor: EventMonitorProtocol {}
 
 extension EventTap: EventMonitorProtocol {
     fileprivate func start() {

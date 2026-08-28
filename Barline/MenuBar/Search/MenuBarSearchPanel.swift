@@ -53,7 +53,9 @@ final class MenuBarSearchPanel: NSPanel {
     }
 
     /// Overridden to always be `true`.
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool {
+        true
+    }
 
     /// Creates a menu bar search panel.
     init() {
@@ -63,12 +65,12 @@ final class MenuBarSearchPanel: NSPanel {
             backing: .buffered,
             defer: false
         )
-        self.titlebarAppearsTransparent = true
-        self.isMovableByWindowBackground = false
-        self.animationBehavior = .none
-        self.isFloatingPanel = true
-        self.level = .floating
-        self.collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .moveToActiveSpace]
+        titlebarAppearsTransparent = true
+        isMovableByWindowBackground = false
+        animationBehavior = .none
+        isFloatingPanel = true
+        level = .floating
+        collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .moveToActiveSpace]
     }
 
     /// Performs the initial setup of the panel.
@@ -140,7 +142,11 @@ final class MenuBarSearchPanel: NSPanel {
 
     /// Toggles the panel's visibility.
     func toggle() {
-        if isVisible { close() } else { show() }
+        if isVisible {
+            close()
+        } else {
+            show()
+        }
     }
 
     /// Dismisses the search panel.
@@ -161,7 +167,7 @@ private final class MenuBarSearchHostingView: NSHostingView<AnyView> {
     init(
         appState: AppState,
         model: MenuBarSearchModel,
-        displayID: CGDirectDisplayID,
+        displayID _: CGDirectDisplayID,
         panel: MenuBarSearchPanel
     ) {
         super.init(
@@ -175,12 +181,12 @@ private final class MenuBarSearchHostingView: NSHostingView<AnyView> {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
+    required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
     @available(*, unavailable)
-    required init(rootView: AnyView) {
+    required init(rootView _: AnyView) {
         fatalError("init(rootView:) has not been implemented")
     }
 }
@@ -199,7 +205,11 @@ private struct MenuBarSearchContentView: View {
     }
 
     private var bottomBarPadding: CGFloat {
-        if #available(macOS 26.0, *) { 7 } else { 5 }
+        if #available(macOS 26.0, *) {
+            7
+        } else {
+            5
+        }
     }
 
     var body: some View {
@@ -265,7 +275,6 @@ private struct MenuBarSearchContentView: View {
         }
     }
 
-    @ViewBuilder
     private var bottomBar: some View {
         HStack {
             SettingsButton {
@@ -331,12 +340,12 @@ private struct MenuBarSearchContentView: View {
             }
 
         if model.searchText.isEmpty {
-            model.displayedItems = searchItems.map { $0.listItem }
+            model.displayedItems = searchItems.map(\.listItem)
         } else {
-            let selectableItems = searchItems.filter { $0.listItem.isSelectable }
+            let selectableItems = searchItems.filter(\.listItem.isSelectable)
             let fuseResults = model.fuse.searchSync(
                 model.searchText,
-                in: selectableItems.map { $0.title }
+                in: selectableItems.map(\.title)
             )
             let maxFuseScore = Double(fuseResults.count)
 
@@ -360,16 +369,16 @@ private struct MenuBarSearchContentView: View {
                     return ScoredItem(listItem, averageScore)
                 }
                 .sorted { $0.score > $1.score }
-                .map { $0.listItem }
+                .map(\.listItem)
         }
     }
 
     private func menuBarItem(for selection: MenuBarSearchModel.ItemID) -> MenuBarItem? {
         switch selection {
-        case .item(let tag):
-            return itemManager.itemCache.managedItems.first(matching: tag)
+        case let .item(tag):
+            itemManager.itemCache.managedItems.first(matching: tag)
         case .header:
-            return nil
+            nil
         }
     }
 
@@ -377,7 +386,7 @@ private struct MenuBarSearchContentView: View {
         closePanel()
         Task {
             try await Task.sleep(for: .milliseconds(25))
-            if Bridging.isWindowOnScreen(item.windowID) {
+            if item.isOnScreen {
                 try await itemManager.click(item: item, with: .left)
             } else {
                 await itemManager.temporarilyShow(item: item, clickingWith: .left)
@@ -415,7 +424,7 @@ private struct ShowItemButton: View {
     var body: some View {
         Button(action: action) {
             HStack {
-                Text("\(Bridging.isWindowOnScreen(item.windowID) ? "Click" : "Show") Item")
+                Text("\(item.isOnScreen ? "Click" : "Show") Item")
                     .padding(.leading, 5)
 
                 Image(systemName: "return")
@@ -519,11 +528,19 @@ private struct MenuBarSearchItemView: View {
     }
 
     private var dimension: CGFloat {
-        if #available(macOS 26.0, *) { 26 } else { 24 }
+        if #available(macOS 26.0, *) {
+            26
+        } else {
+            24
+        }
     }
 
     private var padding: CGFloat {
-        if #available(macOS 26.0, *) { 6 } else { 8 }
+        if #available(macOS 26.0, *) {
+            6
+        } else {
+            8
+        }
     }
 
     var body: some View {
@@ -539,7 +556,6 @@ private struct MenuBarSearchItemView: View {
         .padding(padding)
     }
 
-    @ViewBuilder
     private var labelText: some View {
         Text(item.displayName)
     }
@@ -569,7 +585,6 @@ private struct MenuBarSearchItemView: View {
         }
     }
 
-    @ViewBuilder
     private var itemView: some View {
         Image(nsImage: itemImage)
             .frame(

@@ -6,8 +6,8 @@ private enum MenuBarRecoveryPolicyTests {
     static func main() {
         assertEqual(
             MenuBarRecoveryPolicy.snapshotIsComplete(
-                reportedWindowIDs: [10, 20, 30],
-                resolvedWindowIDs: [30, 20, 10]
+                reportedIDs: [10, 20, 30],
+                resolvedIDs: [30, 20, 10]
             ),
             true,
             "accepts a fully resolved snapshot regardless of ordering"
@@ -15,8 +15,8 @@ private enum MenuBarRecoveryPolicyTests {
 
         assertEqual(
             MenuBarRecoveryPolicy.snapshotIsComplete(
-                reportedWindowIDs: [10, 20, 30],
-                resolvedWindowIDs: [20, 10]
+                reportedIDs: [10, 20, 30],
+                resolvedIDs: [20, 10]
             ),
             false,
             "rejects a post-wake snapshot with an unresolved window"
@@ -53,7 +53,7 @@ private enum MenuBarRecoveryPolicyTests {
         assertEqual(
             MenuBarRecoveryPolicy.shouldHidePanel(
                 controlItemFrame: nil,
-                screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982)
+                screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982)
             ),
             false,
             "does not treat missing post-wake geometry as proof that the menu bar is hidden"
@@ -61,8 +61,8 @@ private enum MenuBarRecoveryPolicyTests {
 
         assertEqual(
             MenuBarRecoveryPolicy.shouldHidePanel(
-                controlItemFrame: CGRect(x: 1_400, y: 983, width: 20, height: 32),
-                screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982)
+                controlItemFrame: CGRect(x: 1400, y: 983, width: 20, height: 32),
+                screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982)
             ),
             true,
             "hides the panel when the control item is vertically offscreen"

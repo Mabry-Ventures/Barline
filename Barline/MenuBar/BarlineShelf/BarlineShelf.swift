@@ -46,16 +46,16 @@ final class BarlineShelfPanel: NSPanel {
             backing: .buffered,
             defer: false
         )
-        self.title = "Barline Bar"
-        self.titlebarAppearsTransparent = true
-        self.isMovableByWindowBackground = true
-        self.allowsToolTipsWhenApplicationIsInactive = true
-        self.isFloatingPanel = true
-        self.animationBehavior = .none
-        self.backgroundColor = .clear
-        self.hasShadow = false
-        self.level = .mainMenu + 1
-        self.collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .moveToActiveSpace]
+        title = "Barline Bar"
+        titlebarAppearsTransparent = true
+        isMovableByWindowBackground = true
+        allowsToolTipsWhenApplicationIsInactive = true
+        isFloatingPanel = true
+        animationBehavior = .none
+        backgroundColor = .clear
+        hasShadow = false
+        level = .mainMenu + 1
+        collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .moveToActiveSpace]
     }
 
     /// Sets up the panel.
@@ -96,7 +96,7 @@ final class BarlineShelfPanel: NSPanel {
             controlItem.$frame
                 .combineLatest(controlItem.$screen)
                 .throttle(for: 0.1, scheduler: DispatchQueue.main, latest: true)
-                .sink { [weak self] (frame, screen) in
+                .sink { [weak self] frame, screen in
                     guard let self else {
                         return
                     }
@@ -149,22 +149,20 @@ final class BarlineShelfPanel: NSPanel {
                     return originForRightOfScreen
                 }
 
-                return CGPoint(x: (location.x - frame.width / 2).clamped(to: lowerBound...upperBound), y: originY)
+                return CGPoint(x: (location.x - frame.width / 2).clamped(to: lowerBound ... upperBound), y: originY)
             case .barlineIcon:
                 let lowerBound = screen.frame.minX
                 let upperBound = screen.frame.maxX - frame.width
 
                 guard
                     lowerBound <= upperBound,
-                    let controlItem = appState.itemManager.itemCache.managedItems.first(matching: .visibleControlItem),
-                    // Bridging API is more reliable than controlItem.frame in some
-                    // cases (like if the item is offscreen).
-                    let itemBounds = Bridging.getWindowBounds(for: controlItem.windowID)
+                    let controlItem = appState.itemManager.itemCache.managedItems.first(matching: .visibleControlItem)
                 else {
                     return originForRightOfScreen
                 }
+                let itemBounds = controlItem.bounds
 
-                return CGPoint(x: (itemBounds.midX - frame.width / 2).clamped(to: lowerBound...upperBound), y: originY)
+                return CGPoint(x: (itemBounds.midX - frame.width / 2).clamped(to: lowerBound ... upperBound), y: originY)
             }
         }
 
@@ -356,7 +354,9 @@ final class BarlineShelfPanel: NSPanel {
 // MARK: - BarlineShelfHostingView
 
 private final class BarlineShelfHostingView: NSHostingView<BarlineShelfContentView> {
-    override var safeAreaInsets: NSEdgeInsets { NSEdgeInsets() }
+    override var safeAreaInsets: NSEdgeInsets {
+        NSEdgeInsets()
+    }
 
     private let displayID: CGDirectDisplayID
     private let section: MenuBarSection.Name
@@ -368,7 +368,7 @@ private final class BarlineShelfHostingView: NSHostingView<BarlineShelfContentVi
         section: MenuBarSection.Name,
         isPreparing: Bool
     ) {
-        self.displayID = screen.displayID
+        displayID = screen.displayID
         self.section = section
         let rootView = BarlineShelfContentView(
             appState: appState,
@@ -404,17 +404,17 @@ private final class BarlineShelfHostingView: NSHostingView<BarlineShelfContentVi
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
+    required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
     @available(*, unavailable)
-    required init(rootView: BarlineShelfContentView) {
+    required init(rootView _: BarlineShelfContentView) {
         fatalError("init(rootView:) has not been implemented")
     }
 
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        return true
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
     }
 }
 
@@ -459,7 +459,7 @@ private struct BarlineShelfContentView: View {
         guard let menuBarHeight = screen.getMenuBarHeight() else {
             return nil
         }
-        if configuration.shapeKind != .noShape && configuration.isInset && screen.hasNotch {
+        if configuration.shapeKind != .noShape, configuration.isInset, screen.hasNotch {
             return menuBarHeight - appState.appearanceManager.menuBarInsetAmount * 2
         }
         return menuBarHeight
@@ -544,7 +544,7 @@ private struct BarlineShelfContentView: View {
         } else {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
-                    ForEach(items, id: \.windowID) { item in
+                    ForEach(items, id: \.stableID) { item in
                         BarlineShelfItemView(
                             imageCache: imageCache,
                             itemManager: itemManager,
@@ -576,14 +576,14 @@ private struct BarlineShelfItemView: View {
     let section: MenuBarSection.Name
 
     private var leftClickAction: () -> Void {
-        return { [weak itemManager, weak menuBarManager] in
+        { [weak itemManager, weak menuBarManager] in
             guard let itemManager, let menuBarManager else {
                 return
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
                 try await Task.sleep(for: .milliseconds(25))
-                if Bridging.isWindowOnScreen(item.windowID) {
+                if item.isOnScreen {
                     try await itemManager.click(item: item, with: .left)
                 } else {
                     await itemManager.temporarilyShow(item: item, clickingWith: .left)
@@ -593,14 +593,14 @@ private struct BarlineShelfItemView: View {
     }
 
     private var rightClickAction: () -> Void {
-        return { [weak itemManager, weak menuBarManager] in
+        { [weak itemManager, weak menuBarManager] in
             guard let itemManager, let menuBarManager else {
                 return
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
                 try await Task.sleep(for: .milliseconds(25))
-                if Bridging.isWindowOnScreen(item.windowID) {
+                if item.isOnScreen {
                     try await itemManager.click(item: item, with: .right)
                 } else {
                     await itemManager.temporarilyShow(item: item, clickingWith: .right)
@@ -658,11 +658,11 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
             self.leftClickAction = leftClickAction
             self.rightClickAction = rightClickAction
             super.init(frame: .zero)
-            self.toolTip = item.displayName
+            toolTip = item.displayName
         }
 
         @available(*, unavailable)
-        required init?(coder: NSCoder) {
+        required init?(coder _: NSCoder) {
             fatalError("init(coder:) has not been implemented")
         }
 
@@ -706,7 +706,7 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
     let leftClickAction: () -> Void
     let rightClickAction: () -> Void
 
-    func makeNSView(context: Context) -> NSView {
+    func makeNSView(context _: Context) -> NSView {
         Represented(
             item: item,
             leftClickAction: leftClickAction,
@@ -714,5 +714,5 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
         )
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) { }
+    func updateNSView(_: NSView, context _: Context) {}
 }

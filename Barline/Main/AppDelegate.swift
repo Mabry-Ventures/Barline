@@ -13,13 +13,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: NSApplicationDelegate Methods
 
-    func applicationWillFinishLaunching(_ notification: Notification) {
+    func applicationWillFinishLaunching(_: Notification) {
         // Initial chore work.
         NSSplitViewItem.swizzle()
         MigrationManager(appState: appState).migrateAll()
     }
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    func applicationDidFinishLaunching(_: Notification) {
         // Hide the main menu's items to add additional space to the
         // menu bar when we are the focused app.
         for item in NSApp.mainMenu?.items ?? [] {
@@ -28,13 +28,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Allow hiding the mouse while the app is in the background
         // to make menu bar item movement less jarring.
-        Bridging.setConnectionProperty(true, forKey: "SetsCursorInBackground")
+        Task {
+            await BarlineMenuService.Connection.shared.configureCursorInBackground(true)
+        }
 
         #if DEBUG
-        // Don't perform setup if running as a preview.
-        if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
-            return
-        }
+            // Don't perform setup if running as a preview.
+            if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
+                return
+            }
         #endif
 
         // Depending on the permissions state, either perform setup
@@ -52,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         Logger.default.debug("Handling reopen")
         openSettingsWindow()
         return true
@@ -70,8 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
-        return true
+    func applicationSupportsSecureRestorableState(_: NSApplication) -> Bool {
+        true
     }
 
     // MARK: Other Methods

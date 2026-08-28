@@ -4,6 +4,7 @@
 //
 
 import BarlineCore
+import CoreGraphics
 import Foundation
 import OSLog
 
@@ -70,6 +71,70 @@ extension BarlineMenuService {
             _ = try result.value()
         }
 
+        func capture(_ items: [MenuBarItemID]) async throws -> [MenuBarCapturedImage] {
+            guard case let .capturedImages(result) = await send(.capture(items)) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func captureBackground(
+            displayID: CGDirectDisplayID,
+            sampleHeight: CGFloat? = nil
+        ) async throws -> MenuBarBackgroundCapture {
+            guard case let .background(result) = await send(
+                .captureBackground(
+                    displayID: displayID,
+                    sampleHeight: sampleHeight.map(Double.init)
+                )
+            ) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func environment() async throws -> MenuBarEnvironmentSnapshot {
+            guard case let .environment(result) = await send(.environment) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func configureCursorInBackground(_ enabled: Bool) async {
+            _ = await send(.configureCursorInBackground(enabled))
+        }
+
+        func pointContext(at point: CGPoint) async throws -> MenuBarPointContext {
+            guard case let .pointContext(result) = await send(
+                .pointContext(MenuBarPoint(x: point.x, y: point.y))
+            ) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func beginRevealObservation(
+            for item: MenuBarItemID
+        ) async throws -> MenuBarRevealObservationToken {
+            guard case let .revealObservation(result) = await send(.beginRevealObservation(item)) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func revealObservationIsVisible(
+            _ token: MenuBarRevealObservationToken
+        ) async throws -> Bool {
+            guard case let .boolean(result) = await send(.revealObservationIsVisible(token)) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
+        func endRevealObservation(_ token: MenuBarRevealObservationToken) async {
+            _ = await send(.endRevealObservation(token))
+        }
+
         func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
             guard case let .mutation(result) = await send(.restore(snapshot)) else {
                 throw MenuBarBackendError.interrupted
@@ -91,22 +156,6 @@ extension BarlineMenuService {
         func restart() async {
             session.cancel(reason: "Explicit compatibility restart")
             _ = await send(.restart)
-        }
-
-        func sourcePID(for window: WindowInfo) async -> pid_t? {
-            guard case let .sourcePID(pid) = await send(.sourcePID(window)) else {
-                logger.error("Source PID request returned an invalid response")
-                return nil
-            }
-            return pid
-        }
-
-        func sendLegacy(_ request: LegacyRequest) -> LegacyResponse? {
-            guard case let .legacy(response) = session.send(request: .legacy(request)) else {
-                logger.error("Legacy compatibility request returned an invalid response")
-                return nil
-            }
-            return response
         }
 
         private func send(_ request: Request) async -> Response? {
@@ -150,6 +199,7 @@ extension BarlineMenuService {
             qos: .userInteractive,
             attributes: .concurrent
         )
+        private let recoveryScheduled = OSAllocatedUnfairLock(initialState: false)
         private let logger: Logger
 
         init(logger: Logger) {
@@ -216,6 +266,7 @@ extension BarlineMenuService {
                     state.generation &+= 1
                     state.session = nil
                 }
+                scheduleRecovery()
             }
             session.setPeerRequirement(.isFromSameTeam())
             session.setTargetQueue(callbackQueue)
@@ -232,6 +283,33 @@ extension BarlineMenuService {
                 throw MenuBarBackendError.interrupted
             }
             return (session, generation)
+        }
+
+        private func scheduleRecovery() {
+            let shouldSchedule = recoveryScheduled.withLock { scheduled in
+                guard !scheduled else { return false }
+                scheduled = true
+                return true
+            }
+            guard shouldSchedule else { return }
+            performRecoveryAttempt(0)
+        }
+
+        private func performRecoveryAttempt(_ attempt: Int) {
+            let boundedAttempt = min(max(attempt, 0), 3)
+            let delay = 0.1 * pow(2, Double(boundedAttempt))
+            transportQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                if case .start? = performSend(request: .start) {
+                    recoveryScheduled.withLock { $0 = false }
+                    logger.notice("Compatibility service recovered after interruption")
+                } else if boundedAttempt < 3 {
+                    performRecoveryAttempt(boundedAttempt + 1)
+                } else {
+                    recoveryScheduled.withLock { $0 = false }
+                    logger.error("Compatibility service recovery attempts were exhausted")
+                }
+            }
         }
     }
 }

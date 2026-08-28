@@ -5,6 +5,7 @@
 
 import Cocoa
 import Combine
+import ImageIO
 import OSLog
 
 /// Cache for menu bar item images.
@@ -49,9 +50,6 @@ final class MenuBarItemImageCache: ObservableObject {
 
     /// Queue to run cache operations.
     private let queue = DispatchQueue(label: "MenuBarItemImageCache", qos: .background)
-
-    /// Image capture options.
-    private let captureOption: CGWindowImageOption = [.boundsIgnoreFraming, .bestResolution]
 
     /// The shared app state.
     private weak var appState: AppState?
@@ -114,79 +112,36 @@ final class MenuBarItemImageCache: ObservableObject {
 
     /// Captures a composite image of the given items, then crops out an image
     /// for each item and returns the result.
-    private func compositeCapture(_ items: [MenuBarItem], scale: CGFloat) -> CaptureResult {
-        var result = CaptureResult()
-
-        var windowIDs = [CGWindowID]()
-        var storage = [CGWindowID: (MenuBarItem, CGRect)]()
-        var boundsUnion = CGRect.null
-
-        for item in items {
-            let windowID = item.windowID
-
-            // Don't use `item.bounds`, it could be out of date.
-            guard let bounds = Bridging.getWindowBounds(for: windowID) else {
-                result.excluded.append(item)
-                continue
-            }
-
-            windowIDs.append(windowID)
-            storage[windowID] = (item, bounds)
-            boundsUnion = boundsUnion.union(bounds)
-        }
-
-        guard
-            let compositeImage = ScreenCapture.captureWindows(with: windowIDs, option: captureOption),
-            CGFloat(compositeImage.width) == boundsUnion.width * scale, // Safety check.
-            !compositeImage.isTransparent()
-        else {
-            result.excluded = items // Exclude all items.
-            return result
-        }
-
-        // Crop out each item from the composite.
-        for windowID in windowIDs {
-            guard let (item, bounds) = storage[windowID] else {
-                continue
-            }
-
-            let cropRect = CGRect(
-                x: (bounds.origin.x - boundsUnion.origin.x) * scale,
-                y: (bounds.origin.y - boundsUnion.origin.y) * scale,
-                width: bounds.width * scale,
-                height: bounds.height * scale
-            )
-
-            guard
-                let image = compositeImage.cropping(to: cropRect),
-                !image.isTransparent()
-            else {
-                result.excluded.append(item)
-                continue
-            }
-
-            result.images[item.tag] = CapturedImage(cgImage: image, scale: scale)
-        }
-
-        return result
+    private func compositeCapture(_ items: [MenuBarItem], scale: CGFloat) async -> CaptureResult {
+        await captureStableItems(items, scale: scale)
     }
 
     /// Captures an image of each of the given items individually, then
     /// returns the result.
-    private func individualCapture(_ items: [MenuBarItem], scale: CGFloat) -> CaptureResult {
-        var result = CaptureResult()
+    private func individualCapture(_ items: [MenuBarItem], scale: CGFloat) async -> CaptureResult {
+        await captureStableItems(items, scale: scale)
+    }
 
-        for item in items {
+    private func captureStableItems(_ items: [MenuBarItem], scale: CGFloat) async -> CaptureResult {
+        var result = CaptureResult()
+        let itemByID = Dictionary(uniqueKeysWithValues: items.map { ($0.stableID, $0) })
+        let captures = await (try? BarlineMenuService.Connection.shared.capture(
+            items.map(\.stableID)
+        )) ?? []
+        let capturedIDs = Set(captures.map(\.itemID))
+
+        for capture in captures {
             guard
-                let image = ScreenCapture.captureWindow(with: item.windowID, option: captureOption),
+                let item = itemByID[capture.itemID],
+                let source = CGImageSourceCreateWithData(capture.pngData as CFData, nil),
+                let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
                 !image.isTransparent()
             else {
-                result.excluded.append(item)
                 continue
             }
             result.images[item.tag] = CapturedImage(cgImage: image, scale: scale)
         }
-
+        result.excluded = items.filter { !capturedIDs.contains($0.stableID) }
         return result
     }
 
@@ -196,10 +151,10 @@ final class MenuBarItemImageCache: ObservableObject {
         // doesn't account for overlapping items.
         if appState.itemManager.lastMoveOperationOccurred(within: .seconds(2)) {
             logger.debug("Capturing individually due to recent item movement")
-            return individualCapture(items, scale: scale)
+            return await individualCapture(items, scale: scale)
         }
 
-        let compositeResult = compositeCapture(items, scale: scale)
+        let compositeResult = await compositeCapture(items, scale: scale)
 
         if compositeResult.excluded.isEmpty {
             return compositeResult // All items captured successfully.
@@ -212,7 +167,7 @@ final class MenuBarItemImageCache: ObservableObject {
             """
         )
 
-        var individualResult = individualCapture(compositeResult.excluded, scale: scale)
+        var individualResult = await individualCapture(compositeResult.excluded, scale: scale)
 
         // Merge the successfully captured images from each result. Keep excluded
         // items as part of the result, so they can be logged elsewhere.

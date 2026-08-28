@@ -3,396 +3,101 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
-import os.lock
 
-/// A structural representation of a menu bar item.
-struct MenuBarItem: CustomStringConvertible {
-    /// The tag associated with this item.
+/// The app-side projection of a helper-validated menu bar item.
+///
+/// Stable domain identity is the only identity retained outside the helper.
+/// Geometry and process metadata are observational snapshot values and are
+/// refreshed before helper-side operations.
+struct MenuBarItem: CustomStringConvertible, Equatable, Hashable {
+    let stableID: MenuBarItemID
     let tag: MenuBarItemTag
-
-    /// The item's window identifier.
-    let windowID: CGWindowID
-
-    /// The identifier of the process that owns the item.
     let ownerPID: pid_t
-
-    /// The identifier of the process that created the item.
     let sourcePID: pid_t?
-
-    /// The item's bounds, specified in screen coordinates.
     let bounds: CGRect
-
-    /// The item's window title.
     let title: String?
-
-    /// A Boolean value that indicates whether the item is on screen.
     let isOnScreen: Bool
+    let isMovable: Bool
+    let canBeHidden: Bool
+    let isControlItem: Bool
+    let isBentoBox: Bool
+    let isSystemClone: Bool
+    let isResponsive: Bool
+    let displayName: String
 
-    /// A Boolean value that indicates whether this item can be moved.
-    var isMovable: Bool {
-        tag.isMovable
-    }
-
-    /// A Boolean value that indicates whether this item can be hidden.
-    var canBeHidden: Bool {
-        tag.canBeHidden
-    }
-
-    /// A Boolean value that indicates whether this item is one of Barline's
-    /// control items.
-    var isControlItem: Bool {
-        tag.isControlItem
-    }
-
-    /// A Boolean value that indicates whether this item is a "BentoBox"
-    /// item owned by the Control Center.
-    var isBentoBox: Bool {
-        tag.isBentoBox
-    }
-
-    /// A Boolean value that indicates whether this item is a
-    /// system-created clone of an actual item, and therefore invalid
-    /// for management.
-    var isSystemClone: Bool {
-        tag.isSystemClone
-    }
-
-    /// The application that owns the item.
-    ///
-    /// - Note: In macOS 26 and later, this property always returns the
-    ///   Control Center. To get the actual application that created the
-    ///   item, use ``sourceApplication``.
     var owningApplication: NSRunningApplication? {
-        NSRunningApplication(processIdentifier: ownerPID)
+        guard ownerPID > 0 else { return nil }
+        return NSRunningApplication(processIdentifier: ownerPID)
     }
 
-    /// The application that created the item.
-    ///
-    /// - Note: Prior to macOS 26, this property and ``owningApplication``
-    ///   are functionally equivalent.
     var sourceApplication: NSRunningApplication? {
-        guard let sourcePID else {
-            return nil
-        }
+        guard let sourcePID, sourcePID > 0 else { return nil }
         return NSRunningApplication(processIdentifier: sourcePID)
     }
 
-    // TODO: Generate this once, during initialization.
-    /// A name associated with the item, suited for display.
-    var displayName: String {
-        /// Converts "UpperCamelCase" to "Title Case".
-        ///
-        /// Ignores cases where a single lowercase letter immediately
-        /// precedes an uppercase letter (i.e. "WiFi").
-        func toTitleCase<S: StringProtocol>(_ s: S) -> String {
-            String(s).replacing(/([a-z]{2})([A-Z])/) { $0.output.1 + " " + $0.output.2 }
-        }
-
-        guard !isControlItem else {
-            return Constants.displayName
-        }
-
-        lazy var fallbackName = "Menu Bar Item"
-
-        guard let sourceApplication else {
-            return fallbackName
-        }
-
-        lazy var sourceName = sourceApplication.localizedName ?? sourceApplication.bundleIdentifier
-
-        guard let title else {
-            return sourceName ?? fallbackName
-        }
-
-        lazy var bestName = sourceName ?? title
-
-        guard !isBentoBox else {
-            if tag == .controlCenter {
-                return bestName
-            }
-            return title
-        }
-
-        // Most items use their computed "best name", but we handle
-        // a few special cases for system items.
-        let displayName = switch tag.namespace {
-        case .passwords, .weather, .textInputMenuAgent:
-            // "PasswordsMenuBarExtra" -> "Passwords"
-            // "WeatherMenu" -> "Weather"
-            // "TextInputMenuAgent" -> "Text Input"
-            toTitleCase(bestName.replacing(/Menu.*/, with: ""))
-        case .controlCenter:
-            if let match = title.prefixMatch(of: /Hearing/) {
-                // Changed from "Hearing" to "Hearing_GlowE" in macOS 15.4
-                toTitleCase(match.output)
-            } else {
-                toTitleCase(title)
-            }
-        case .systemUIServer:
-            if let match = title.firstMatch(of: /TimeMachine/) {
-                // Sonoma:  "TimeMachine.TMMenuExtraHost"
-                // Sequoia: "TimeMachineMenuExtra.TMMenuExtraHost"
-                // Tahoe:   "com.apple.menuextra.TimeMachine"
-                toTitleCase(match.output)
-            } else {
-                toTitleCase(title)
-            }
-        default:
-            bestName
-        }
-
-        // Provide some extra context if the name is just a UUID.
-        if UUID(uuidString: displayName) != nil, let sourceName {
-            return "\(sourceName) (\(displayName))"
-        }
-
-        return displayName
-    }
-
-    /// A textual representation of the item.
     var description: String {
         "\(displayName) (\(tag))"
     }
 
-    /// A string to use for logging purposes.
     var logString: String {
-        "<\(tag) (windowID: \(windowID))>"
+        "<\(tag) (stableID: \(stableID))>"
     }
 
-    /// Creates a menu bar item without checks.
-    ///
-    /// This initializer does not perform validity checks on its parameters.
-    /// Only call it if you are certain the window is a valid menu bar item.
-    private init(uncheckedItemWindow itemWindow: WindowInfo) {
-        self.tag = MenuBarItemTag(uncheckedItemWindow: itemWindow)
-        self.windowID = itemWindow.windowID
-        self.ownerPID = itemWindow.ownerPID
-        self.sourcePID = itemWindow.ownerPID
-        self.bounds = itemWindow.bounds
-        self.title = itemWindow.title
-        self.isOnScreen = itemWindow.isOnScreen
-    }
-
-    /// Creates a menu bar item without checks.
-    ///
-    /// This initializer does not perform validity checks on its parameters.
-    /// Only call it if you are certain the window is a valid menu bar item
-    /// and the source pid belongs to the application that created it.
-    @available(macOS 26.0, *)
-    private init(uncheckedItemWindow itemWindow: WindowInfo, sourcePID: pid_t?) {
-        self.tag = MenuBarItemTag(uncheckedItemWindow: itemWindow, sourcePID: sourcePID)
-        self.windowID = itemWindow.windowID
-        self.ownerPID = itemWindow.ownerPID
-        self.sourcePID = sourcePID
-        self.bounds = itemWindow.bounds
-        self.title = itemWindow.title
-        self.isOnScreen = itemWindow.isOnScreen
+    init(descriptor: MenuBarItemDescriptor) {
+        stableID = descriptor.id
+        tag = MenuBarItemTag(
+            namespace: .optional(descriptor.tagNamespace ?? descriptor.id.bundleIdentifier),
+            title: descriptor.title ?? descriptor.id.title ?? ""
+        )
+        ownerPID = descriptor.ownerProcessIdentifier.map { pid_t($0) } ?? 0
+        sourcePID = descriptor.sourceProcessIdentifier.map { pid_t($0) }
+        bounds = CGRect(descriptor.bounds)
+        title = descriptor.title
+        isOnScreen = descriptor.isOnScreen
+        isMovable = descriptor.isMovable
+        canBeHidden = descriptor.canBeHidden
+        isControlItem = descriptor.isBarlineControlItem
+        isBentoBox = descriptor.isBentoBox
+        isSystemClone = descriptor.isSystemClone
+        isResponsive = descriptor.isResponsive
+        displayName = descriptor.displayName
     }
 }
 
 // MARK: - MenuBarItem List
 
 extension MenuBarItem {
-    /// Options that specify the menu bar items in a list.
     struct ListOption: OptionSet {
         let rawValue: Int
 
-        /// Specifies menu bar items that are currently on screen.
         static let onScreen = ListOption(rawValue: 1 << 0)
-
-        /// Specifies menu bar items on the currently active space.
         static let activeSpace = ListOption(rawValue: 1 << 1)
     }
 
-    /// Creates and returns a list of menu bar items windows for the given display.
-    ///
-    /// - Parameters:
-    ///   - display: An identifier for a display. Pass `nil` to return the menu bar
-    ///     item windows across all available displays.
-    ///   - option: Options that filter the returned list. Pass an empty option set
-    ///     to return all available menu bar item windows.
-    static func getMenuBarItemWindows(on display: CGDirectDisplayID? = nil, option: ListOption) -> [WindowInfo] {
-        var bridgingOption: Bridging.MenuBarWindowListOption = .itemsOnly
-        var displayBoundsPredicate: (CGWindowID) -> Bool = { _ in true }
-
-        if let display {
-            bridgingOption.insert(.onScreen)
-            let displayBounds = CGDisplayBounds(display)
-            displayBoundsPredicate = { windowID in
-                Bridging.windowIntersectsDisplayBounds(windowID, displayBounds)
-            }
-        } else if option.contains(.onScreen) {
-            bridgingOption.insert(.onScreen)
-        }
-        if option.contains(.activeSpace) {
-            bridgingOption.insert(.activeSpace)
-        }
-
-        return Bridging.getMenuBarWindowList(option: bridgingOption)
-            .reversed().compactMap { windowID in
-                guard
-                    displayBoundsPredicate(windowID),
-                    let window = WindowInfo(windowID: windowID)
-                else {
-                    return nil
+    static func getMenuBarItems(
+        on display: CGDirectDisplayID? = nil,
+        option: ListOption
+    ) async -> [MenuBarItem] {
+        do {
+            let snapshot = try await BarlineMenuService.Connection.shared.snapshot()
+            let displayBounds = display.map(CGDisplayBounds)
+            return snapshot.items
+                .filter { descriptor in
+                    (!option.contains(.onScreen) || descriptor.isOnScreen) &&
+                        displayBounds.map { $0.intersects(CGRect(descriptor.bounds)) } != false
                 }
-                return window
-            }
-    }
-
-    /// Creates and returns a list of menu bar items using experimental
-    /// source pid retrieval for macOS 26.
-    @available(macOS 26.0, *)
-    private static func getMenuBarItemsExperimental(on display: CGDirectDisplayID?, option: ListOption) async -> [MenuBarItem] {
-        var items = [MenuBarItem]()
-        for window in getMenuBarItemWindows(on: display, option: option) {
-            let sourcePID = await BarlineMenuService.Connection.shared.sourcePID(for: window)
-            let item = MenuBarItem(uncheckedItemWindow: window, sourcePID: sourcePID)
-            items.append(item)
-        }
-        return items
-    }
-
-    /// Creates and returns a list of menu bar items, defaulting to the
-    /// legacy source pid behavior, prior to macOS 26.
-    private static func getMenuBarItemsLegacyMethod(on display: CGDirectDisplayID?, option: ListOption) -> [MenuBarItem] {
-        getMenuBarItemWindows(on: display, option: option).map { window in
-            MenuBarItem(uncheckedItemWindow: window)
-        }
-    }
-
-    /// Creates and returns a list of menu bar items for the given display.
-    ///
-    /// - Parameters:
-    ///   - display: An identifier for a display. Pass `nil` to return the menu bar
-    ///     items across all available displays.
-    ///   - option: Options that filter the returned list. Pass an empty option set
-    ///     to return all available menu bar items.
-    static func getMenuBarItems(on display: CGDirectDisplayID? = nil, option: ListOption) async -> [MenuBarItem] {
-        if #available(macOS 26.0, *) {
-            await getMenuBarItemsExperimental(on: display, option: option)
-        } else {
-            getMenuBarItemsLegacyMethod(on: display, option: option)
+                .sorted { $0.order < $1.order }
+                .map(MenuBarItem.init)
+        } catch {
+            return []
         }
     }
 }
 
-// MARK: MenuBarItem: Equatable
-extension MenuBarItem: Equatable {
-    static func == (lhs: MenuBarItem, rhs: MenuBarItem) -> Bool {
-        lhs.tag == rhs.tag &&
-        lhs.windowID == rhs.windowID &&
-        lhs.ownerPID == rhs.ownerPID &&
-        lhs.sourcePID == rhs.sourcePID &&
-        NSStringFromRect(lhs.bounds) == NSStringFromRect(rhs.bounds) &&
-        lhs.title == rhs.title &&
-        lhs.isOnScreen == rhs.isOnScreen
-    }
-}
-
-// MARK: MenuBarItem: Hashable
-extension MenuBarItem: Hashable {
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(tag)
-        hasher.combine(windowID)
-        hasher.combine(ownerPID)
-        hasher.combine(sourcePID)
-        hasher.combine(NSStringFromRect(bounds))
-        hasher.combine(title)
-        hasher.combine(isOnScreen)
-    }
-}
-
-// MARK: - MenuBarItemTag Helper
-
-private extension MenuBarItemTag {
-    /// Creates a tag without checks.
-    ///
-    /// This initializer does not perform validity checks on its parameters.
-    /// Only call it if you are certain the window is a valid menu bar item.
-    init(uncheckedItemWindow itemWindow: WindowInfo) {
-        self.namespace = Namespace(uncheckedItemWindow: itemWindow)
-        self.title = itemWindow.title ?? ""
-    }
-
-    /// Creates a tag without checks.
-    ///
-    /// This initializer does not perform validity checks on its parameters.
-    /// Only call it if you are certain the window is a valid menu bar item
-    /// and the source pid belongs to the application that created it.
-    @available(macOS 26.0, *)
-    init(uncheckedItemWindow itemWindow: WindowInfo, sourcePID: pid_t?) {
-        self.namespace = Namespace(uncheckedItemWindow: itemWindow, sourcePID: sourcePID)
-        self.title = itemWindow.title ?? ""
-    }
-}
-
-// MARK: - MenuBarItemTag.Namespace Helper
-
-private extension MenuBarItemTag.Namespace {
-    /// Exact window titles assigned to Barline's three control items.
-    private static let barlineControlItemTitles: Set<String> = [
-        "Barline.ControlItem.Visible",
-        "Barline.ControlItem.Hidden",
-        "Barline.ControlItem.AlwaysHidden",
-    ]
-
-    /// Stable fallback identifiers for windows whose source process is unknown.
-    ///
-    /// Menu bar item discovery performs concurrent XPC lookups on macOS 26, so
-    /// this shared cache must not be accessed as an unprotected dictionary.
-    private static let uuidCache = OSAllocatedUnfairLock(initialState: [CGWindowID: UUID]())
-
-    /// Creates a namespace without checks.
-    ///
-    /// This initializer does not perform validity checks on its parameters.
-    /// Only call it if you are certain the window is a valid menu bar item.
-    init(uncheckedItemWindow itemWindow: WindowInfo) {
-        // Most apps have a bundle ID, but we should be able to handle apps
-        // that don't. We should also be able to handle daemons and helpers,
-        // which are more likely not to have a bundle ID.
-        //
-        // Use the name of the owning process as a fallback. The non-localized
-        // name seems less likely to change, so let's prefer it as a (somewhat)
-        // stable identifier.
-        if let app = itemWindow.owningApplication {
-            self = .optional(app.bundleIdentifier ?? itemWindow.ownerName ?? app.localizedName)
-        } else {
-            self = .optional(itemWindow.ownerName)
-        }
-    }
-
-    /// Creates a namespace without checks.
-    ///
-    /// This initializer does not perform validity checks on its parameters.
-    /// Only call it if you are certain the window is a valid menu bar item
-    /// and the source pid belongs to the application that created it.
-    @available(macOS 26.0, *)
-    init(uncheckedItemWindow itemWindow: WindowInfo, sourcePID: pid_t?) {
-        // Most apps have a bundle ID, but we should be able to handle apps
-        // that don't. We should also be able to handle daemons and helpers,
-        // which are more likely not to have a bundle ID.
-        if let sourcePID, let app = NSRunningApplication(processIdentifier: sourcePID) {
-            self = .optional(app.bundleIdentifier ?? app.localizedName)
-        } else if
-            let title = itemWindow.title,
-            Self.barlineControlItemTitles.contains(title)
-        {
-            // macOS 26 reparents status item windows to Control Center. Barline's
-            // own LSUIElement process may then be absent from AXExtrasMenuBar,
-            // while the exact autosave title remains intact.
-            self = .barline
-        } else {
-            let uuid = Self.uuidCache.withLock { cache in
-                if let uuid = cache[itemWindow.windowID] {
-                    return uuid
-                }
-                let uuid = UUID()
-                cache[itemWindow.windowID] = uuid
-                return uuid
-            }
-            self = .uuid(uuid)
-        }
+private extension CGRect {
+    init(_ rect: MenuBarRect) {
+        self.init(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
     }
 }

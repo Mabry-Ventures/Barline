@@ -26,7 +26,7 @@ extension Bundle {
     /// cannot be found for either key, this accessor returns `nil`.
     var displayName: String? {
         object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ??
-        object(forInfoDictionaryKey: "CFBundleName") as? String
+            object(forInfoDictionaryKey: "CFBundleName") as? String
     }
 
     /// The bundle's version string.
@@ -67,7 +67,6 @@ extension CGColor {
 // MARK: - CGImage
 
 extension CGImage {
-
     // MARK: Color Averaging
 
     /// Options that effect how colors are processed when computing
@@ -91,7 +90,7 @@ extension CGImage {
     ///   - option: Options for computing the color.
     func averageColor(using colorSpace: CGColorSpace? = nil, alphaThreshold: CGFloat = 0.5, option: ColorAveragingOption = []) -> CGColor? {
         func createPixelData(width: Int, height: Int, colorSpace: CGColorSpace) -> [UInt32]? {
-            guard width > 0 && height > 0 else {
+            guard width > 0, height > 0 else {
                 return nil
             }
             var data = [UInt32](repeating: 0, count: width * height)
@@ -136,13 +135,13 @@ extension CGImage {
         }
 
         // Convert the alpha threshold to a valid component for comparison.
-        let alphaThreshold = UInt64((alphaThreshold.clamped(to: 0...1) * 255).rounded(.toNearestOrAwayFromZero))
+        let alphaThreshold = UInt64((alphaThreshold.clamped(to: 0 ... 1) * 255).rounded(.toNearestOrAwayFromZero))
 
         var count = UInt64(width * height)
         var totals: (r: UInt64, g: UInt64, b: UInt64, a: UInt64) = (0, 0, 0, 0)
 
-        for column in 0..<width {
-            for row in 0..<height {
+        for column in 0 ..< width {
+            for row in 0 ..< height {
                 let pixel = pixelData[(row * width) + column]
 
                 // Check alpha before computing other components.
@@ -221,8 +220,8 @@ extension CGImage {
             self.cgContext = cgContext
             self.data = data
             self.zeroByteBlock = zeroByteBlock
-            self.rowRange = 0..<image.height
-            self.columnRange = 0..<image.width
+            rowRange = 0 ..< image.height
+            columnRange = 0 ..< image.width
         }
 
         deinit {
@@ -354,7 +353,7 @@ extension CGImage {
 
 // MARK: - Collection where Element == MenuBarItem
 
-extension Collection where Element == MenuBarItem {
+extension Collection<MenuBarItem> {
     /// Returns the first index where the menu bar item matching the specified
     /// tag appears in the collection.
     func firstIndex(matching tag: MenuBarItemTag) -> Index? {
@@ -509,10 +508,7 @@ extension NSScreen {
 
     /// The screen with the active menu bar.
     static var screenWithActiveMenuBar: NSScreen? {
-        guard let displayID = Bridging.getActiveMenuBarDisplayID() else {
-            return nil
-        }
-        return screens.first { $0.displayID == displayID }
+        main ?? screens.first
     }
 
     /// The display identifier of the screen.
@@ -545,8 +541,7 @@ extension NSScreen {
 
     /// Returns the height of the menu bar on this screen.
     func getMenuBarHeight() -> CGFloat? {
-        let menuBarWindow = WindowInfo.menuBarWindow(for: displayID)
-        return menuBarWindow?.bounds.height
+        max(NSStatusBar.system.thickness, safeAreaInsets.top)
     }
 
     /// Returns the frame of the application menu on this screen.
@@ -627,7 +622,7 @@ extension Publisher {
 
     /// Publishes only non-`nil` elements.
     func removeNil<T>() -> Publishers.CompactMap<Self, T> where Output == T? {
-        compactMap { $0 }
+        compactMap(\.self)
     }
 
     /// Publishes only elements that don't match the previous element.
@@ -690,7 +685,7 @@ extension RangeReplaceableCollection where Element == MenuBarItem {
 
 // MARK: - Sequence where Element == MenuBarItem
 
-extension Sequence where Element == MenuBarItem {
+extension Sequence<MenuBarItem> {
     /// Returns the first menu bar item that matches the specified tag.
     func first(matching tag: MenuBarItemTag) -> MenuBarItem? {
         first { $0.tag == tag }

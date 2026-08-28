@@ -9,10 +9,11 @@ actor TahoeMenuBarBackend: MenuBarBackend {
         self.client = client
         capabilities = MenuBarCapabilities(
             canSnapshot: client.behavioralProbe(),
-            canMove: client.behavioralProbe(),
-            canReveal: client.behavioralProbe(),
-            canActivate: client.behavioralProbe(),
-            canRestore: client.behavioralProbe()
+            canMove: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canReveal: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canActivate: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canRestore: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canCapture: client.behavioralProbe()
         )
     }
 
@@ -23,20 +24,51 @@ actor TahoeMenuBarBackend: MenuBarBackend {
         return try client.snapshot()
     }
 
-    func move(_ operation: MenuBarMoveOperation) throws -> MenuBarMutationResult {
-        try client.move(operation)
+    func move(_ operation: MenuBarMoveOperation) async throws -> MenuBarMutationResult {
+        try await client.move(operation)
     }
 
-    func reveal(_ item: MenuBarItemID) throws -> MenuBarMutationResult {
-        try client.reveal(item)
+    func reveal(_ item: MenuBarItemID) async throws -> MenuBarMutationResult {
+        try await client.reveal(item)
     }
 
-    func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) throws {
-        try client.activate(item, button: button)
+    func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) async throws {
+        try await client.activate(item, button: button)
     }
 
-    func restore(_ snapshot: MenuBarSnapshot) throws -> MenuBarMutationResult {
-        try client.restore(snapshot)
+    func capture(_ items: [MenuBarItemID]) throws -> [MenuBarCapturedImage] {
+        try client.capture(items)
+    }
+
+    func captureBackground(
+        displayID: UInt32,
+        sampleHeight: Double?
+    ) throws -> MenuBarBackgroundCapture {
+        try client.captureBackground(displayID: displayID, sampleHeight: sampleHeight)
+    }
+
+    func environment() -> MenuBarEnvironmentSnapshot {
+        client.environment()
+    }
+
+    func pointContext(_ point: MenuBarPoint) throws -> MenuBarPointContext {
+        try client.pointContext(point)
+    }
+
+    func beginRevealObservation(_ item: MenuBarItemID) throws -> MenuBarRevealObservationToken {
+        try client.beginRevealObservation(item)
+    }
+
+    func revealObservationIsVisible(_ token: MenuBarRevealObservationToken) -> Bool {
+        client.revealObservationIsVisible(token)
+    }
+
+    func endRevealObservation(_ token: MenuBarRevealObservationToken) {
+        client.endRevealObservation(token)
+    }
+
+    func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
+        try await client.restore(snapshot)
     }
 
     func health() -> MenuBarBackendHealth {
@@ -58,10 +90,11 @@ actor GoldenGateMenuBarBackend: MenuBarBackend {
         self.client = client
         capabilities = MenuBarCapabilities(
             canSnapshot: client.behavioralProbe(),
-            canMove: client.behavioralProbe(),
-            canReveal: client.behavioralProbe(),
-            canActivate: client.behavioralProbe(),
-            canRestore: client.behavioralProbe()
+            canMove: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canReveal: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canActivate: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canRestore: client.behavioralProbe() && client.eventSynthesisProbe(),
+            canCapture: client.behavioralProbe()
         )
     }
 
@@ -72,20 +105,51 @@ actor GoldenGateMenuBarBackend: MenuBarBackend {
         return try client.snapshot()
     }
 
-    func move(_ operation: MenuBarMoveOperation) throws -> MenuBarMutationResult {
-        try client.move(operation)
+    func move(_ operation: MenuBarMoveOperation) async throws -> MenuBarMutationResult {
+        try await client.move(operation)
     }
 
-    func reveal(_ item: MenuBarItemID) throws -> MenuBarMutationResult {
-        try client.reveal(item)
+    func reveal(_ item: MenuBarItemID) async throws -> MenuBarMutationResult {
+        try await client.reveal(item)
     }
 
-    func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) throws {
-        try client.activate(item, button: button)
+    func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) async throws {
+        try await client.activate(item, button: button)
     }
 
-    func restore(_ snapshot: MenuBarSnapshot) throws -> MenuBarMutationResult {
-        try client.restore(snapshot)
+    func capture(_ items: [MenuBarItemID]) throws -> [MenuBarCapturedImage] {
+        try client.capture(items)
+    }
+
+    func captureBackground(
+        displayID: UInt32,
+        sampleHeight: Double?
+    ) throws -> MenuBarBackgroundCapture {
+        try client.captureBackground(displayID: displayID, sampleHeight: sampleHeight)
+    }
+
+    func environment() -> MenuBarEnvironmentSnapshot {
+        client.environment()
+    }
+
+    func pointContext(_ point: MenuBarPoint) throws -> MenuBarPointContext {
+        try client.pointContext(point)
+    }
+
+    func beginRevealObservation(_ item: MenuBarItemID) throws -> MenuBarRevealObservationToken {
+        try client.beginRevealObservation(item)
+    }
+
+    func revealObservationIsVisible(_ token: MenuBarRevealObservationToken) -> Bool {
+        client.revealObservationIsVisible(token)
+    }
+
+    func endRevealObservation(_ token: MenuBarRevealObservationToken) {
+        client.endRevealObservation(token)
+    }
+
+    func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
+        try await client.restore(snapshot)
     }
 
     func health() -> MenuBarBackendHealth {
@@ -116,6 +180,17 @@ actor FallbackMenuBarBackend: MenuBarBackend {
 
     func activate(_: MenuBarItemID, button _: MenuBarMouseButton) throws {
         throw MenuBarBackendError.unavailableCapability("activate")
+    }
+
+    func capture(_: [MenuBarItemID]) throws -> [MenuBarCapturedImage] {
+        throw MenuBarBackendError.unavailableCapability("capture")
+    }
+
+    func captureBackground(
+        displayID _: UInt32,
+        sampleHeight _: Double?
+    ) throws -> MenuBarBackgroundCapture {
+        throw MenuBarBackendError.unavailableCapability("background capture")
     }
 
     func restore(_: MenuBarSnapshot) throws -> MenuBarMutationResult {

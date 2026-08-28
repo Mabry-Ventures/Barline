@@ -34,8 +34,17 @@ final class WindowServerClient: @unchecked Sendable {
         var value: UInt64 = 0
     }
 
+    private struct RevealObservation {
+        let sourcePID: pid_t
+        let preexistingWindowIDs: Set<CGWindowID>
+        var interfaceWindowID: CGWindowID?
+    }
+
     private let resolver: DynamicSymbolResolver
     private let generation = OSAllocatedUnfairLock(initialState: GenerationState())
+    private let revealObservations = OSAllocatedUnfairLock(
+        initialState: [MenuBarRevealObservationToken: RevealObservation]()
+    )
 
     init(resolver: DynamicSymbolResolver = DynamicSymbolResolver()) {
         self.resolver = resolver
@@ -56,6 +65,22 @@ final class WindowServerClient: @unchecked Sendable {
         return enumerateMenuBarWindows() != nil
     }
 
+    func eventSynthesisProbe() -> Bool {
+        guard
+            let source = CGEventSource(stateID: .hidSystemState),
+            CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseDown,
+                mouseCursorPosition: .zero,
+                mouseButton: .left
+            ) != nil,
+            CGEventField(rawValue: 0x33) != nil
+        else {
+            return false
+        }
+        return true
+    }
+
     func snapshot() throws -> MenuBarSnapshot {
         guard let windows = enumerateMenuBarWindows() else {
             throw MenuBarBackendError.unavailableCapability("menu bar snapshot")
@@ -73,15 +98,57 @@ final class WindowServerClient: @unchecked Sendable {
             return MenuBarDisplayID(CFUUIDCreateString(nil, uuid) as String)
         })
 
+        let classified = classifiedWindows(windows)
+        let identifiers = identifiedWindows(windows)
         let descriptors = windows.enumerated().map { index, window in
-            let itemID = stableID(for: window)
+            let itemID = identifiers[index].id
+            let sourcePID = sourcePID(for: window)
+            let application = NSRunningApplication(
+                processIdentifier: sourcePID ?? window.ownerPID
+            )
+            let tagNamespace = tagNamespace(
+                for: window,
+                sourceApplication: application
+            )
+            let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isControlItem = tagNamespace.caseInsensitiveCompare(
+                "com.mabryventures.Barline"
+            ) == .orderedSame
+            let semanticFlags = semanticFlags(
+                namespace: tagNamespace,
+                title: title ?? "",
+                isControlItem: isControlItem
+            )
             return MenuBarItemDescriptor(
                 id: itemID,
-                section: window.isOnScreen ? .visible : .hidden,
+                section: classified[index].section,
                 order: index,
                 displayID: displayID(containing: window.bounds),
                 isSystemItem: itemID.bundleIdentifier.hasPrefix("com.apple."),
-                isBarlineControlItem: itemID.bundleIdentifier == "com.mabryventures.barline"
+                isBarlineControlItem: isControlItem,
+                tagNamespace: tagNamespace,
+                title: title,
+                displayName: displayName(
+                    for: window,
+                    application: application,
+                    isControlItem: isControlItem
+                ),
+                ownerProcessIdentifier: window.ownerPID,
+                sourceProcessIdentifier: sourcePID,
+                bounds: MenuBarRect(
+                    x: window.bounds.origin.x,
+                    y: window.bounds.origin.y,
+                    width: window.bounds.width,
+                    height: window.bounds.height
+                ),
+                isOnScreen: window.isOnScreen,
+                isMovable: semanticFlags.isMovable,
+                canBeHidden: semanticFlags.canBeHidden,
+                isBentoBox: semanticFlags.isBentoBox,
+                isSystemClone: semanticFlags.isSystemClone,
+                isResponsive: !Bridging.isProcessUnresponsive(
+                    sourcePID ?? window.ownerPID
+                )
             )
         }
 
@@ -99,45 +166,216 @@ final class WindowServerClient: @unchecked Sendable {
         )
     }
 
-    func move(_ operation: MenuBarMoveOperation) throws -> MenuBarMutationResult {
-        let windows = try currentWindows()
-        guard let item = windows.first(where: { stableID(for: $0) == operation.itemID }) else {
-            throw MenuBarBackendError.staleItem(operation.itemID)
+    func move(_ operation: MenuBarMoveOperation) async throws -> MenuBarMutationResult {
+        let maximumAttempts = 8
+        var lastOrigin: CGPoint?
+        for attempt in 0 ..< maximumAttempts {
+            let windows = try currentWindows()
+            let identified = identifiedWindows(windows)
+            guard let item = identified.first(where: { $0.id == operation.itemID })?.window else {
+                throw MenuBarBackendError.staleItem(operation.itemID)
+            }
+            let candidates = classifiedWindows(windows)
+                .filter { $0.section == operation.section }
+                .map(\.window)
+            guard !candidates.isEmpty else {
+                throw MenuBarBackendError.operationFailed("No destination item is available")
+            }
+            let targetIndex = min(max(operation.index, 0), candidates.count - 1)
+            let target = candidates[targetIndex]
+            lastOrigin = item.bounds.origin
+            try await synthesizeDrag(item: item, target: target)
+            let delay = min(25 + (attempt * 20), 150)
+            try await Task.sleep(for: .milliseconds(delay))
+            let refreshed = try currentWindows()
+            if let moved = identifiedWindows(refreshed)
+                .first(where: { $0.id == operation.itemID })?.window,
+                moved.bounds.origin != lastOrigin
+            {
+                break
+            }
+            if attempt == maximumAttempts - 1 {
+                throw MenuBarBackendError.operationFailed("Menu bar item did not respond to move")
+            }
         }
-        let candidates = windows.filter { ($0.isOnScreen ? MenuBarSection.visible : .hidden) == operation.section }
-        guard !candidates.isEmpty else {
-            throw MenuBarBackendError.operationFailed("No destination item is available")
-        }
-        let targetIndex = min(max(operation.index, 0), candidates.count - 1)
-        let target = candidates[targetIndex]
-        try synthesizeDrag(item: item, target: target)
         let updated = try snapshot()
         return MenuBarMutationResult(generation: updated.generation, changedItemIDs: [operation.itemID])
     }
 
-    func reveal(_ itemID: MenuBarItemID) throws -> MenuBarMutationResult {
+    func reveal(_ itemID: MenuBarItemID) async throws -> MenuBarMutationResult {
         let windows = try currentWindows()
-        guard windows.contains(where: { stableID(for: $0) == itemID }) else {
+        guard identifiedWindows(windows).contains(where: { $0.id == itemID }) else {
             throw MenuBarBackendError.staleItem(itemID)
         }
         let visibleCount = windows.count(where: \.isOnScreen)
-        return try move(MenuBarMoveOperation(itemID: itemID, section: .visible, index: visibleCount - 1))
+        return try await move(MenuBarMoveOperation(itemID: itemID, section: .visible, index: visibleCount - 1))
     }
 
-    func activate(_ itemID: MenuBarItemID, button: MenuBarMouseButton) throws {
+    func activate(_ itemID: MenuBarItemID, button: MenuBarMouseButton) async throws {
         let windows = try currentWindows()
-        guard let item = windows.first(where: { stableID(for: $0) == itemID }) else {
+        guard let item = identifiedWindows(windows).first(where: { $0.id == itemID })?.window else {
             throw MenuBarBackendError.staleItem(itemID)
         }
         let sourcePID = WindowInfo(windowID: item.identifier)
             .flatMap { SourcePIDCache.shared.pid(for: $0) }
-        try synthesizeClick(item: item, pid: sourcePID ?? item.ownerPID, button: button)
+        try await synthesizeClick(item: item, pid: sourcePID ?? item.ownerPID, button: button)
     }
 
-    func restore(_ priorSnapshot: MenuBarSnapshot) throws -> MenuBarMutationResult {
+    func capture(_ itemIDs: [MenuBarItemID]) throws -> [MenuBarCapturedImage] {
+        guard !itemIDs.isEmpty, itemIDs.count <= 512 else {
+            throw MenuBarBackendError.operationFailed("Invalid capture item count")
+        }
+        let windows = try currentWindows()
+        let records = Dictionary(uniqueKeysWithValues: identifiedWindows(windows).map { ($0.id, $0.window) })
+        return itemIDs.compactMap { itemID in
+            guard
+                let window = records[itemID],
+                let data = WindowCaptureService.capturePNG(
+                    windowIDs: [window.identifier],
+                    screenBounds: nil,
+                    options: CGWindowImageOption.boundsIgnoreFraming.rawValue |
+                        CGWindowImageOption.bestResolution.rawValue
+                )
+            else {
+                return nil
+            }
+            return MenuBarCapturedImage(
+                itemID: itemID,
+                pngData: data,
+                bounds: MenuBarRect(
+                    x: window.bounds.origin.x,
+                    y: window.bounds.origin.y,
+                    width: window.bounds.width,
+                    height: window.bounds.height
+                )
+            )
+        }
+    }
+
+    func captureBackground(
+        displayID: UInt32,
+        sampleHeight: Double?
+    ) throws -> MenuBarBackgroundCapture {
+        let displayBounds = CGDisplayBounds(CGDirectDisplayID(displayID))
+        guard
+            let dictionaries = CGWindowListCopyWindowInfo(
+                .optionOnScreenOnly,
+                kCGNullWindowID
+            ) as? [[CFString: Any]]
+        else {
+            throw MenuBarBackendError.unavailableCapability("window scene enumeration")
+        }
+        let windows = dictionaries.compactMap(WindowRecord.init)
+        guard let menuBar = windows.first(where: { window in
+            window.ownerName == "Window Server" &&
+                window.layer == kCGMainMenuWindowLevel &&
+                window.title == "Menubar" &&
+                displayBounds.contains(window.bounds)
+        }) else {
+            throw MenuBarBackendError.operationFailed("No validated menu bar scene")
+        }
+        let wallpaper = windows.first { window in
+            let application = NSRunningApplication(processIdentifier: window.ownerPID)
+            return application?.bundleIdentifier == "com.apple.dock" &&
+                window.title?.hasPrefix("Wallpaper") == true &&
+                displayBounds.contains(window.bounds)
+        }
+        var captureBounds = menuBar.bounds
+        if let sampleHeight {
+            guard sampleHeight.isFinite, sampleHeight > 0 else {
+                throw MenuBarBackendError.operationFailed("Invalid background sample height")
+            }
+            captureBounds.size.height = min(CGFloat(sampleHeight), menuBar.bounds.height)
+        }
+        let identifiers = [menuBar.identifier, wallpaper?.identifier].compactMap(\.self)
+        let data = WindowCaptureService.capturePNG(
+            windowIDs: identifiers,
+            screenBounds: captureBounds,
+            options: CGWindowImageOption.nominalResolution.rawValue
+        )
+        return MenuBarBackgroundCapture(
+            displayID: displayID,
+            menuBarBounds: MenuBarRect(
+                x: menuBar.bounds.origin.x,
+                y: menuBar.bounds.origin.y,
+                width: menuBar.bounds.width,
+                height: menuBar.bounds.height
+            ),
+            pngData: data
+        )
+    }
+
+    func environment() -> MenuBarEnvironmentSnapshot {
+        let activeSpace = Bridging.getActiveSpaceID()
+        return MenuBarEnvironmentSnapshot(
+            activeDisplayID: Bridging.getActiveMenuBarDisplayID(),
+            activeSpaceToken: activeSpace,
+            activeSpaceIsFullscreen: Bridging.isSpaceFullscreen(activeSpace)
+        )
+    }
+
+    func pointContext(_ point: MenuBarPoint) throws -> MenuBarPointContext {
+        let location = CGPoint(x: point.x, y: point.y)
+        let isInsideItem = try currentWindows().contains { window in
+            window.isOnScreen && window.bounds.contains(location)
+        }
+        let window = WindowInfo.createWindows(option: .onScreen)
+            .filter { $0.layer < CGWindowLevelForKey(.cursorWindow) }
+            .first { $0.bounds.contains(location) && $0.title?.isEmpty == false }
+        let application = window?.owningApplication
+        return MenuBarPointContext(
+            isInsideMenuBarItem: isInsideItem,
+            applicationBundleIdentifier: application?.bundleIdentifier,
+            applicationIsActive: application?.isActive ?? false,
+            applicationUsesRegularActivationPolicy: application?.activationPolicy == .regular
+        )
+    }
+
+    func beginRevealObservation(_ itemID: MenuBarItemID) throws -> MenuBarRevealObservationToken {
+        let menuBarWindows = try currentWindows()
+        guard let item = identifiedWindows(menuBarWindows).first(where: { $0.id == itemID })?.window else {
+            throw MenuBarBackendError.staleItem(itemID)
+        }
+        let pid = sourcePID(for: item) ?? item.ownerPID
+        let existing = Set(WindowInfo.createWindows(option: .onScreen).map(\.windowID))
+        let token = MenuBarRevealObservationToken()
+        revealObservations.withLock { observations in
+            observations[token] = RevealObservation(
+                sourcePID: pid,
+                preexistingWindowIDs: existing,
+                interfaceWindowID: nil
+            )
+        }
+        return token
+    }
+
+    func revealObservationIsVisible(_ token: MenuBarRevealObservationToken) -> Bool {
+        let windows = WindowInfo.createWindows(option: .onScreen)
+        return revealObservations.withLock { observations in
+            guard var observation = observations[token] else { return false }
+            if let interfaceWindowID = observation.interfaceWindowID {
+                return windows.contains { $0.windowID == interfaceWindowID && $0.isOnScreen }
+            }
+            guard let interface = windows.first(where: { window in
+                window.ownerPID == observation.sourcePID &&
+                    !observation.preexistingWindowIDs.contains(window.windowID)
+            }) else {
+                return false
+            }
+            observation.interfaceWindowID = interface.windowID
+            observations[token] = observation
+            return true
+        }
+    }
+
+    func endRevealObservation(_ token: MenuBarRevealObservationToken) {
+        revealObservations.withLock { $0[token] = nil }
+    }
+
+    func restore(_ priorSnapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
         var changed = [MenuBarItemID]()
         for descriptor in priorSnapshot.items.sorted(by: { $0.order < $1.order }) {
-            _ = try move(
+            _ = try await move(
                 MenuBarMoveOperation(
                     itemID: descriptor.id,
                     section: descriptor.section,
@@ -203,8 +441,7 @@ final class WindowServerClient: @unchecked Sendable {
     }
 
     private func stableID(for window: WindowRecord) -> MenuBarItemID {
-        let sourcePID = WindowInfo(windowID: window.identifier)
-            .flatMap { SourcePIDCache.shared.pid(for: $0) }
+        let sourcePID = sourcePID(for: window)
         let app = NSRunningApplication(processIdentifier: sourcePID ?? window.ownerPID)
         let bundleIdentifier = app?.bundleIdentifier ?? window.ownerName ?? "unknown.window-owner"
         let stableTitle = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -220,11 +457,119 @@ final class WindowServerClient: @unchecked Sendable {
         )
     }
 
+    private func identifiedWindows(
+        _ windows: [WindowRecord]
+    ) -> [(window: WindowRecord, id: MenuBarItemID)] {
+        let baseIDs = windows.map(stableID)
+        let totals = Dictionary(grouping: baseIDs, by: { $0 }).mapValues(\.count)
+        var occurrences = [MenuBarItemID: Int]()
+        return zip(windows, baseIDs).map { window, baseID in
+            let occurrence = occurrences[baseID, default: 0]
+            occurrences[baseID] = occurrence + 1
+            guard totals[baseID, default: 0] > 1 else {
+                return (window, baseID)
+            }
+            return (
+                window,
+                MenuBarItemID(
+                    bundleIdentifier: baseID.bundleIdentifier,
+                    accessibilityIdentifier: baseID.accessibilityIdentifier,
+                    title: baseID.title,
+                    alias: "occurrence-\(occurrence)",
+                    fallbackFingerprint: baseID.fallbackFingerprint
+                )
+            )
+        }
+    }
+
+    private func classifiedWindows(
+        _ windows: [WindowRecord]
+    ) -> [(window: WindowRecord, section: MenuBarSection)] {
+        let hidden = windows.first { $0.title == "Barline.ControlItem.Hidden" }
+        let alwaysHidden = windows.first { $0.title == "Barline.ControlItem.AlwaysHidden" }
+        return windows.map { window in
+            let section: MenuBarSection = switch window.title {
+            case "Barline.ControlItem.AlwaysHidden": .alwaysHidden
+            case "Barline.ControlItem.Hidden": .hidden
+            case "Barline.ControlItem.Visible": .visible
+            default:
+                if let alwaysHidden, window.bounds.maxX <= alwaysHidden.bounds.minX {
+                    .alwaysHidden
+                } else if let hidden, window.bounds.maxX <= hidden.bounds.minX {
+                    .hidden
+                } else {
+                    .visible
+                }
+            }
+            return (window, section)
+        }
+    }
+
+    private func sourcePID(for window: WindowRecord) -> pid_t? {
+        WindowInfo(windowID: window.identifier)
+            .flatMap { SourcePIDCache.shared.pid(for: $0) }
+    }
+
+    private func tagNamespace(
+        for window: WindowRecord,
+        sourceApplication: NSRunningApplication?
+    ) -> String {
+        if let namespace = sourceApplication?.bundleIdentifier ?? sourceApplication?.localizedName {
+            return namespace
+        }
+        if let title = window.title,
+           Self.barlineControlTitles.contains(title)
+        {
+            return "com.mabryventures.Barline"
+        }
+        return window.ownerName ?? "unknown.window-owner"
+    }
+
+    private func displayName(
+        for window: WindowRecord,
+        application: NSRunningApplication?,
+        isControlItem: Bool
+    ) -> String {
+        if isControlItem {
+            return "Barline"
+        }
+        let sourceName = application?.localizedName ?? application?.bundleIdentifier
+        let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let title, !title.isEmpty {
+            return title
+        }
+        return sourceName ?? "Menu Bar Item"
+    }
+
+    private func semanticFlags(
+        namespace: String,
+        title: String,
+        isControlItem _: Bool
+    ) -> (isMovable: Bool, canBeHidden: Bool, isBentoBox: Bool, isSystemClone: Bool) {
+        let normalizedNamespace = namespace.lowercased()
+        let isControlCenter = normalizedNamespace == "com.apple.controlcenter"
+        let isBentoBox = isControlCenter && title.hasPrefix("BentoBox")
+        let isClock = isControlCenter && title == "Clock"
+        let isSystemClone = title == "System Status Item Clone" &&
+            !normalizedNamespace.hasPrefix("com.apple.")
+        let isImmovable = isClock || isBentoBox
+        let explicitlyNonHideable = isControlCenter && [
+            "AudioVideoModule",
+            "FaceTime",
+        ].contains(title)
+        return (
+            isMovable: !isImmovable,
+            canBeHidden: !isImmovable && !explicitlyNonHideable,
+            isBentoBox: isBentoBox,
+            isSystemClone: isSystemClone
+        )
+    }
+
     private func synthesizeClick(
         item: WindowRecord,
         pid: pid_t,
         button: MenuBarMouseButton
-    ) throws {
+    ) async throws {
         let mouseButton: CGMouseButton = switch button {
         case .left: .left
         case .right: .right
@@ -241,14 +586,23 @@ final class WindowServerClient: @unchecked Sendable {
         else {
             throw MenuBarBackendError.unavailableCapability("menu bar event synthesis")
         }
-        for event in [down, up] {
+        let cursorLocation = CGEvent(source: nil)?.location
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+        defer {
+            if let cursorLocation {
+                CGWarpMouseCursorPosition(cursorLocation)
+            }
+            CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+        }
+        for event in [down, up, up] {
             event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
             event.setIntegerValueField(windowField, value: Int64(item.identifier))
             event.postToPid(pid)
+            try await Task.sleep(for: .milliseconds(15))
         }
     }
 
-    private func synthesizeDrag(item: WindowRecord, target: WindowRecord) throws {
+    private func synthesizeDrag(item: WindowRecord, target: WindowRecord) async throws {
         let start = CGPoint(x: item.bounds.midX, y: item.bounds.midY)
         let end = CGPoint(x: target.bounds.midX, y: target.bounds.midY)
         let pid = WindowInfo(windowID: item.identifier)
@@ -262,10 +616,25 @@ final class WindowServerClient: @unchecked Sendable {
         else {
             throw MenuBarBackendError.unavailableCapability("menu bar drag synthesis")
         }
-        for event in [down, drag, up] {
+        down.flags = .maskCommand
+        let cursorLocation = CGEvent(source: nil)?.location
+        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+        defer {
+            if let cursorLocation {
+                CGWarpMouseCursorPosition(cursorLocation)
+            }
+            CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+        }
+        for (event, identifier) in [(down, item.identifier), (drag, item.identifier), (up, target.identifier), (up, target.identifier)] {
             event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-            event.setIntegerValueField(windowField, value: Int64(item.identifier))
+            event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(identifier))
+            event.setIntegerValueField(
+                .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+                value: Int64(identifier)
+            )
+            event.setIntegerValueField(windowField, value: Int64(identifier))
             event.postToPid(pid)
+            try await Task.sleep(for: .milliseconds(15))
         }
     }
 
@@ -324,6 +693,12 @@ final class WindowServerClient: @unchecked Sendable {
         "CGSGetProcessMenuBarWindowList",
         "CGSGetWindowLevel",
         "CGSGetActiveSpace",
+    ]
+
+    private static let barlineControlTitles: Set<String> = [
+        "Barline.ControlItem.Visible",
+        "Barline.ControlItem.Hidden",
+        "Barline.ControlItem.AlwaysHidden",
     ]
 }
 

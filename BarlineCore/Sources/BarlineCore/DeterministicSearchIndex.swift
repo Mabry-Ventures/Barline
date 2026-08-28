@@ -80,29 +80,38 @@ public struct DeterministicSearchIndex: Sendable {
         let terms = SearchText.queryTerms(query)
         guard !normalizedQuery.isEmpty, !terms.isEmpty, limit > 0 else { return [] }
 
-        return records.values.compactMap { record in
-            score(record, normalizedQuery: normalizedQuery, terms: terms, now: now)
+        var similarityCache = [SimilarityKey: Double]()
+        return records.values.compactMap { record -> ScoredResult? in
+            guard let result = score(
+                record,
+                normalizedQuery: normalizedQuery,
+                terms: terms,
+                now: now,
+                similarityCache: &similarityCache
+            ) else {
+                return nil
+            }
+            return ScoredResult(result: result, normalizedTitle: record.title)
         }
         .sorted { lhs, rhs in
-            if lhs.score != rhs.score {
-                return lhs.score > rhs.score
+            if lhs.result.score != rhs.result.score {
+                return lhs.result.score > rhs.result.score
             }
-            let lhsTitle = SearchText.normalize(lhs.document.title)
-            let rhsTitle = SearchText.normalize(rhs.document.title)
-            if lhsTitle != rhsTitle {
-                return lhsTitle < rhsTitle
+            if lhs.normalizedTitle != rhs.normalizedTitle {
+                return lhs.normalizedTitle < rhs.normalizedTitle
             }
-            return lhs.document.id.value < rhs.document.id.value
+            return lhs.result.document.id.value < rhs.result.document.id.value
         }
         .prefix(limit)
-        .map(\.self)
+        .map(\.result)
     }
 
     private func score(
         _ record: IndexedSearchDocument,
         normalizedQuery: String,
         terms: [String],
-        now: Date
+        now: Date,
+        similarityCache: inout [SimilarityKey: Double]
     ) -> SearchResult? {
         var score = 0.0
         var reasons = Set<SearchMatchReason>()
@@ -121,7 +130,11 @@ public struct DeterministicSearchIndex: Sendable {
             let expanded = synonymMap.expandedTerms(for: term)
             var best: FieldMatch?
             for candidate in expanded.sorted() {
-                if let match = record.bestMatch(for: candidate, originalTerm: term) {
+                if let match = record.bestMatch(
+                    for: candidate,
+                    originalTerm: term,
+                    similarityCache: &similarityCache
+                ) {
                     if let currentBest = best {
                         let isBetterScore = match.score > currentBest.score
                         let isPreferredTie = match.score == currentBest.score
@@ -181,11 +194,30 @@ private struct IndexedSearchDocument: Sendable {
             IndexedField(values: document.profileMemberships, reason: .profileMembership, weight: 26),
             IndexedField(values: document.synonyms, reason: .synonym, weight: 31),
             IndexedField(values: document.keywords, reason: .keyword, weight: 24),
-        ]
+        ].filter { !$0.values.isEmpty }
     }
 
-    func bestMatch(for term: String, originalTerm: String) -> FieldMatch? {
-        fields.compactMap { $0.match(term, originalTerm: originalTerm) }.max(by: { $0.score < $1.score })
+    func bestMatch(
+        for term: String,
+        originalTerm: String,
+        similarityCache: inout [SimilarityKey: Double]
+    ) -> FieldMatch? {
+        var best: FieldMatch?
+        for field in fields {
+            guard let match = field.match(
+                term,
+                originalTerm: originalTerm,
+                similarityCache: &similarityCache
+            ) else {
+                continue
+            }
+            if let bestMatch = best, match.score <= bestMatch.score {
+                continue
+            } else {
+                best = match
+            }
+        }
+        return best
     }
 }
 
@@ -202,7 +234,11 @@ private struct IndexedField: Sendable {
         self.weight = weight
     }
 
-    func match(_ term: String, originalTerm _: String) -> FieldMatch? {
+    func match(
+        _ term: String,
+        originalTerm _: String,
+        similarityCache: inout [SimilarityKey: Double]
+    ) -> FieldMatch? {
         if values.contains(term) || tokens.contains(term) {
             return FieldMatch(score: weight + 38, reason: reason, matchedTerm: term)
         }
@@ -215,7 +251,15 @@ private struct IndexedField: Sendable {
 
         guard term.count >= 3 else { return nil }
         let candidates = tokens.filter { abs($0.count - term.count) <= max(2, term.count / 3) }
-        let similarity = candidates.map { SearchDistance.similarity(term, $0) }.max() ?? 0
+        let similarity = candidates.map { candidate in
+            let key = SimilarityKey(term: term, candidate: candidate)
+            if let cached = similarityCache[key] {
+                return cached
+            }
+            let value = SearchDistance.similarity(term, candidate)
+            similarityCache[key] = value
+            return value
+        }.max() ?? 0
         guard similarity >= 0.67 else { return nil }
         return FieldMatch(score: weight + (similarity * 15), reason: .fuzzy, matchedTerm: term)
     }
@@ -225,6 +269,16 @@ private struct FieldMatch: Sendable {
     let score: Double
     let reason: SearchMatchReason
     let matchedTerm: String
+}
+
+private struct ScoredResult {
+    let result: SearchResult
+    let normalizedTitle: String
+}
+
+private struct SimilarityKey: Hashable {
+    let term: String
+    let candidate: String
 }
 
 private enum SearchDistance {
