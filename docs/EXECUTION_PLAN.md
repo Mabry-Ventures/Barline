@@ -13,8 +13,8 @@ gate result.
 | 4. Fixture and local CI | Lead; delegated validation | Implemented; XCUITest execution blocked | M3 | real fixture/test targets and test plan; unit/integration pass; automation mode needs administrator authorization |
 | 5. Profiles and Focus | Lead | Implemented locally; system execution pending | M3–4 | app-group store, atomic workspace/layout/presentation transactions, display reconnect aliases, operational groups/spacers, durable Focus journal, serialized activation/history, extension metadata; real Focus/Shortcuts requires signed runtime |
 | 6. Search and on-device interpretation | Lead | Complete for macOS 26 | M3–5 | deterministic panel ranking, bounded Spotlight synchronization, cross-display metadata, 164 Core tests; macOS 27 tool remains gated |
-| 7. UI and accessibility | Lead | Implemented; credentialed/manual passes pending | M3–6 | profile UI, fixture UI, diagnostics review/save, status-item smoke pass; AX/XCUITest/VoiceOver boundaries recorded |
-| 8. OS hardening | Lead | Headless exact pass; interactive/macOS 27 blocked | M3–7 | exact-head Debug, analyze, and test-plan compilation pass; runtime/soak gates remain unavailable on this host; Xcode/macOS 27 unavailable |
+| 7. UI and accessibility | Lead | Implemented; AX/XCUITest/manual passes pending | M3–6 | profile UI, fixture UI, diagnostics review/save, visible-window status-item smoke; the current host returns an invalid `AXWindows` payload and Developer Tools automation remains disabled |
+| 8. OS hardening | Lead | Interactive integration pass; exact candidate/macOS 27 pending | M3–7 | Debug/Release runtime smoke, 100-request production reopen burst, eight helper replacements, privacy, and performance pass during integration; exact-head full/soak rerun required; Xcode/macOS 27 unavailable |
 | 9. Distribution readiness | Lead | Exact unsigned dry-run passes; externally blocked | M0–8 | canonical repository, protected PR, exact-head unsigned archive/topology/GPL checks; App Group profiles, notarization, and Sparkle publication pending |
 
 ## External boundaries currently known
@@ -30,8 +30,9 @@ gate result.
   exists locally, but missing App Group provisioning prevents creation of the
   signed artifact required before notarization and feed publication.
 - Developer Tools automation mode is disabled; enabling it requires administrator authorization, so the compiled XCUITest target cannot execute on this host.
-- The invoking host has not been granted the Accessibility TCC permission
-  required by the runtime semantic audit.
+- The invoking host reports Accessibility trust, but its current AX runtime
+  exposes the fixture application object through `AXWindows` instead of the
+  on-screen fixture window, so the semantic tree audit remains unavailable.
 
 The lead owns all project-file, scheme, test-plan, configuration, entitlement,
 identifier, dependency, and integration changes. Delegated audits are advisory

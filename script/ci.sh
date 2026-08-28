@@ -48,6 +48,10 @@ STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 ARTIFACT_DIR="$ROOT/.artifacts/ci/$SHA/$MODE-$STARTED_AT"
 ARTIFACT_DIR="${ARTIFACT_DIR//:/-}"
 mkdir -p "$ARTIFACT_DIR/logs" "$ARTIFACT_DIR/results"
+# Keep runtime builds isolated to this exact CI invocation. The interactive
+# gates intentionally reuse this root, while standalone or overlapping runs
+# cannot remove incremental products underneath an active xcodebuild.
+export BARLINE_RUN_ROOT="$ARTIFACT_DIR/runtime"
 COMMANDS_FILE="$ARTIFACT_DIR/commands.tsv"
 FAILURES_FILE="$ARTIFACT_DIR/failures.txt"
 : > "$COMMANDS_FILE"

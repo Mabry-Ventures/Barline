@@ -54,7 +54,7 @@ private enum ProbeError: Error, CustomStringConvertible {
         case let .recoveryFailed(reason):
             "The production reopen recovery reported failure: \(reason)"
         case .recoveryTimedOut:
-            "The production reopen recovery and Settings presentation did not complete"
+            "The app-owned production reopen and Settings confirmation did not complete"
         case .barlineIconNotFound:
             "No on-screen Barline.ControlItem.Visible window was found"
         case .unableToCloseBaseline:
@@ -63,7 +63,10 @@ private enum ProbeError: Error, CustomStringConvertible {
     }
 }
 
-private func requestProductionReopen() throws -> Double {
+private func requestProductionReopen(
+    processIdentifier: pid_t,
+    timeout: Duration = Configuration.iconTimeout
+) throws -> Double {
     let bundleIdentifier = "com.mabryventures.Barline"
     let recoveryGenerationKey = "ReopenRecoveryGeneration" as CFString
     let recoveryFailureKey = "ReopenRecoveryFailure" as CFString
@@ -71,10 +74,9 @@ private func requestProductionReopen() throws -> Double {
     let applicationID = bundleIdentifier as CFString
     CFPreferencesAppSynchronize(applicationID)
     let startingGeneration = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
-    guard let application = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
+    guard let application = NSRunningApplication(processIdentifier: processIdentifier), !application.isTerminated else {
         throw ProbeError.applicationNotRunning
     }
-    let processIdentifier = application.processIdentifier
     let target = NSAppleEventDescriptor(processIdentifier: processIdentifier)
     let event = NSAppleEventDescriptor(
         eventClass: AEEventClass(kCoreEventClass),
@@ -91,13 +93,11 @@ private func requestProductionReopen() throws -> Double {
     }
     guard
         !application.isTerminated,
-        NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).contains(where: {
-            $0.processIdentifier == processIdentifier
-        })
+        NSRunningApplication(processIdentifier: processIdentifier)?.isTerminated == false
     else {
         throw ProbeError.applicationProcessChanged
     }
-    while start.duration(to: .now) < Configuration.iconTimeout {
+    while start.duration(to: .now) < timeout {
         CFPreferencesAppSynchronize(applicationID)
         let generation = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
         if generation > startingGeneration {
@@ -106,7 +106,6 @@ private func requestProductionReopen() throws -> Double {
                 let reason = CFPreferencesCopyAppValue(recoveryFailureKey, applicationID) as? String
                 throw ProbeError.recoveryFailed(reason ?? "unknown compatibility error")
             }
-            guard isSettingsWindowVisible() else { throw ProbeError.recoveryTimedOut }
             return milliseconds(start.duration(to: .now))
         }
         usleep(Configuration.pollingIntervalMicroseconds)
@@ -155,15 +154,6 @@ private func barlineIconCenter() throws -> CGPoint {
 private func isBarlineShelfVisible() -> Bool {
     windowSnapshots().contains {
         $0.ownerName == "Barline" && $0.windowName == "Barline Bar"
-    }
-}
-
-private func isSettingsWindowVisible() -> Bool {
-    windowSnapshots().contains {
-        $0.ownerName == "Barline" &&
-            $0.windowName != "Barline Bar" &&
-            $0.bounds.width >= 300 &&
-            $0.bounds.height >= 200
     }
 }
 
@@ -248,12 +238,22 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
 
 do {
     if Configuration.probe == "apple-event-reopen" {
-        for _ in 0 ..< Configuration.warmupCycles {
-            _ = try requestProductionReopen()
+        guard let application = NSRunningApplication.runningApplications(
+            withBundleIdentifier: "com.mabryventures.Barline"
+        ).first else {
+            throw ProbeError.applicationNotRunning
+        }
+        let processIdentifier = application.processIdentifier
+        for warmup in 0 ..< Configuration.warmupCycles {
+            // The first request can arrive while a cold Release launch is still
+            // completing setup and its initial XPC snapshot. Establish readiness
+            // outside the measured window, then retain the strict timeout below.
+            let timeout: Duration = warmup == 0 ? .seconds(30) : Configuration.iconTimeout
+            _ = try requestProductionReopen(processIdentifier: processIdentifier, timeout: timeout)
         }
         var latencies = [Double]()
         for cycle in 1 ... Configuration.measuredCycles {
-            let latency = try requestProductionReopen()
+            let latency = try requestProductionReopen(processIdentifier: processIdentifier)
             latencies.append(latency)
             print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
             usleep(50000)

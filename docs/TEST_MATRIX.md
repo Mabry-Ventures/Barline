@@ -12,11 +12,11 @@ under ignored `.artifacts/ci/<sha>/` directories.
 | Architecture firewall | Static boundary script | Implemented and passing |
 | Fixture regression | Script runs 20+ snapshot/state/profile/command cases and launches a configurable three-status-item app | Implemented |
 | Fixture app | Environment-configurable status items plus deterministic accessibility surface | Implemented as `BarlineFixture` |
-| XPC interruption | Local kill/relaunch probe | Passing in the 10-cycle integration soak; clean exact-head rerun required |
+| XPC interruption | Local kill/relaunch probe | 100 production reopen requests and eight helper replacements pass in integration; clean exact-head rerun required |
 | UI smoke | Exact-build visible-status-item probe plus compiled XCUITest target | Status-item smoke passes; XCUITest execution blocked by disabled Developer Tools automation mode |
-| Accessibility | Source assertions and fixture runtime AX label audit | Source/fixture build passes; host does not expose the fixture window through `AXWindows`, so runtime audit is unavailable |
+| Accessibility | Source assertions and fixture runtime AX label audit | Source/fixture build and on-screen fixture presentation pass; the host returns the application object through `AXWindows`, so the semantic runtime audit is unavailable |
 | Support-bundle privacy | Encoder content probes plus static logging/credential checks | Implemented and previously passing; exact-head rerun required |
-| Performance smoke | Shelf responsiveness probe | Integration 20/20 pass, 27.6 ms p95, 29.8 ms max; clean exact-head rerun required |
+| Performance smoke | Shelf responsiveness and app-owned production reopen probes | Integration 100/100 reopen pass, 30.3 ms p95, 34.6 ms max, plus eight recovery cycles; clean exact-head rerun required |
 | Soak | Repeated Core cycles plus XPC interruption and responsiveness | Integration 10-cycle pass; clean exact-head rerun required |
 | Release/install/update | Clean unsigned archive/topology gate | Exact-head unsigned archive passes; signed install/update externally blocked |
 
