@@ -197,6 +197,7 @@ public enum SearchCommandNonRunnableReason: String, Equatable, Sendable {
     case targetUnavailable
     case targetIsNotMovable
     case targetCannotBeHidden
+    case targetIsOffScreen
 }
 
 public enum SearchCommandExecutionDisposition: Equatable, Sendable {
@@ -240,9 +241,15 @@ public struct SearchCommandExecutionPolicy: Sendable {
         guard schemaDisposition == .executableImmediately else {
             return schemaDisposition
         }
-        guard command.operation == .show || command.operation == .hide else {
-            return schemaDisposition
+        if command.operation == .activate {
+            guard let itemID = command.targetItemIDs.first,
+                  let item = snapshot.items.first(where: { $0.id == itemID })
+            else {
+                return .nonRunnable(.targetUnavailable)
+            }
+            return item.isOnScreen ? schemaDisposition : .nonRunnable(.targetIsOffScreen)
         }
+        guard command.operation == .show || command.operation == .hide else { return schemaDisposition }
 
         for itemID in command.targetItemIDs {
             guard let item = snapshot.items.first(where: { $0.id == itemID }) else {

@@ -201,6 +201,19 @@ struct SearchCommandResolutionTests {
                 == .nonRunnable(.targetUnavailable)
         )
     }
+
+    @Test("Activation rejects an off-screen target instead of generating an unsafe click")
+    func activationRejectsOffScreenTarget() throws {
+        let fixture = SearchResolutionFixture()
+        let command = try fixture.validatedCommand(operation: .activate, itemIDs: [fixture.itemID])
+
+        #expect(
+            SearchCommandExecutionPolicy().disposition(
+                for: command,
+                in: fixture.snapshot(isOnScreen: false)
+            ) == .nonRunnable(.targetIsOffScreen)
+        )
+    }
 }
 
 private struct SearchResolutionFixture {
@@ -262,7 +275,8 @@ private struct SearchResolutionFixture {
     func snapshot(
         itemIDs: [MenuBarItemID]? = nil,
         isMovable: Bool = true,
-        canBeHidden: Bool = true
+        canBeHidden: Bool = true,
+        isOnScreen: Bool = true
     ) -> MenuBarSnapshot {
         let displayID = MenuBarDisplayID("display")
         return MenuBarSnapshot(
@@ -274,6 +288,7 @@ private struct SearchResolutionFixture {
                     section: .visible,
                     order: index,
                     displayID: displayID,
+                    isOnScreen: isOnScreen,
                     isMovable: isMovable,
                     canBeHidden: canBeHidden
                 )

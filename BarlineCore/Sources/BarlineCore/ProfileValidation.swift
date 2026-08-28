@@ -20,6 +20,7 @@ public enum ProfileValidationError: Error, Codable, Equatable, Sendable {
     case duplicateDisplay(MenuBarDisplayID)
     case emptyDisplayID
     case invalidAppearance
+    case unsupportedShelfBehavior
     case invalidAutoRehideDelay
     case invalidHotkey
     case duplicateProfile(UUID)
@@ -45,12 +46,18 @@ public struct ProfileValidator: Sendable {
         }
         guard profile.appearance.itemSpacing.isFinite,
               ProfileAppearance.itemSpacingRange.contains(profile.appearance.itemSpacing),
-              profile.appearance.gradientHex.count <= 8
+              profile.appearance.itemSpacing.rounded() == profile.appearance.itemSpacing,
+              profile.appearance.gradientHex.count <= 8,
+              profile.appearance.gradientHex.allSatisfy(isValidHexColor),
+              profile.appearance.tintHex.map(isValidHexColor) ?? true
         else {
             throw ProfileValidationError.invalidAppearance
         }
         guard profile.autoRehide.delaySeconds.isFinite, profile.autoRehide.delaySeconds >= 0 else {
             throw ProfileValidationError.invalidAutoRehideDelay
+        }
+        guard profile.shelfBehavior.followsActiveDisplay else {
+            throw ProfileValidationError.unsupportedShelfBehavior
         }
         if let hotkey = profile.hotkey {
             guard !hotkey.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -85,12 +92,13 @@ public struct ProfileValidator: Sendable {
     public func validate(_ workspace: ProfileWorkspaceState) throws {
         guard workspace.appearance.itemSpacing.isFinite,
               ProfileAppearance.itemSpacingRange.contains(workspace.appearance.itemSpacing),
+              workspace.appearance.itemSpacing.rounded() == workspace.appearance.itemSpacing,
               workspace.appearance.gradientHex.count <= 8,
               workspace.appearance.gradientHex.allSatisfy({
-                  $0.count <= ProfileCodec.maximumStringLength
+                  $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
               }),
               workspace.appearance.tintHex.map({
-                  $0.count <= ProfileCodec.maximumStringLength
+                  $0.count <= ProfileCodec.maximumStringLength && isValidHexColor($0)
               }) ?? true
         else {
             throw ProfileValidationError.invalidAppearance
@@ -100,6 +108,14 @@ public struct ProfileValidator: Sendable {
         else {
             throw ProfileValidationError.invalidAutoRehideDelay
         }
+        guard workspace.shelfBehavior.followsActiveDisplay else {
+            throw ProfileValidationError.unsupportedShelfBehavior
+        }
+    }
+
+    private func isValidHexColor(_ value: String) -> Bool {
+        guard value.count == 7 || value.count == 9, value.first == "#" else { return false }
+        return value.dropFirst().allSatisfy(\.isHexDigit)
     }
 
     private func validateLayout(

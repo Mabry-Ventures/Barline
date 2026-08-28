@@ -121,6 +121,31 @@ struct StateCoordinatorTests {
         #expect(await backend.restoredSnapshots == [before])
     }
 
+    @Test("Reveal rolls back when the target remains hidden")
+    func rejectsRevealNoOp() async throws {
+        let itemID = MenuBarItemID(
+            bundleIdentifier: "com.example.hidden",
+            accessibilityIdentifier: "hidden"
+        )
+        let layout = ProfileLayout(hidden: [itemID])
+        let before = makeProfileSnapshot(generation: 1, layout: layout)
+        let hiddenAfter = makeProfileSnapshot(generation: 2, layout: layout)
+        let verifiedRollback = makeProfileSnapshot(generation: 3, layout: layout)
+        let backend = FakeBackend(snapshots: [before, hiddenAfter, verifiedRollback])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.self) {
+            try await coordinator.perform(.reveal(itemID), now: hiddenAfter.capturedAt)
+        }
+
+        #expect(await coordinator.currentSnapshot == verifiedRollback)
+        #expect(await backend.restoredSnapshots == [before])
+    }
+
     @Test("Menu tracking blocks mutation before backend side effects")
     func blocksMenuTrackingMutation() async throws {
         let tracking = makeSnapshot(generation: 1, count: 2, menuTracking: true)
@@ -383,9 +408,10 @@ struct StateCoordinatorTests {
     @Test("Workspace settings commit and restore inside layout history")
     func restoresWorkspaceWithHistory() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
-        let after = makeSnapshot(generation: 2, count: 2)
-        let liveAfter = makeSnapshot(generation: 3, count: 2)
-        let restoredBefore = makeSnapshot(generation: 4, count: 2)
+        let freshBefore = makeSnapshot(generation: 2, count: 2)
+        let after = makeSnapshot(generation: 3, count: 2)
+        let liveAfter = makeSnapshot(generation: 4, count: 2)
+        let restoredBefore = makeSnapshot(generation: 5, count: 2)
         let profile = BarlineProfile(
             id: UUID(120),
             name: "Workspace",
@@ -405,7 +431,7 @@ struct StateCoordinatorTests {
             capture: { await recorder.capture() },
             apply: { try await recorder.apply($0) }
         )
-        let backend = FakeBackend(snapshots: [before, after, liveAfter, restoredBefore])
+        let backend = FakeBackend(snapshots: [before, freshBefore, after, liveAfter, restoredBefore])
         let coordinator = MenuBarStateCoordinator(
             backend: backend,
             retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
@@ -426,9 +452,113 @@ struct StateCoordinatorTests {
         #expect(await coordinator.activeProfileID == nil)
     }
 
+    @Test("Profile activation verifies the selected display before committing authority")
+    func rejectsProfileResultOnWrongDisplay() async throws {
+        let firstDisplay = MenuBarDisplayID("first-display")
+        let secondDisplay = MenuBarDisplayID("second-display")
+        let firstItem = MenuBarItemID(
+            bundleIdentifier: "com.example.first",
+            accessibilityIdentifier: "first"
+        )
+        let secondItem = MenuBarItemID(
+            bundleIdentifier: "com.example.second",
+            accessibilityIdentifier: "second"
+        )
+        func snapshot(_ generation: UInt64, swapped: Bool) -> MenuBarSnapshot {
+            MenuBarSnapshot(
+                generation: generation,
+                capturedAt: Date(),
+                items: [
+                    MenuBarItemDescriptor(
+                        id: firstItem,
+                        section: .visible,
+                        order: 0,
+                        displayID: swapped ? secondDisplay : firstDisplay,
+                        isOnScreen: true
+                    ),
+                    MenuBarItemDescriptor(
+                        id: secondItem,
+                        section: .visible,
+                        order: 1,
+                        displayID: swapped ? firstDisplay : secondDisplay,
+                        isOnScreen: true
+                    ),
+                ],
+                displayIDs: [firstDisplay, secondDisplay],
+                activeSpaceIsValid: true
+            )
+        }
+        let before = snapshot(1, swapped: false)
+        let wrongDisplayResult = snapshot(2, swapped: true)
+        let verifiedRollback = snapshot(3, swapped: false)
+        let profile = BarlineProfile(
+            id: UUID(124),
+            name: "First display",
+            layout: ProfileLayout(visible: [firstItem])
+        )
+        let backend = FakeBackend(snapshots: [before, wrongDisplayResult, verifiedRollback])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.self) {
+            try await coordinator.activate(
+                profile: profile,
+                on: firstDisplay,
+                now: wrongDisplayResult.capturedAt
+            )
+        }
+
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.currentSnapshot == verifiedRollback)
+        #expect(await backend.restoredSnapshots == [before])
+    }
+
+    @Test("A partially applied workspace failure restores and verifies both workspace and layout")
+    func rollsBackPartialWorkspaceFailure() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let freshBefore = makeSnapshot(generation: 2, count: 2)
+        let verifiedRollback = makeSnapshot(generation: 3, count: 2)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let targetProfile = BarlineProfile(
+            id: UUID(125),
+            name: "Target",
+            layout: ProfileLayout(visible: before.items.map(\.id)),
+            appearance: ProfileAppearance(itemSpacing: 4)
+        )
+        let recorder = WorkspaceRecorder(initial: original, partialFailApplyNumbers: [1])
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { try await recorder.apply($0) }
+        )
+        let backend = FakeBackend(snapshots: [before, freshBefore, verifiedRollback])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.self) {
+            try await coordinator.activate(
+                profile: targetProfile,
+                now: freshBefore.capturedAt,
+                workspaceTransaction: transaction
+            )
+        }
+
+        #expect(await recorder.capture() == original)
+        #expect(await recorder.values == [ProfileWorkspaceState(profile: targetProfile), original])
+        #expect(await backend.restoredSnapshots == [freshBefore])
+        #expect(await coordinator.currentSnapshot == verifiedRollback)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
     @Test("Unverified activation rollback clears current authority")
     func clearsAuthorityWhenActivationRollbackFails() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
+        let freshBefore = makeSnapshot(generation: 2, count: 2)
         let profile = BarlineProfile(
             id: UUID(121),
             name: "Rollback",
@@ -441,7 +571,7 @@ struct StateCoordinatorTests {
             apply: { try await recorder.apply($0) }
         )
         let backend = FakeBackend(
-            snapshots: [before, makeSnapshot(generation: 2, count: 2)],
+            snapshots: [before, freshBefore],
             failMoveAt: 1,
             restoreFailures: 1
         )
@@ -461,7 +591,7 @@ struct StateCoordinatorTests {
 
         #expect(await coordinator.currentSnapshot == nil)
         #expect(await coordinator.activeProfileID == nil)
-        #expect(await coordinator.lastKnownGoodSnapshot == before)
+        #expect(await coordinator.lastKnownGoodSnapshot == freshBefore)
     }
 
     @Test("Stored workspace checkpoints validate before side effects")
@@ -1237,11 +1367,17 @@ private actor WorkspaceRecorder {
     private var current: ProfileWorkspaceState
     private(set) var values = [ProfileWorkspaceState]()
     private let failApplyNumbers: Set<Int>
+    private let partialFailApplyNumbers: Set<Int>
     private var applyCount = 0
 
-    init(initial: ProfileWorkspaceState, failApplyNumbers: Set<Int> = []) {
+    init(
+        initial: ProfileWorkspaceState,
+        failApplyNumbers: Set<Int> = [],
+        partialFailApplyNumbers: Set<Int> = []
+    ) {
         current = initial
         self.failApplyNumbers = failApplyNumbers
+        self.partialFailApplyNumbers = partialFailApplyNumbers
     }
 
     func capture() -> ProfileWorkspaceState {
@@ -1255,6 +1391,9 @@ private actor WorkspaceRecorder {
         }
         current = value
         values.append(value)
+        if partialFailApplyNumbers.contains(applyCount) {
+            throw MenuBarBackendError.operationFailed("injected partial workspace failure")
+        }
     }
 }
 
@@ -1409,7 +1548,8 @@ private func makeSnapshot(
                 ),
                 section: .visible,
                 order: index,
-                displayID: display
+                displayID: display,
+                isOnScreen: true
             )
         },
         displayIDs: [display],
@@ -1433,7 +1573,8 @@ private func makeProfileSnapshot(
                 id: itemID,
                 section: section,
                 order: index,
-                displayID: display
+                displayID: display,
+                isOnScreen: section == .visible
             )
         }
     }

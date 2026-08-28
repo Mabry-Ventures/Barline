@@ -453,6 +453,11 @@ final class ProfileManager: ObservableObject {
                 alwaysHidden: ordered.filter { $0.section == .alwaysHidden }.map(\.id)
             ),
             appearance: ProfileAppearance(
+                tintHex: profileTintHex(from: appState.appearanceManager.configuration.current),
+                gradientHex: profileGradientHex(from: appState.appearanceManager.configuration.current),
+                showsBorder: appState.appearanceManager.configuration.current.hasBorder,
+                showsShadow: appState.appearanceManager.configuration.current.hasShadow,
+                shape: profileShape(from: appState.appearanceManager.configuration.shapeKind),
                 itemSpacing: min(
                     max(general.itemSpacingOffset, ProfileAppearance.itemSpacingRange.lowerBound),
                     ProfileAppearance.itemSpacingRange.upperBound
@@ -466,6 +471,7 @@ final class ProfileManager: ObservableObject {
             ),
             autoRehide: ProfileAutoRehide(
                 isEnabled: general.autoRehide,
+                strategy: profileRehideStrategy(from: general.rehideStrategy),
                 delaySeconds: max(0, general.rehideInterval)
             ),
             applicationMenuOverlapBehavior:
@@ -484,6 +490,7 @@ final class ProfileManager: ObservableObject {
         general.showOnScroll = workspace.revealTriggers.scroll
         general.itemSpacingOffset = workspace.appearance.itemSpacing
         general.autoRehide = workspace.autoRehide.isEnabled
+        general.rehideStrategy = rehideStrategy(from: workspace.autoRehide.strategy)
         general.rehideInterval = workspace.autoRehide.delaySeconds
         appState.settings.advanced.hideApplicationMenus =
             workspace.applicationMenuOverlapBehavior == .hideWhenNeeded
@@ -495,7 +502,14 @@ final class ProfileManager: ObservableObject {
         }
         let general = appState.settings.general
         return ProfileWorkspaceState(
-            appearance: ProfileAppearance(itemSpacing: general.itemSpacingOffset),
+            appearance: ProfileAppearance(
+                tintHex: profileTintHex(from: appState.appearanceManager.configuration.current),
+                gradientHex: profileGradientHex(from: appState.appearanceManager.configuration.current),
+                showsBorder: appState.appearanceManager.configuration.current.hasBorder,
+                showsShadow: appState.appearanceManager.configuration.current.hasShadow,
+                shape: profileShape(from: appState.appearanceManager.configuration.shapeKind),
+                itemSpacing: general.itemSpacingOffset
+            ),
             shelfBehavior: ProfileShelfBehavior(isEnabled: general.useBarlineShelf),
             revealTriggers: ProfileRevealTriggers(
                 click: general.showOnClick,
@@ -504,6 +518,7 @@ final class ProfileManager: ObservableObject {
             ),
             autoRehide: ProfileAutoRehide(
                 isEnabled: general.autoRehide,
+                strategy: profileRehideStrategy(from: general.rehideStrategy),
                 delaySeconds: general.rehideInterval
             ),
             applicationMenuOverlapBehavior:
@@ -518,7 +533,107 @@ final class ProfileManager: ObservableObject {
         try ProfileValidator().validate(workspace)
         appState.spacingManager.offset = Int(workspace.appearance.itemSpacing)
         try await appState.spacingManager.applyOffset()
+        appState.appearanceManager.configuration = try appearanceConfiguration(
+            applying: workspace.appearance,
+            to: appState.appearanceManager.configuration
+        )
         applyWorkspaceSettings(workspace)
+    }
+
+    private func profileRehideStrategy(from strategy: RehideStrategy) -> ProfileAutoRehideStrategy {
+        switch strategy {
+        case .smart: .smart
+        case .timed: .timed
+        case .focusedApp: .focusedApp
+        }
+    }
+
+    private func rehideStrategy(from strategy: ProfileAutoRehideStrategy) -> RehideStrategy {
+        switch strategy {
+        case .smart: .smart
+        case .timed: .timed
+        case .focusedApp: .focusedApp
+        }
+    }
+
+    private func profileShape(from shape: MenuBarShapeKind) -> ProfileAppearance.Shape {
+        switch shape {
+        case .noShape: .standard
+        case .full: .rounded
+        case .split: .split
+        }
+    }
+
+    private func profileTintHex(from configuration: MenuBarAppearancePartialConfiguration) -> String? {
+        guard configuration.tintKind == .solid else { return nil }
+        return hexString(from: configuration.tintColor)
+    }
+
+    private func profileGradientHex(from configuration: MenuBarAppearancePartialConfiguration) -> [String] {
+        guard configuration.tintKind == .gradient else { return [] }
+        return configuration.tintGradient.stops.compactMap { hexString(from: $0.color) }
+    }
+
+    private func appearanceConfiguration(
+        applying appearance: ProfileAppearance,
+        to existing: MenuBarAppearanceConfigurationV2
+    ) throws -> MenuBarAppearanceConfigurationV2 {
+        var configuration = existing
+        var partial = configuration.current
+        partial.hasBorder = appearance.showsBorder
+        partial.hasShadow = appearance.showsShadow
+        if !appearance.gradientHex.isEmpty {
+            let colors = try appearance.gradientHex.map { try color(from: $0) }
+            let denominator = max(colors.count - 1, 1)
+            partial.tintKind = .gradient
+            partial.tintGradient = BarlineGradient(
+                stops: colors.enumerated().map { index, color in
+                    .stop(color, location: CGFloat(index) / CGFloat(denominator))
+                }
+            )
+        } else if let tintHex = appearance.tintHex {
+            partial.tintKind = .solid
+            partial.tintColor = try color(from: tintHex)
+        } else {
+            partial.tintKind = .noTint
+        }
+        configuration.staticConfiguration = partial
+        configuration.lightModeConfiguration = partial
+        configuration.darkModeConfiguration = partial
+        configuration.isDynamic = false
+        configuration.shapeKind = switch appearance.shape {
+        case .standard: .noShape
+        case .rounded: .full
+        case .split: .split
+        }
+        return configuration
+    }
+
+    private func color(from hex: String) throws -> CGColor {
+        let value = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard value.count == 6 || value.count == 8,
+              let raw = UInt64(value, radix: 16)
+        else {
+            throw ProfileValidationError.invalidAppearance
+        }
+        let hasAlpha = value.count == 8
+        let red = CGFloat((raw >> (hasAlpha ? 24 : 16)) & 0xFF) / 255
+        let green = CGFloat((raw >> (hasAlpha ? 16 : 8)) & 0xFF) / 255
+        let blue = CGFloat((raw >> (hasAlpha ? 8 : 0)) & 0xFF) / 255
+        let alpha = hasAlpha ? CGFloat(raw & 0xFF) / 255 : 1
+        return CGColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
+    }
+
+    private func hexString(from color: CGColor) -> String? {
+        guard let converted = NSColor(cgColor: color)?.usingColorSpace(.sRGB) else { return nil }
+        return String(
+            format: "#%02X%02X%02X%02X",
+            Int((converted.redComponent * 255).rounded()),
+            Int((converted.greenComponent * 255).rounded()),
+            Int((converted.blueComponent * 255).rounded()),
+            Int((converted.alphaComponent * 255).rounded())
+        )
     }
 
     private func workspaceTransaction() -> MenuBarWorkspaceTransaction {
@@ -552,8 +667,12 @@ final class ProfileManager: ObservableObject {
             .store(in: &cancellables)
     }
 
+    func processPendingBridgeCommands() async {
+        await processBridgeCommands()
+    }
+
     private func processBridgeCommands() async {
-        guard appState != nil, let commandInbox else { return }
+        guard let appState, let commandInbox else { return }
         guard !isProcessingBridgeCommands else {
             needsBridgeCommandRescan = true
             return
@@ -577,6 +696,12 @@ final class ProfileManager: ObservableObject {
                 if hasProcessed(command.id) {
                     try? await commandInbox.acknowledge(command.id)
                     continue
+                }
+                if command.kind != .openDestination,
+                   !appState.permissions.accessibility.hasPermission
+                {
+                    statusMessage = "Accessibility is required before applying this pending command."
+                    return
                 }
                 guard await handle(command) else {
                     if command.kind == .setPresentationMode,

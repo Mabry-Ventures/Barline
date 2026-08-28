@@ -316,6 +316,8 @@ private struct MenuBarSearchContentView: View {
             summary
         case .targetUnavailable:
             "Cannot run: the target is no longer available."
+        case .targetIsOffScreen:
+            "Cannot run: reveal this menu bar item before activating it."
         case .targetIsNotMovable:
             "Cannot run: this menu bar item cannot be moved."
         case .targetCannotBeHidden:
@@ -329,7 +331,7 @@ private struct MenuBarSearchContentView: View {
         switch reason {
         case .atomicBatchMutationUnavailable, .missingArrangementDestination, .missingGroupDefinition:
             true
-        case .targetUnavailable, .targetIsNotMovable, .targetCannotBeHidden:
+        case .targetUnavailable, .targetIsOffScreen, .targetIsNotMovable, .targetCannotBeHidden:
             false
         }
     }

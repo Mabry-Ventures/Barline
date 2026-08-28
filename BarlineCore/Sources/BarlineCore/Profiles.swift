@@ -6,7 +6,7 @@
 import Foundation
 
 public enum ProfileSchema {
-    public static let currentVersion = 3
+    public static let currentVersion = 4
     public static let archiveFormatVersion = 1
 }
 
@@ -134,12 +134,44 @@ public struct ProfileRevealTriggers: Codable, Hashable, Sendable {
 
 public struct ProfileAutoRehide: Codable, Hashable, Sendable {
     public var isEnabled: Bool
+    public var strategy: ProfileAutoRehideStrategy
     public var delaySeconds: Double
 
-    public init(isEnabled: Bool = true, delaySeconds: Double = 5) {
+    public init(
+        isEnabled: Bool = true,
+        strategy: ProfileAutoRehideStrategy = .timed,
+        delaySeconds: Double = 5
+    ) {
         self.isEnabled = isEnabled
+        self.strategy = strategy
         self.delaySeconds = delaySeconds
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case strategy
+        case delaySeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
+        strategy = try container.decodeIfPresent(ProfileAutoRehideStrategy.self, forKey: .strategy) ?? .timed
+        delaySeconds = try container.decode(Double.self, forKey: .delaySeconds)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(strategy, forKey: .strategy)
+        try container.encode(delaySeconds, forKey: .delaySeconds)
+    }
+}
+
+public enum ProfileAutoRehideStrategy: String, Codable, CaseIterable, Sendable {
+    case smart
+    case timed
+    case focusedApp
 }
 
 /// The non-layout settings that must commit and roll back with a profile's
@@ -168,7 +200,7 @@ public struct ProfileWorkspaceState: Codable, Hashable, Sendable {
 
     public init(profile: BarlineProfile) {
         self.init(
-            appearance: ProfileAppearance(itemSpacing: profile.appearance.itemSpacing),
+            appearance: profile.appearance,
             shelfBehavior: profile.shelfBehavior,
             revealTriggers: profile.revealTriggers,
             autoRehide: profile.autoRehide,
