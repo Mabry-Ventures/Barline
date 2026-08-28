@@ -248,6 +248,7 @@ final class AppState: ObservableObject {
             logger.warning("Compatibility snapshot unavailable after permission grant")
         }
         await itemManager.cacheItemsRegardless()
+        await profileManager.processPendingBridgeCommands()
     }
 
     /// Returns a Boolean value indicating whether the app has been

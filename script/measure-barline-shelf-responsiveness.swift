@@ -38,6 +38,8 @@ private enum ProbeError: Error, CustomStringConvertible {
     case applicationNotRunning
     case applicationProcessChanged
     case appleEventRejected(String)
+    case recoveryFailed
+    case recoveryTimedOut
     case barlineIconNotFound
     case unableToCloseBaseline
 
@@ -49,6 +51,10 @@ private enum ProbeError: Error, CustomStringConvertible {
             "Barline changed processes during the reopen response probe"
         case let .appleEventRejected(message):
             "The production reopen request was rejected: \(message)"
+        case .recoveryFailed:
+            "The production reopen recovery reported failure"
+        case .recoveryTimedOut:
+            "The production reopen recovery and Settings presentation did not complete"
         case .barlineIconNotFound:
             "No on-screen Barline.ControlItem.Visible window was found"
         case .unableToCloseBaseline:
@@ -59,6 +65,11 @@ private enum ProbeError: Error, CustomStringConvertible {
 
 private func requestProductionReopen() throws -> Double {
     let bundleIdentifier = "com.mabryventures.Barline"
+    let recoveryGenerationKey = "ReopenRecoveryGeneration" as CFString
+    let recoverySucceededKey = "ReopenRecoverySucceeded" as CFString
+    let applicationID = bundleIdentifier as CFString
+    CFPreferencesAppSynchronize(applicationID)
+    let startingGeneration = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
     guard let application = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
         throw ProbeError.applicationNotRunning
     }
@@ -85,7 +96,18 @@ private func requestProductionReopen() throws -> Double {
     else {
         throw ProbeError.applicationProcessChanged
     }
-    return milliseconds(start.duration(to: .now))
+    while start.duration(to: .now) < Configuration.iconTimeout {
+        CFPreferencesAppSynchronize(applicationID)
+        let generation = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
+        if generation > startingGeneration {
+            let succeeded = (CFPreferencesCopyAppValue(recoverySucceededKey, applicationID) as? NSNumber)?.boolValue ?? false
+            guard succeeded else { throw ProbeError.recoveryFailed }
+            guard isSettingsWindowVisible() else { throw ProbeError.recoveryTimedOut }
+            return milliseconds(start.duration(to: .now))
+        }
+        usleep(Configuration.pollingIntervalMicroseconds)
+    }
+    throw ProbeError.recoveryTimedOut
 }
 
 private func windowSnapshots() -> [WindowSnapshot] {
@@ -129,6 +151,15 @@ private func barlineIconCenter() throws -> CGPoint {
 private func isBarlineShelfVisible() -> Bool {
     windowSnapshots().contains {
         $0.ownerName == "Barline" && $0.windowName == "Barline Bar"
+    }
+}
+
+private func isSettingsWindowVisible() -> Bool {
+    windowSnapshots().contains {
+        $0.ownerName == "Barline" &&
+            $0.windowName != "Barline Bar" &&
+            $0.bounds.width >= 300 &&
+            $0.bounds.height >= 200
     }
 }
 

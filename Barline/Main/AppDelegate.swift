@@ -8,6 +8,8 @@ import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let reopenRecoveryGenerationKey = "ReopenRecoveryGeneration"
+    private static let reopenRecoverySucceededKey = "ReopenRecoverySucceeded"
     /// The shared app state.
     let appState = AppState()
 
@@ -88,18 +90,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 defer { reopenRecoveryTask = nil }
+                var succeeded = true
                 do {
                     _ = try await appState.compatibilityCoordinator.refresh()
                 } catch {
+                    succeeded = false
                     Logger.default.error("Compatibility refresh on reopen failed: \(error)")
                 }
+                do {
+                    try await Task.sleep(for: .milliseconds(100))
+                } catch {
+                    return
+                }
+                appState.activate(withPolicy: .regular)
+                appState.openWindow(.settings)
+                let visibilityDeadline = ContinuousClock.now + .seconds(1)
+                while ContinuousClock.now < visibilityDeadline,
+                      !NSApp.windows.contains(where: {
+                          $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
+                      })
+                {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+                succeeded = succeeded && NSApp.windows.contains(where: {
+                    $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
+                })
+                let defaults = UserDefaults.standard
+                defaults.set(succeeded, forKey: Self.reopenRecoverySucceededKey)
+                defaults.set(
+                    defaults.integer(forKey: Self.reopenRecoveryGenerationKey) + 1,
+                    forKey: Self.reopenRecoveryGenerationKey
+                )
+                defaults.synchronize()
             }
-        }
-        let settingsIsVisible = NSApp.windows.contains {
-            $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
-        }
-        if !settingsIsVisible {
-            openSettingsWindow()
         }
         return true
     }

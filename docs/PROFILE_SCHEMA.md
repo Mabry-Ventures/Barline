@@ -1,6 +1,6 @@
 # Profile schema
 
-`BarlineCore` defines profile schema version **3** and archive format version
+`BarlineCore` defines profile schema version **4** and archive format version
 **1**. The models, validator, JSON codec, migrations, file store, Ice-import
 preview, and Swift Testing coverage exist. The app uses the Barline App Group
 container (with an Application Support fallback for unsigned local builds),
@@ -29,8 +29,9 @@ for reconnect reconciliation.
 The validator rejects unsupported versions, blank names, reversed timestamps,
 unstable or duplicate items, duplicate displays/groups/spacers, unknown group
 members or spacer anchors, spacer widths outside 1...160 points, invalid
-appearance values, negative auto-rehide delays, invalid hotkeys, duplicate
-profiles, malformed archives, and empty archives.
+appearance values (including fractional item spacing and malformed colors),
+unsupported shelf routing, negative auto-rehide delays, invalid hotkeys,
+duplicate profiles, malformed archives, and empty archives.
 
 JSON uses ISO-8601 dates, sorted keys, pretty printing, and no escaped slashes.
 Archives contain `formatVersion`, `exportedAt`, and a nonempty `profiles` array.
@@ -40,6 +41,8 @@ Archives contain `formatVersion`, `exportedAt`, and a nonempty `profiles` array.
 - v1 to v2 converts three legacy item-order arrays into `layout` and adds
   groups, spacers, and display overrides.
 - v2 to v3 adds appearance, shelf, reveal, auto-rehide, and overlap defaults.
+- v3 to v4 adds the explicit smart, timed, or focused-app auto-rehide strategy;
+  legacy workspace checkpoints decode a missing strategy as timed.
 
 Migration is forward-only. Unknown future schema/archive versions fail safely;
 there is no downgrade writer. Import validates each migrated profile before it

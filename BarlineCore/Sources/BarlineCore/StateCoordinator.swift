@@ -265,6 +265,18 @@ public actor MenuBarStateCoordinator {
                         "menu bar move did not reach requested section"
                     )
                 }
+                if case let .reveal(itemID) = mutation {
+                    guard let beforeItem = before.items.first(where: { $0.id == itemID }),
+                          let revealedItem = snapshot.items.first(where: { $0.id == itemID }),
+                          revealedItem.section == .visible,
+                          revealedItem.isOnScreen,
+                          revealedItem.displayID == beforeItem.displayID
+                    else {
+                        throw MenuBarBackendError.operationFailed(
+                            "menu bar reveal did not produce a visible item on the requested display"
+                        )
+                    }
+                }
                 if let restoreTarget {
                     try validateHistoryResult(snapshot, matches: restoreTarget)
                 }
@@ -314,7 +326,8 @@ public actor MenuBarStateCoordinator {
 
     private func validateProfileResult(
         _ layout: ProfileLayout,
-        in snapshot: MenuBarSnapshot
+        in snapshot: MenuBarSnapshot,
+        displayID: MenuBarDisplayID?
     ) throws {
         for (section, itemIDs) in [
             (MenuBarSection.visible, layout.visible),
@@ -322,7 +335,9 @@ public actor MenuBarStateCoordinator {
             (.alwaysHidden, layout.alwaysHidden),
         ] {
             let actualItemIDs = snapshot.items
-                .filter { $0.section == section }
+                .filter {
+                    $0.section == section && (displayID == nil || $0.displayID == displayID)
+                }
                 .map(\.id)
             guard actualItemIDs.starts(with: itemIDs) else {
                 throw MenuBarBackendError.operationFailed(
@@ -352,7 +367,22 @@ public actor MenuBarStateCoordinator {
             try requireCurrentGeneration(expectedGeneration)
         }
         try ProfileValidator().validate(profile)
-        let before = try await validatedStartingSnapshot(now: now)
+        let workspaceBefore = try await workspaceTransaction?.capture()
+        let startingCheckpoint: HistoryCheckpoint
+        if workspaceTransaction != nil {
+            startingCheckpoint = try await refreshedHistoryStartingCheckpoint(
+                workspace: workspaceBefore,
+                now: now
+            )
+        } else {
+            let snapshot = try await validatedStartingSnapshot(now: now)
+            startingCheckpoint = HistoryCheckpoint(
+                snapshot: snapshot,
+                activeProfileID: activeProfileID,
+                workspace: workspaceBefore
+            )
+        }
+        let before = startingCheckpoint.snapshot
         guard !before.menuTrackingIsActive else {
             throw MenuBarBackendError.unsafeMenuTracking
         }
@@ -367,14 +397,16 @@ public actor MenuBarStateCoordinator {
         } else {
             nil
         }
+        if let activeDisplayID, !before.displayIDs.contains(activeDisplayID) {
+            throw MenuBarBackendError.operationFailed("requested profile display is unavailable")
+        }
         let layout = profile.layout(for: activeDisplayID)
         let knownItemIDs = Set(before.items.map(\.id))
         for itemID in layout.allItemIDs where !knownItemIDs.contains(itemID) {
             throw MenuBarBackendError.staleItem(itemID)
         }
 
-        let priorProfileID = activeProfileID
-        let workspaceBefore = try await workspaceTransaction?.capture()
+        let priorProfileID = startingCheckpoint.activeProfileID
         if let prepareCheckpoint {
             guard let workspaceBefore else {
                 throw MenuBarBackendError.operationFailed(
@@ -394,9 +426,11 @@ public actor MenuBarStateCoordinator {
         mutationGeneration &+= 1
         let generation = mutationGeneration
         var didBeginLayoutMutation = false
+        var didBeginWorkspaceMutation = false
 
         do {
             if let workspaceTransaction {
+                didBeginWorkspaceMutation = true
                 try await workspaceTransaction.apply(targetWorkspace)
             }
             for (section, itemIDs) in [
@@ -404,13 +438,17 @@ public actor MenuBarStateCoordinator {
                 (.hidden, layout.hidden),
                 (.alwaysHidden, layout.alwaysHidden),
             ] {
+                let sectionCandidates = before.items.filter { $0.section == section }
+                let baseIndex = activeDisplayID.flatMap { displayID in
+                    sectionCandidates.firstIndex(where: { $0.displayID == displayID })
+                } ?? 0
                 for (index, itemID) in itemIDs.enumerated() {
                     didBeginLayoutMutation = true
                     _ = try await backend.move(
                         MenuBarMoveOperation(
                             itemID: itemID,
                             section: section,
-                            index: index,
+                            index: baseIndex + index,
                             destinationDisplayID: activeDisplayID
                         )
                     )
@@ -424,7 +462,7 @@ public actor MenuBarStateCoordinator {
                 guard generation == mutationGeneration else {
                     throw CancellationError()
                 }
-                try validateProfileResult(layout, in: snapshot)
+                try validateProfileResult(layout, in: snapshot, displayID: activeDisplayID)
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
@@ -451,7 +489,7 @@ public actor MenuBarStateCoordinator {
                     workspaceRollbackError = error
                 }
             }
-            if didBeginLayoutMutation {
+            if didBeginLayoutMutation || didBeginWorkspaceMutation {
                 if await backend.capabilities.canRestore {
                     do {
                         _ = try await backend.restore(before)

@@ -33,6 +33,14 @@ struct ProfileTests {
         #expect(ProfileAppearance.itemSpacingRange == -16 ... 16)
     }
 
+    @Test("Legacy auto-rehide checkpoints decode with the timed strategy")
+    func legacyAutoRehideDecode() throws {
+        let data = Data(#"{"isEnabled":true,"delaySeconds":3}"#.utf8)
+        let decoded = try JSONDecoder().decode(ProfileAutoRehide.self, from: data)
+
+        #expect(decoded == ProfileAutoRehide(isEnabled: true, strategy: .timed, delaySeconds: 3))
+    }
+
     @Test("Display override resolves exactly and unknown displays use the base layout")
     func displayResolution() {
         let profile = completeProfile()
@@ -228,7 +236,7 @@ struct ProfileTests {
         #expect(migrated.revealTriggers == ProfileRevealTriggers())
     }
 
-    @Test("Version 2 migration preserves supplied layout and installs v3 defaults")
+    @Test("Version 2 migration preserves supplied layout and installs current defaults")
     func migratesV2() throws {
         let profile = completeProfile(schemaVersion: 2)
         var document = try #require(
@@ -242,9 +250,25 @@ struct ProfileTests {
 
         let migrated = try ProfileCodec().decode(JSONSerialization.data(withJSONObject: document))
 
-        #expect(migrated.schemaVersion == 3)
+        #expect(migrated.schemaVersion == ProfileSchema.currentVersion)
         #expect(migrated.layout == profile.layout)
         #expect(migrated.autoRehide == ProfileAutoRehide())
+    }
+
+    @Test("Version 3 migration installs an explicit timed auto-rehide strategy")
+    func migratesV3AutoRehideStrategy() throws {
+        let profile = completeProfile(schemaVersion: 3)
+        var document = try #require(
+            JSONSerialization.jsonObject(with: rawEncode(profile)) as? [String: Any]
+        )
+        var autoRehide = try #require(document["autoRehide"] as? [String: Any])
+        autoRehide.removeValue(forKey: "strategy")
+        document["autoRehide"] = autoRehide
+
+        let migrated = try ProfileCodec().decode(JSONSerialization.data(withJSONObject: document))
+
+        #expect(migrated.schemaVersion == ProfileSchema.currentVersion)
+        #expect(migrated.autoRehide.strategy == .timed)
     }
 
     @Test("Archive export is deterministic and import validates all profiles")
@@ -282,7 +306,7 @@ struct ProfileTests {
             JSONSerialization.data(withJSONObject: archive)
         )
 
-        #expect(imported.profiles[0].schemaVersion == 3)
+        #expect(imported.profiles[0].schemaVersion == ProfileSchema.currentVersion)
     }
 
     @Test("Duplicate item identities across sections are rejected")
@@ -336,6 +360,12 @@ struct ProfileTests {
         let excessiveSpacing = BarlineProfile(
             name: "Spacing", appearance: .init(itemSpacing: 17)
         )
+        let fractionalSpacing = BarlineProfile(
+            name: "Fractional spacing", appearance: .init(itemSpacing: 1.5)
+        )
+        let malformedColor = BarlineProfile(
+            name: "Malformed color", appearance: .init(tintHex: "blue")
+        )
         let badHotkey = BarlineProfile(
             name: "Hotkey", hotkey: ProfileHotkey(key: "", modifiers: [])
         )
@@ -345,6 +375,12 @@ struct ProfileTests {
         #expect(throws: ProfileValidationError.invalidAppearance) { try ProfileValidator().validate(badAppearance) }
         #expect(throws: ProfileValidationError.invalidAppearance) {
             try ProfileValidator().validate(excessiveSpacing)
+        }
+        #expect(throws: ProfileValidationError.invalidAppearance) {
+            try ProfileValidator().validate(fractionalSpacing)
+        }
+        #expect(throws: ProfileValidationError.invalidAppearance) {
+            try ProfileValidator().validate(malformedColor)
         }
         #expect(throws: ProfileValidationError.invalidHotkey) { try ProfileValidator().validate(badHotkey) }
     }
