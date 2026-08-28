@@ -6,6 +6,7 @@
 import BarlineCore
 import Foundation
 import OSLog
+import Security
 import XPC
 
 /// A wrapper around an XPC listener object.
@@ -21,6 +22,47 @@ final class Listener: @unchecked Sendable {
 
     /// Probe-selected compatibility backend.
     private let backend: any MenuBarBackend
+
+    /// Returns a strict peer requirement for the containing Barline app.
+    /// Certificate-signed builds require the same team and exact app signing
+    /// identifier. Local gates use ad-hoc signing, so they require the exact app
+    /// signing identifier and the local/ad-hoc validation category.
+    @available(macOS 26.0, *)
+    private static func appPeerRequirement() -> XPCPeerRequirement {
+        let signingIdentifier = "com.mabryventures.Barline"
+        if currentProcessHasTeamIdentifier() {
+            return .isFromSameTeam(andMatchesSigningIdentifier: signingIdentifier)
+        }
+        var requirement = XPCDictionary()
+        requirement["signing-identifier"] = signingIdentifier
+        requirement["validation-category"] = 10
+        return XPCPeerRequirement(lightweightCodeRequirements: requirement)
+    }
+
+    private static func currentProcessHasTeamIdentifier() -> Bool {
+        var code: SecCode?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else {
+            return false
+        }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess,
+              let staticCode
+        else {
+            return false
+        }
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &information
+        ) == errSecSuccess,
+            let dictionary = information as? [CFString: Any],
+            let teamIdentifier = dictionary[kSecCodeInfoTeamIdentifier] as? String
+        else {
+            return false
+        }
+        return !teamIdentifier.isEmpty
+    }
 
     /// Creates the shared listener.
     private init() {
@@ -187,12 +229,11 @@ final class Listener: @unchecked Sendable {
         } ?? .failure(.timedOut)
     }
 
-    /// Activates the listener without checking if it is already active,
-    /// with the requirement that session peers must be signed with the
-    /// same team identifier as the service process.
+    /// Activates the listener without checking if it is already active, using
+    /// the strict certificate-signed or local ad-hoc peer requirement.
     @available(macOS 26.0, *)
-    private func uncheckedActivateWithSameTeamRequirement() throws {
-        listener = try XPCListener(service: name, requirement: .isFromSameTeam()) { request in
+    private func uncheckedActivateWithPeerRequirement() throws {
+        listener = try XPCListener(service: name, requirement: Self.appPeerRequirement()) { request in
             request.accept { message in
                 self.handleMessage(message)
             }
@@ -219,7 +260,7 @@ final class Listener: @unchecked Sendable {
 
         do {
             if #available(macOS 26.0, *) {
-                try uncheckedActivateWithSameTeamRequirement()
+                try uncheckedActivateWithPeerRequirement()
             } else {
                 try uncheckedActivate()
             }

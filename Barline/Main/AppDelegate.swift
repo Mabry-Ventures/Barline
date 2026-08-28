@@ -3,12 +3,14 @@
 //  Barline
 //
 
+import BarlineCore
 import OSLog
 import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenRecoveryGenerationKey = "ReopenRecoveryGeneration"
+    private static let reopenRecoveryFailureKey = "ReopenRecoveryFailure"
     private static let reopenRecoverySucceededKey = "ReopenRecoverySucceeded"
     /// The shared app state.
     let appState = AppState()
@@ -91,10 +93,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 defer { reopenRecoveryTask = nil }
                 var succeeded = true
+                var failureDescription: String?
+                await appState.waitForSetup()
                 do {
-                    _ = try await appState.compatibilityCoordinator.refresh()
+                    do {
+                        _ = try await appState.compatibilityCoordinator.refresh()
+                    } catch let error as MenuBarBackendError {
+                        guard case .invalidSnapshot(.nonMonotonicGeneration) = error else {
+                            throw error
+                        }
+                        // A replacement XPC helper starts a new raw generation
+                        // epoch. Preserve normal stale-snapshot rejection, then
+                        // use the coordinator's explicit recovery transaction to
+                        // rebase that known replacement monotonically.
+                        _ = try await appState.compatibilityCoordinator.recover()
+                    }
                 } catch {
                     succeeded = false
+                    failureDescription = String(describing: error)
                     Logger.default.error("Compatibility refresh on reopen failed: \(error)")
                 }
                 do {
@@ -117,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 })
                 let defaults = UserDefaults.standard
                 defaults.set(succeeded, forKey: Self.reopenRecoverySucceededKey)
+                defaults.set(failureDescription, forKey: Self.reopenRecoveryFailureKey)
                 defaults.set(
                     defaults.integer(forKey: Self.reopenRecoveryGenerationKey) + 1,
                     forKey: Self.reopenRecoveryGenerationKey

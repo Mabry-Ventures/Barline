@@ -64,9 +64,16 @@ do {
         kAXSliderRole as String,
         kAXTextFieldRole as String,
     ]
+    let standardWindowButtonSubroles: Set = [
+        "AXCloseButton",
+        "AXMinimizeButton",
+        "AXZoomButton",
+        "AXFullScreenButton",
+    ]
     let elements = windows.flatMap { walk($0) }
     let controls = elements.filter {
-        interactiveRoles.contains(text($0, kAXRoleAttribute))
+        interactiveRoles.contains(text($0, kAXRoleAttribute)) &&
+            !standardWindowButtonSubroles.contains(text($0, kAXSubroleAttribute))
     }
     guard !controls.isEmpty else {
         throw AuditFailure.noInteractiveElements(Array(Set(elements.map { text($0, kAXRoleAttribute) })).sorted())

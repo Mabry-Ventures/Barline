@@ -38,7 +38,7 @@ private enum ProbeError: Error, CustomStringConvertible {
     case applicationNotRunning
     case applicationProcessChanged
     case appleEventRejected(String)
-    case recoveryFailed
+    case recoveryFailed(String)
     case recoveryTimedOut
     case barlineIconNotFound
     case unableToCloseBaseline
@@ -51,8 +51,8 @@ private enum ProbeError: Error, CustomStringConvertible {
             "Barline changed processes during the reopen response probe"
         case let .appleEventRejected(message):
             "The production reopen request was rejected: \(message)"
-        case .recoveryFailed:
-            "The production reopen recovery reported failure"
+        case let .recoveryFailed(reason):
+            "The production reopen recovery reported failure: \(reason)"
         case .recoveryTimedOut:
             "The production reopen recovery and Settings presentation did not complete"
         case .barlineIconNotFound:
@@ -66,6 +66,7 @@ private enum ProbeError: Error, CustomStringConvertible {
 private func requestProductionReopen() throws -> Double {
     let bundleIdentifier = "com.mabryventures.Barline"
     let recoveryGenerationKey = "ReopenRecoveryGeneration" as CFString
+    let recoveryFailureKey = "ReopenRecoveryFailure" as CFString
     let recoverySucceededKey = "ReopenRecoverySucceeded" as CFString
     let applicationID = bundleIdentifier as CFString
     CFPreferencesAppSynchronize(applicationID)
@@ -101,7 +102,10 @@ private func requestProductionReopen() throws -> Double {
         let generation = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
         if generation > startingGeneration {
             let succeeded = (CFPreferencesCopyAppValue(recoverySucceededKey, applicationID) as? NSNumber)?.boolValue ?? false
-            guard succeeded else { throw ProbeError.recoveryFailed }
+            guard succeeded else {
+                let reason = CFPreferencesCopyAppValue(recoveryFailureKey, applicationID) as? String
+                throw ProbeError.recoveryFailed(reason ?? "unknown compatibility error")
+            }
             guard isSettingsWindowVisible() else { throw ProbeError.recoveryTimedOut }
             return milliseconds(start.duration(to: .now))
         }
