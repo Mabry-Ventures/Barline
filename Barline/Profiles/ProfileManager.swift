@@ -21,6 +21,7 @@ final class ProfileManager: ObservableObject {
     @Published private(set) var profiles = [BarlineProfile]()
     @Published private(set) var activeProfileID: UUID?
     @Published private(set) var activeProfileActivatedAt: Date?
+    @Published private(set) var activePresentation: ResolvedProfilePresentation?
     @Published private(set) var loadSource: ProfileStoreLoadSource = .notCreated
     @Published private(set) var pendingArchiveImport: ProfileArchiveImportPreview?
     @Published private(set) var pendingIceImports = [IceImportPreview]()
@@ -70,6 +71,7 @@ final class ProfileManager: ObservableObject {
         self.appState = appState
         configureBridgeObservers()
         await reload()
+        await reconcileDisplayConnections()
         configureWorkspaceAuthorityObservers()
         await processBridgeCommands()
     }
@@ -128,6 +130,7 @@ final class ProfileManager: ObservableObject {
             if activeProfileID == result.presentationID || result.clearedAuthority {
                 activeProfileID = nil
                 activeProfileActivatedAt = nil
+                activePresentation = nil
                 setActiveProfileAuthorityToken(nil)
             }
             activationRequests = activationRequests.filter {
@@ -153,6 +156,7 @@ final class ProfileManager: ObservableObject {
         let resolvedAuthorityToken = authorityToken ?? UUID()
         var didActivate = false
         await performOperation(successMessage: "Profile applied.") {
+            let priorRequest = self.activationRequests[source]
             self.activationRequests[source] = ProfileActivationRequest(
                 profileID: profile.id,
                 source: source
@@ -171,18 +175,50 @@ final class ProfileManager: ObservableObject {
             let priorAuthorityToken = self.activeProfileAuthorityToken()
             self.setActiveProfileAuthorityToken(resolvedAuthorityToken)
             do {
-                _ = try await appState.compatibilityCoordinator.activate(
+                let snapshot = try await appState.compatibilityCoordinator.activate(
                     profile: resolvedProfile,
                     expectedGeneration: expectedGeneration,
                     workspaceTransaction: self.workspaceTransaction(),
                     prepareCheckpoint: prepareCheckpoint
                 )
+                let reconciledProfiles = self.profilesReconcilingDisplayAliases(
+                    after: snapshot,
+                    activeProfileID: resolvedProfile.id
+                )
+                var publishedProfiles = self.profiles
+                if reconciledProfiles != self.profiles {
+                    do {
+                        try await self.store.save(reconciledProfiles)
+                        publishedProfiles = reconciledProfiles
+                        self.alignActivePresentationSource(
+                            in: reconciledProfiles,
+                            activeProfileID: resolvedProfile.id
+                        )
+                    } catch {
+                        Logger(category: "Profiles").error("Display alias persistence failed")
+                    }
+                }
+                return (
+                    profileID: resolvedProfile.id,
+                    authorityToken: resolvedAuthorityToken,
+                    profiles: publishedProfiles
+                )
             } catch {
+                if let priorRequest {
+                    self.activationRequests[source] = priorRequest
+                } else {
+                    self.activationRequests.removeValue(forKey: source)
+                }
                 self.setActiveProfileAuthorityToken(priorAuthorityToken)
+                if await appState.compatibilityCoordinator.activeProfileID == nil {
+                    self.activeProfileID = nil
+                    self.activeProfileActivatedAt = nil
+                    self.activePresentation = nil
+                }
                 throw error
             }
-            return (profileID: resolvedProfile.id, authorityToken: resolvedAuthorityToken)
         } completion: { [weak self] result in
+            self?.profiles = result.profiles
             self?.activeProfileID = result.profileID
             self?.activeProfileActivatedAt = Date()
             self?.setActiveProfileAuthorityToken(result.authorityToken)
@@ -223,9 +259,31 @@ final class ProfileManager: ObservableObject {
             var updated = self.profiles
             updated[index] = updatedProfile
             try await self.store.save(updated)
-            return updated
+            let presentationChanged = current.groups != groups || current.spacers != spacers
+            let shouldInvalidatePublishedAuthority = presentationChanged
+                && self.activeProfileID == current.id
+            let invalidatedCoordinatorAuthority = if presentationChanged,
+                                                     let appState = self.appState
+            {
+                await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                    ifMatches: current.id
+                )
+            } else {
+                false
+            }
+            return (
+                profiles: updated,
+                invalidatedAuthority: shouldInvalidatePublishedAuthority
+                    || invalidatedCoordinatorAuthority
+            )
         } completion: { [weak self] saved in
-            self?.profiles = saved
+            self?.profiles = saved.profiles
+            if saved.invalidatedAuthority {
+                self?.activeProfileID = nil
+                self?.activeProfileActivatedAt = nil
+                self?.activePresentation = nil
+                self?.setActiveProfileAuthorityToken(nil)
+            }
             if profile.name == "Presentation"
                 || profile.id == PresentationProfileTemplateBuilder.profileID
             {
@@ -251,15 +309,34 @@ final class ProfileManager: ObservableObject {
                 name: current.name,
                 symbol: current.symbol,
                 snapshot: snapshot,
-                createdAt: current.createdAt
+                createdAt: current.createdAt,
+                groups: [],
+                spacers: []
             )
             var updated = self.profiles
             updated[index] = reset
             try await self.store.save(updated)
-            return updated
+            let clearedAuthority = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                ifMatches: current.id
+            )
+            return (
+                profiles: updated,
+                profileID: current.id,
+                clearedAuthority: clearedAuthority
+            )
         } completion: { [weak self] updated in
-            self?.profiles = updated
-            self?.publishCatalog()
+            guard let self else { return }
+            profiles = updated.profiles
+            if activeProfileID == updated.profileID || updated.clearedAuthority {
+                activeProfileID = nil
+                activeProfileActivatedAt = nil
+                activePresentation = nil
+                setActiveProfileAuthorityToken(nil)
+            }
+            activationRequests = activationRequests.filter {
+                $0.value.profileID != updated.profileID
+            }
+            publishCatalog()
         }
     }
 
@@ -271,6 +348,9 @@ final class ProfileManager: ObservableObject {
         } completion: { [weak self] profileID in
             self?.activeProfileID = profileID
             self?.activeProfileActivatedAt = profileID == nil ? nil : Date()
+            if profileID == nil {
+                self?.activePresentation = nil
+            }
         }
     }
 
@@ -374,6 +454,7 @@ final class ProfileManager: ObservableObject {
                 } ?? [:]
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
+                self?.activePresentation = nil
             }
             self?.profiles = result.profiles
             self?.pendingArchiveImport = nil
@@ -428,6 +509,7 @@ final class ProfileManager: ObservableObject {
                 } ?? [:]
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
+                self?.activePresentation = nil
             }
             self?.profiles = result.profiles
             self?.pendingIceImports.removeAll { $0.source == preview.source }
@@ -451,6 +533,7 @@ final class ProfileManager: ObservableObject {
             if result.invalidatedAuthority {
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
+                self?.activePresentation = nil
             }
             self?.publishCatalog()
         }
@@ -461,7 +544,9 @@ final class ProfileManager: ObservableObject {
         name: String,
         symbol: String? = nil,
         snapshot: MenuBarSnapshot,
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        groups: [ProfileGroup]? = nil,
+        spacers: [ProfileSpacer]? = nil
     ) -> BarlineProfile {
         let ordered = snapshot.items.sorted { lhs, rhs in
             lhs.section == rhs.section
@@ -483,6 +568,8 @@ final class ProfileManager: ObservableObject {
                 hidden: ordered.filter { $0.section == .hidden }.map(\.id),
                 alwaysHidden: ordered.filter { $0.section == .alwaysHidden }.map(\.id)
             ),
+            groups: groups ?? activePresentation?.groups ?? [],
+            spacers: spacers ?? activePresentation?.spacers ?? [],
             appearance: ProfileAppearance(
                 tintHex: profileTintHex(from: appearanceConfiguration.staticConfiguration),
                 gradientHex: profileGradientHex(from: appearanceConfiguration.staticConfiguration),
@@ -566,7 +653,8 @@ final class ProfileManager: ObservableObject {
                 delaySeconds: general.rehideInterval
             ),
             applicationMenuOverlapBehavior:
-            appState.settings.advanced.hideApplicationMenus ? .hideWhenNeeded : .leaveVisible
+            appState.settings.advanced.hideApplicationMenus ? .hideWhenNeeded : .leaveVisible,
+            presentation: activePresentation
         )
     }
 
@@ -582,6 +670,7 @@ final class ProfileManager: ObservableObject {
             to: appState.appearanceManager.configuration
         )
         applyWorkspaceSettings(workspace)
+        activePresentation = workspace.presentation
     }
 
     private func profileRehideStrategy(from strategy: RehideStrategy) -> ProfileAutoRehideStrategy {
@@ -852,6 +941,146 @@ final class ProfileManager: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.reconcileDisplayConnections()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func reconcileDisplayConnections() async {
+        await profileOperationSemaphore.wait()
+        defer { profileOperationSemaphore.signal() }
+        guard let appState else { return }
+        do {
+            let snapshot = try await appState.compatibilityCoordinator.refresh()
+            var reconciled = profilesReconcilingDisplayAliases(
+                after: snapshot,
+                activeProfileID: activeProfileID
+            )
+            let coordinatorProfileID = await appState.compatibilityCoordinator.activeProfileID
+            if let activeProfileID,
+               coordinatorProfileID == nil,
+               let profile = reconciled.first(where: { $0.id == activeProfileID }),
+               let reconnectDisplayID = reconnectDisplayID(
+                   for: profile,
+                   snapshot: snapshot
+               )
+            {
+                let reactivated = try await appState.compatibilityCoordinator.activate(
+                    profile: profile,
+                    on: reconnectDisplayID,
+                    workspaceTransaction: workspaceTransaction()
+                )
+                reconciled = profilesReconcilingDisplayAliases(
+                    after: reactivated,
+                    activeProfileID: activeProfileID
+                )
+                activeProfileActivatedAt = Date()
+            } else if activeProfileID != nil, coordinatorProfileID == nil {
+                activeProfileID = nil
+                activeProfileActivatedAt = nil
+                activePresentation = nil
+                activationRequests.removeAll()
+            }
+            if reconciled != profiles {
+                try await store.save(reconciled)
+                profiles = reconciled
+                alignActivePresentationSource(
+                    in: reconciled,
+                    activeProfileID: activeProfileID
+                )
+                publishCatalog()
+            }
+            if activeProfileID != nil {
+                _ = try await synchronizeProfileAuthority(clearsActivationRequests: false)
+            }
+        } catch {
+            Logger(category: "Profiles").error("Display reconciliation failed")
+        }
+    }
+
+    private func reconnectDisplayID(
+        for profile: BarlineProfile,
+        snapshot: MenuBarSnapshot
+    ) -> MenuBarDisplayID? {
+        guard let activePresentation,
+              case let .displayOverride(storedID) = activePresentation.source
+        else {
+            return nil
+        }
+        let matches = snapshot.displayIDs.compactMap { liveID in
+            DisplayProfileOverrideResolver().resolve(
+                profile: profile,
+                requestedDisplayID: liveID,
+                snapshot: snapshot
+            )
+        }.filter { $0.override.displayID == storedID }
+        guard matches.count == 1 else { return nil }
+        return matches[0].liveDisplayID
+    }
+
+    private func alignActivePresentationSource(
+        in profiles: [BarlineProfile],
+        activeProfileID: UUID?
+    ) {
+        guard let activeProfileID,
+              let destinationDisplayID = activePresentation?.destinationDisplayID,
+              profiles.first(where: { $0.id == activeProfileID })?.displayOverrides.contains(
+                  where: { $0.displayID == destinationDisplayID }
+              ) == true
+        else {
+            return
+        }
+        activePresentation?.source = .displayOverride(destinationDisplayID)
+    }
+
+    private func profilesReconcilingDisplayAliases(
+        after snapshot: MenuBarSnapshot,
+        activeProfileID: UUID?
+    ) -> [BarlineProfile] {
+        var updated = profiles
+        let identities = snapshot.displayIdentities ?? []
+        for profileIndex in updated.indices {
+            for overrideIndex in updated[profileIndex].displayOverrides.indices {
+                let storedID = updated[profileIndex].displayOverrides[overrideIndex].displayID
+                if let fingerprint = snapshot.displayIdentity(for: storedID)?.hardwareFingerprint,
+                   updated[profileIndex].displayOverrides[overrideIndex].displayFingerprint == nil,
+                   identities.count(where: { $0.hardwareFingerprint == fingerprint }) == 1,
+                   !updated[profileIndex].displayOverrides.enumerated().contains(where: {
+                       $0.offset != overrideIndex && $0.element.displayFingerprint == fingerprint
+                   })
+                {
+                    updated[profileIndex].displayOverrides[overrideIndex].displayFingerprint = fingerprint
+                }
+            }
+        }
+
+        guard let activeProfileID,
+              let profileIndex = updated.firstIndex(where: { $0.id == activeProfileID }),
+              let activePresentation,
+              case let .displayOverride(storedID) = activePresentation.source,
+              let liveID = activePresentation.destinationDisplayID,
+              let overrideIndex = updated[profileIndex].displayOverrides.firstIndex(where: {
+                  $0.displayID == storedID
+              })
+        else {
+            return updated
+        }
+        updated[profileIndex].displayOverrides[overrideIndex].displayID = liveID
+        if updated[profileIndex].displayOverrides[overrideIndex].displayFingerprint == nil,
+           let fingerprint = snapshot.displayIdentity(for: liveID)?.hardwareFingerprint,
+           identities.count(where: { $0.hardwareFingerprint == fingerprint }) == 1,
+           !updated[profileIndex].displayOverrides.enumerated().contains(where: {
+               $0.offset != overrideIndex && $0.element.displayFingerprint == fingerprint
+           })
+        {
+            updated[profileIndex].displayOverrides[overrideIndex].displayFingerprint = fingerprint
+        }
+        return updated
     }
 
     func reconcileActiveProfileAuthority() async {
@@ -868,6 +1097,7 @@ final class ProfileManager: ObservableObject {
             }
             activeProfileID = retainedProfileID
             if retainedProfileID == nil {
+                activePresentation = nil
                 activationRequests.removeAll()
             }
         } catch {
@@ -878,6 +1108,7 @@ final class ProfileManager: ObservableObject {
             }
             activeProfileID = nil
             activeProfileActivatedAt = nil
+            activePresentation = nil
             activationRequests.removeAll()
         }
     }
@@ -1235,6 +1466,7 @@ final class ProfileManager: ObservableObject {
         else {
             activeProfileID = nil
             activeProfileActivatedAt = nil
+            activePresentation = nil
             return nil
         }
         guard profileMatchesCheckpoint(profile, checkpoint: checkpoint) else {
@@ -1243,6 +1475,7 @@ final class ProfileManager: ObservableObject {
             )
             activeProfileID = nil
             activeProfileActivatedAt = nil
+            activePresentation = nil
             return nil
         }
         return profileID
@@ -1292,11 +1525,13 @@ final class ProfileManager: ObservableObject {
             }
             activeProfileID = retainedProfileID
             if retainedProfileID == nil {
+                activePresentation = nil
                 activationRequests.removeAll()
             }
         } catch {
             activeProfileID = nil
             activeProfileActivatedAt = nil
+            activePresentation = nil
             Logger(category: "Profiles").error("Profile authority reconciliation failed")
         }
     }

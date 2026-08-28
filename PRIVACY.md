@@ -18,6 +18,12 @@ commands use the Barline App Group container with atomic files, validation, and
 a previous-valid backup. Profile archives are accessed only after an explicit
 user import or export action.
 
+For display-specific profiles, Barline derives an opaque SHA-256 alias from
+public display hardware values so a uniquely identifiable monitor can be
+recognized after reconnecting. Raw hardware values are not stored. Profile
+exports include the opaque alias so reconnect behavior survives import; sharing
+an archive therefore shares a stable pseudonymous monitor identifier.
+
 Barline writes operational messages to Apple's unified logging system. Current
 item-operation logs use internal tags rather than menu item titles. Support
 bundle export is explicit, bounded, sanitized, and reviewed before saving.

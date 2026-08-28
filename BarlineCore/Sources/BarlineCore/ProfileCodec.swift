@@ -197,6 +197,7 @@ public struct ProfileMigrator: Sendable {
             case 3: migrateV3ToV4(&document)
             case 4: migrateV4ToV5(&document)
             case 5: migrateV5ToV6(&document)
+            case 6: try migrateV6ToV7(&document)
             default: throw ProfileValidationError.unsupportedSchemaVersion(migratedVersion)
             }
             migratedVersion += 1
@@ -264,6 +265,25 @@ public struct ProfileMigrator: Sendable {
             "isInset": true,
         ]
         document["appearance"] = appearance
+    }
+
+    private func migrateV6ToV7(_ document: inout [String: Any]) throws {
+        guard let rawOverrides = document["displayOverrides"] as? [Any] else {
+            throw ProfileValidationError.malformedDocument("displayOverrides must be an array")
+        }
+        var overrides = try rawOverrides.map { value in
+            guard let override = value as? [String: Any] else {
+                throw ProfileValidationError.malformedDocument(
+                    "displayOverrides must contain objects"
+                )
+            }
+            return override
+        }
+        for index in overrides.indices {
+            overrides[index]["displayFingerprint"] =
+                overrides[index]["displayFingerprint"] ?? NSNull()
+        }
+        document["displayOverrides"] = overrides
     }
 
     private func migrateAppearanceModeToV6(_ source: [String: Any]) -> [String: Any] {

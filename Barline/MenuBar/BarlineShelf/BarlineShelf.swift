@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Combine
 import OSLog
 import SwiftUI
@@ -437,6 +438,42 @@ private struct BarlineShelfContentView: View {
         itemManager.itemsForBarlineShelf(in: section, on: screen)
     }
 
+    private var presentation: ResolvedProfilePresentation? {
+        guard let presentation = appState.profileManager.activePresentation else { return nil }
+        guard presentation.destinationDisplayID == nil
+            || presentation.destinationDisplayID == stableDisplayID
+        else {
+            return nil
+        }
+        return presentation
+    }
+
+    private var presentationElements: [ProfilePresentationElement] {
+        ProfilePresentationProjector().elements(
+            presentation: presentation,
+            section: coreSection,
+            orderedItemIDs: items.map(\.stableID)
+        )
+    }
+
+    private var coreSection: BarlineCore.MenuBarSection {
+        switch section {
+        case .visible: .visible
+        case .hidden: .hidden
+        case .alwaysHidden: .alwaysHidden
+        }
+    }
+
+    private var stableDisplayID: MenuBarDisplayID {
+        let directDisplayID = screen.displayID
+        guard let unmanagedUUID = CGDisplayCreateUUIDFromDisplayID(directDisplayID) else {
+            return MenuBarDisplayID("display-\(directDisplayID)")
+        }
+        return MenuBarDisplayID(
+            CFUUIDCreateString(nil, unmanagedUUID.takeRetainedValue()) as String
+        )
+    }
+
     private var configuration: MenuBarAppearanceConfigurationV2 {
         appState.appearanceManager.configuration
     }
@@ -480,8 +517,18 @@ private struct BarlineShelfContentView: View {
     }
 
     private var cachedContentWidth: CGFloat {
-        items.reduce(into: 0) { width, item in
-            width += imageCache.images[item.tag]?.scaledSize.width ?? 0
+        let itemByID = Dictionary(uniqueKeysWithValues: items.map { ($0.stableID, $0) })
+        return presentationElements.reduce(into: 0) { width, element in
+            switch element {
+            case let .item(itemID):
+                if let item = itemByID[itemID] {
+                    width += imageCache.images[item.tag]?.scaledSize.width ?? 0
+                }
+            case let .spacer(_, spacerWidth):
+                width += spacerWidth
+            case let .groupMarker(_, name, _):
+                width += min(CGFloat(name.count * 6 + 14), 120)
+            }
         }
     }
 
@@ -544,14 +591,37 @@ private struct BarlineShelfContentView: View {
         } else {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
-                    ForEach(items, id: \.stableID) { item in
-                        BarlineShelfItemView(
-                            imageCache: imageCache,
-                            itemManager: itemManager,
-                            menuBarManager: menuBarManager,
-                            item: item,
-                            section: section
-                        )
+                    ForEach(presentationElements) { element in
+                        switch element {
+                        case let .item(itemID):
+                            if let item = items.first(where: { $0.stableID == itemID }) {
+                                BarlineShelfItemView(
+                                    imageCache: imageCache,
+                                    itemManager: itemManager,
+                                    menuBarManager: menuBarManager,
+                                    item: item,
+                                    section: section
+                                )
+                            }
+                        case let .spacer(_, width):
+                            Color.clear
+                                .frame(width: width)
+                                .accessibilityHidden(true)
+                        case let .groupMarker(_, name, symbol):
+                            HStack(spacing: 2) {
+                                if let symbol, !symbol.isEmpty {
+                                    Image(systemName: symbol)
+                                }
+                                Text(name)
+                                    .lineLimit(1)
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.white.opacity(0.16), in: Capsule())
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Group: \(name)")
+                        }
                     }
                 }
             }

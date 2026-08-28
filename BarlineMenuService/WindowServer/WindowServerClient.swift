@@ -1,6 +1,7 @@
 import AppKit
 import BarlineCore
 import CoreGraphics
+import CryptoKit
 import Foundation
 import os
 
@@ -86,17 +87,17 @@ final class WindowServerClient: @unchecked Sendable {
             throw MenuBarBackendError.unavailableCapability("menu bar snapshot")
         }
 
-        let displayIDs = Set(NSScreen.screens.compactMap { screen -> MenuBarDisplayID? in
+        let displayIdentities = NSScreen.screens.compactMap { screen -> MenuBarDisplayIdentity? in
             guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
                 return nil
             }
             let displayID = CGDirectDisplayID(number.uint32Value)
-            guard let unmanagedUUID = CGDisplayCreateUUIDFromDisplayID(displayID) else {
-                return MenuBarDisplayID("display-\(displayID)")
-            }
-            let uuid = unmanagedUUID.takeRetainedValue()
-            return MenuBarDisplayID(CFUUIDCreateString(nil, uuid) as String)
-        })
+            return MenuBarDisplayIdentity(
+                runtimeID: stableDisplayID(displayID),
+                hardwareFingerprint: hardwareFingerprint(for: displayID)
+            )
+        }
+        let displayIDs = Set(displayIdentities.map(\.runtimeID))
 
         let classified = classifiedWindows(windows)
         let identifiers = identifiedWindows(windows)
@@ -162,6 +163,7 @@ final class WindowServerClient: @unchecked Sendable {
             capturedAt: Date(),
             items: descriptors,
             displayIDs: displayIDs,
+            displayIdentities: displayIdentities,
             activeSpaceIsValid: activeSpaceID() != nil
         )
     }
@@ -704,6 +706,30 @@ final class WindowServerClient: @unchecked Sendable {
             return MenuBarDisplayID("display-\(displayID)")
         }
         return MenuBarDisplayID(CFUUIDCreateString(nil, unmanagedUUID.takeRetainedValue()) as String)
+    }
+
+    private func hardwareFingerprint(
+        for displayID: CGDirectDisplayID
+    ) -> MenuBarDisplayHardwareFingerprint? {
+        let vendor = CGDisplayVendorNumber(displayID)
+        let model = CGDisplayModelNumber(displayID)
+        let serial = CGDisplaySerialNumber(displayID)
+        let unknownVendor: UInt32 = 0x756E_6B6E // `unkn`
+        let genericProduct: UInt32 = 0x0717
+        guard vendor != 0,
+              vendor != unknownVendor,
+              model != 0,
+              model != genericProduct,
+              serial != 0
+        else { return nil }
+
+        var payload = Data("com.mabryventures.Barline.display-fingerprint.v1\0".utf8)
+        for component in [vendor, model, serial] {
+            var bigEndian = component.bigEndian
+            withUnsafeBytes(of: &bigEndian) { payload.append(contentsOf: $0) }
+        }
+        let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+        return MenuBarDisplayHardwareFingerprint("v1:\(digest)")
     }
 
     private static func createWindowArray(_ identifiers: [CGWindowID]) -> CFArray? {

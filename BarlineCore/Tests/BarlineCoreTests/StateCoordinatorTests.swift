@@ -958,6 +958,307 @@ struct StateCoordinatorTests {
         #expect(await coordinator.activeProfileID == profile.id)
     }
 
+    @Test("Reconnected display overrides target the unique live display")
+    func activatesReconnectedDisplayOverride() async throws {
+        let storedDisplay = MenuBarDisplayID("stored-display")
+        let liveDisplay = MenuBarDisplayID("test-display")
+        let fingerprint = MenuBarDisplayHardwareFingerprint(
+            "v1:" + String(repeating: "c", count: 64)
+        )
+        let rawBefore = makeSnapshot(generation: 1, count: 3, display: liveDisplay)
+        let before = MenuBarSnapshot(
+            generation: rawBefore.generation,
+            capturedAt: rawBefore.capturedAt,
+            items: rawBefore.items,
+            displayIDs: rawBefore.displayIDs,
+            displayIdentities: [
+                MenuBarDisplayIdentity(
+                    runtimeID: liveDisplay,
+                    hardwareFingerprint: fingerprint
+                ),
+            ],
+            activeSpaceIsValid: true
+        )
+        let overrideLayout = ProfileLayout(
+            visible: [before.items[1].id],
+            hidden: [before.items[2].id],
+            alwaysHidden: [before.items[0].id]
+        )
+        let group = ProfileGroup(
+            id: UUID(132),
+            name: "Reconnect",
+            itemIDs: [before.items[1].id]
+        )
+        let profile = BarlineProfile(
+            id: UUID(133),
+            name: "Reconnected",
+            layout: ProfileLayout(visible: before.items.map(\.id)),
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: storedDisplay,
+                    displayFingerprint: fingerprint,
+                    layout: overrideLayout,
+                    groups: [group]
+                ),
+            ]
+        )
+        let freshBefore = MenuBarSnapshot(
+            generation: 2,
+            capturedAt: before.capturedAt,
+            items: before.items,
+            displayIDs: before.displayIDs,
+            displayIdentities: before.displayIdentities,
+            activeSpaceIsValid: true
+        )
+        let rawAfter = makeProfileSnapshot(generation: 3, layout: overrideLayout)
+        let after = MenuBarSnapshot(
+            generation: rawAfter.generation,
+            capturedAt: rawAfter.capturedAt,
+            items: rawAfter.items,
+            displayIDs: rawAfter.displayIDs,
+            displayIdentities: before.displayIdentities,
+            activeSpaceIsValid: true
+        )
+        let originalWorkspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: originalWorkspace)
+        let backend = FakeBackend(
+            snapshots: [before, freshBefore, after],
+            environment: MenuBarEnvironmentSnapshot(
+                activeDisplayID: 7,
+                activeStableDisplayID: liveDisplay,
+                activeSpaceToken: 42,
+                activeSpaceIsFullscreen: false
+            )
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        _ = try await coordinator.activate(
+            profile: profile,
+            now: after.capturedAt,
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { await recorder.capture() },
+                apply: { try await recorder.apply($0) }
+            )
+        )
+
+        #expect(await backend.moveOperations.allSatisfy {
+            $0.destinationDisplayID == liveDisplay
+        })
+        let appliedWorkspace = try #require(await recorder.values.first)
+        #expect(appliedWorkspace.presentation == ResolvedProfilePresentation(
+            source: .displayOverride(storedDisplay),
+            destinationDisplayID: liveDisplay,
+            layout: overrideLayout,
+            groups: [group],
+            spacers: []
+        ))
+    }
+
+    @Test("Display identity changes during activation roll back authority")
+    func rejectsDisplayIdentityChangeDuringActivation() async throws {
+        let liveDisplay = MenuBarDisplayID("test-display")
+        let originalFingerprint = MenuBarDisplayHardwareFingerprint(
+            "v1:" + String(repeating: "d", count: 64)
+        )
+        let replacementFingerprint = MenuBarDisplayHardwareFingerprint(
+            "v1:" + String(repeating: "e", count: 64)
+        )
+        let rawBefore = makeSnapshot(generation: 1, count: 3, display: liveDisplay)
+        let before = MenuBarSnapshot(
+            generation: rawBefore.generation,
+            capturedAt: rawBefore.capturedAt,
+            items: rawBefore.items,
+            displayIDs: rawBefore.displayIDs,
+            displayIdentities: [
+                MenuBarDisplayIdentity(
+                    runtimeID: liveDisplay,
+                    hardwareFingerprint: originalFingerprint
+                ),
+            ],
+            activeSpaceIsValid: true
+        )
+        let layout = ProfileLayout(
+            visible: [before.items[1].id],
+            hidden: [before.items[2].id],
+            alwaysHidden: [before.items[0].id]
+        )
+        let rawAfter = makeProfileSnapshot(generation: 2, layout: layout)
+        let after = MenuBarSnapshot(
+            generation: rawAfter.generation,
+            capturedAt: rawAfter.capturedAt,
+            items: rawAfter.items,
+            displayIDs: rawAfter.displayIDs,
+            displayIdentities: [
+                MenuBarDisplayIdentity(
+                    runtimeID: liveDisplay,
+                    hardwareFingerprint: replacementFingerprint
+                ),
+            ],
+            activeSpaceIsValid: true
+        )
+        let rollback = MenuBarSnapshot(
+            generation: 3,
+            capturedAt: before.capturedAt,
+            items: before.items,
+            displayIDs: before.displayIDs,
+            displayIdentities: [
+                MenuBarDisplayIdentity(
+                    runtimeID: liveDisplay,
+                    hardwareFingerprint: replacementFingerprint
+                ),
+            ],
+            activeSpaceIsValid: true
+        )
+        let profile = BarlineProfile(
+            id: UUID(134),
+            name: "Identity change",
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: liveDisplay,
+                    displayFingerprint: originalFingerprint,
+                    layout: layout
+                ),
+            ]
+        )
+        let backend = FakeBackend(snapshots: [before, after, rollback])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.self) {
+            try await coordinator.activate(
+                profile: profile,
+                on: liveDisplay,
+                now: after.capturedAt
+            )
+        }
+
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.currentSnapshot == nil)
+        #expect(await backend.restoredSnapshots == [before])
+    }
+
+    @Test("Display identity ambiguity during activation rolls back authority")
+    func rejectsDisplayIdentityAmbiguityDuringActivation() async throws {
+        let liveDisplay = MenuBarDisplayID("test-display")
+        let duplicateDisplay = MenuBarDisplayID("duplicate-display")
+        let fingerprint = MenuBarDisplayHardwareFingerprint(
+            "v1:" + String(repeating: "f", count: 64)
+        )
+        let rawBefore = makeSnapshot(generation: 1, count: 2, display: liveDisplay)
+        let identity = MenuBarDisplayIdentity(
+            runtimeID: liveDisplay,
+            hardwareFingerprint: fingerprint
+        )
+        let before = MenuBarSnapshot(
+            generation: rawBefore.generation,
+            capturedAt: rawBefore.capturedAt,
+            items: rawBefore.items,
+            displayIDs: rawBefore.displayIDs,
+            displayIdentities: [identity],
+            activeSpaceIsValid: true
+        )
+        let layout = ProfileLayout(visible: before.items.map(\.id))
+        let rawAfter = makeProfileSnapshot(generation: 2, layout: layout)
+        let after = MenuBarSnapshot(
+            generation: rawAfter.generation,
+            capturedAt: rawAfter.capturedAt,
+            items: rawAfter.items,
+            displayIDs: [liveDisplay, duplicateDisplay],
+            displayIdentities: [
+                identity,
+                MenuBarDisplayIdentity(
+                    runtimeID: duplicateDisplay,
+                    hardwareFingerprint: fingerprint
+                ),
+            ],
+            activeSpaceIsValid: true
+        )
+        let rollback = MenuBarSnapshot(
+            generation: 3,
+            capturedAt: before.capturedAt,
+            items: before.items,
+            displayIDs: before.displayIDs,
+            displayIdentities: before.displayIdentities,
+            activeSpaceIsValid: true
+        )
+        let profile = BarlineProfile(
+            id: UUID(135),
+            name: "Identity ambiguity",
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: liveDisplay,
+                    displayFingerprint: fingerprint,
+                    layout: layout
+                ),
+            ]
+        )
+        let backend = FakeBackend(snapshots: [before, after, rollback])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.self) {
+            try await coordinator.activate(
+                profile: profile,
+                on: liveDisplay,
+                now: after.capturedAt
+            )
+        }
+
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.currentSnapshot == rollback)
+    }
+
+    @Test("Base presentation checkpoints remain unscoped when overrides exist")
+    func basePresentationCheckpointIsUnscoped() async throws {
+        let display = MenuBarDisplayID("test-display")
+        let snapshot = makeSnapshot(generation: 1, count: 1, display: display)
+        let profile = BarlineProfile(
+            name: "Base scope",
+            layout: ProfileLayout(visible: snapshot.items.map(\.id)),
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: display,
+                    layout: ProfileLayout(hidden: snapshot.items.map(\.id))
+                ),
+            ]
+        )
+        let workspace = ProfileWorkspaceState(profile: profile)
+        let backend = FakeBackend(
+            snapshots: [snapshot],
+            environment: MenuBarEnvironmentSnapshot(
+                activeDisplayID: 7,
+                activeStableDisplayID: display,
+                activeSpaceToken: 42,
+                activeSpaceIsFullscreen: false
+            )
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let checkpoint = try await coordinator.captureWorkspaceCheckpoint(
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { workspace },
+                apply: { _ in }
+            ),
+            now: snapshot.capturedAt
+        )
+
+        #expect(checkpoint.activeDisplayID == nil)
+        #expect(checkpoint.workspace.presentation?.source == .base)
+    }
+
     @Test("Base profile activation preserves source displays")
     func baseProfileActivationPreservesSourceDisplays() async throws {
         let firstDisplay = MenuBarDisplayID("first-display")

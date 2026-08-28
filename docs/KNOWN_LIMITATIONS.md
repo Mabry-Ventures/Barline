@@ -7,11 +7,14 @@ This list describes the active development tree. It is not a release claim.
 - Profile storage, capture, transactional activation, editing, archive import/
   export, Presentation templates, App Intents/Focus delivery, and recovery are
   wired, including explicit Ice import preview and bounded layout undo/redo.
-  Active-display profile overrides resolve through the helper's stable display
-  identity. Display reconnect reconciliation and runtime group/spacer placement
-  remain incomplete.
+  Active-display overrides resolve through exact live IDs or unique opaque
+  hardware aliases after reconnect. Groups and spacers participate in
+  transactional authority and render in the Barline shelf. Physical reconnect
+  and ambiguous identical-display behavior still require candidate-bound
+  runtime validation.
 - Real Focus and Shortcuts execution is not proven without a provisioned signed
-  build; the local development certificate is unavailable.
+  build. Local signing identities exist, but App Group-compatible provisioning
+  profiles are unavailable.
 - Deterministic search, bounded Spotlight indexing, and typed on-device model
   interpretation are connected. macOS 27 `SpotlightSearchTool` remains blocked
   on the unavailable Xcode/macOS 27 lane.

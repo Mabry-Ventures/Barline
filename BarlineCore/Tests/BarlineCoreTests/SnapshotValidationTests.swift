@@ -95,6 +95,63 @@ struct SnapshotValidationTests {
         )
     }
 
+    @Test("Display identity metadata must be complete, unique, and well-formed")
+    func validatesDisplayIdentityMetadata() {
+        let validFingerprint = MenuBarDisplayHardwareFingerprint(
+            "v1:" + String(repeating: "a", count: 64)
+        )
+        let malformedFingerprint = MenuBarDisplayHardwareFingerprint("v1:short")
+        let base = snapshot(generation: 1, itemCount: 1)
+        let mismatch = MenuBarSnapshot(
+            generation: base.generation,
+            capturedAt: base.capturedAt,
+            items: base.items,
+            displayIDs: base.displayIDs,
+            displayIdentities: [],
+            activeSpaceIsValid: true
+        )
+        let duplicate = MenuBarSnapshot(
+            generation: base.generation,
+            capturedAt: base.capturedAt,
+            items: base.items,
+            displayIDs: base.displayIDs,
+            displayIdentities: [
+                MenuBarDisplayIdentity(runtimeID: displayID, hardwareFingerprint: validFingerprint),
+                MenuBarDisplayIdentity(runtimeID: displayID, hardwareFingerprint: validFingerprint),
+            ],
+            activeSpaceIsValid: true
+        )
+        let malformed = MenuBarSnapshot(
+            generation: base.generation,
+            capturedAt: base.capturedAt,
+            items: base.items,
+            displayIDs: base.displayIDs,
+            displayIdentities: [
+                MenuBarDisplayIdentity(
+                    runtimeID: displayID,
+                    hardwareFingerprint: malformedFingerprint
+                ),
+            ],
+            activeSpaceIsValid: true
+        )
+
+        #expect(SnapshotValidator().validate(
+            mismatch,
+            previous: nil,
+            now: mismatch.capturedAt
+        ) == .failure(.displayIdentitySetMismatch))
+        #expect(SnapshotValidator().validate(
+            duplicate,
+            previous: nil,
+            now: duplicate.capturedAt
+        ) == .failure(.duplicateDisplayIdentity(displayID)))
+        #expect(SnapshotValidator().validate(
+            malformed,
+            previous: nil,
+            now: malformed.capturedAt
+        ) == .failure(.malformedDisplayFingerprint))
+    }
+
     @Test("Snapshots beyond the allowed future clock skew are rejected")
     func rejectsFutureTimestamp() {
         let validator = SnapshotValidator(

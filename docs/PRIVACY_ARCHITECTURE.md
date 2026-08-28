@@ -32,6 +32,13 @@ Support bundles are bounded JSON, require an in-app review confirmation and a
 user-selected destination, and omit backend messages and raw environment
 identifiers.
 
+Per-display reconnect metadata is a versioned SHA-256 alias computed inside the
+helper from public display vendor/model/serial values. Raw components never
+cross XPC or enter logs, search records, or support bundles. Serial-less or
+ambiguous identical displays are not guessed. A user-requested profile archive
+does include the opaque alias so reconnect behavior survives import; the alias
+is therefore a stable pseudonymous monitor identifier across exports.
+
 ## Logging
 
 Barline uses Apple unified logging under its bundle subsystem. Code review must
@@ -42,8 +49,9 @@ privacy gate passes synthetic secret, username, and path probes.
 
 ## Network boundary
 
-Sparkle is linked but disabled and has no Barline feed or public key. The
-current source contains no application `URLSession` or Network-framework client.
+Sparkle is linked and enabled only for Release builds with Barline-owned public
+trust material and its canonical feed. The current source contains no other
+application `URLSession` or Network-framework client.
 User-opened links and developer dependency resolution are outside automatic app
 data transfer.
 

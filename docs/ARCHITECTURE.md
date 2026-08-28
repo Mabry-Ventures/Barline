@@ -33,11 +33,13 @@ responses cannot become authoritative.
    after the operation, and accept rollback only after a fresh snapshot proves
    the exact logical layout was restored. Unverifiable rollback clears current
    and profile authority while retaining last-known-good recovery data.
-6. Profile activation and history treat menu-bar layout plus user-facing
-   workspace settings as one transaction. History stores both, move planning
-   uses section-relative global order plus an explicit stable destination
-   display, and a restored profile ID remains authoritative only while the
-   definition selected for that display still matches.
+6. Profile activation and history treat menu-bar layout, user-facing workspace
+   settings, and resolved group/spacer presentation as one transaction. History
+   stores all three, move planning uses section-relative global order plus an
+   explicit live destination display, and a restored profile ID remains
+   authoritative only while the definition selected for that display matches.
+   Reconnected overrides use a helper-derived opaque hardware alias only when
+   exactly one stored override and one live display match.
 7. Recovery invalidates the helper connection, re-probes, rebases helper
    generations monotonically, restores when the backend supports it, and
    refreshes authoritative state. A failed recovery never republishes cached

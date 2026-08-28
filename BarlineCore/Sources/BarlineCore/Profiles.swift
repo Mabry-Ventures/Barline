@@ -6,7 +6,7 @@
 import Foundation
 
 public enum ProfileSchema {
-    public static let currentVersion = 6
+    public static let currentVersion = 7
     public static let archiveFormatVersion = 1
 }
 
@@ -63,18 +63,21 @@ public struct ProfileSpacer: Codable, Hashable, Sendable, Identifiable {
 }
 
 public struct DisplayProfileOverride: Codable, Hashable, Sendable {
-    public let displayID: MenuBarDisplayID
+    public var displayID: MenuBarDisplayID
+    public var displayFingerprint: MenuBarDisplayHardwareFingerprint?
     public var layout: ProfileLayout
     public var groups: [ProfileGroup]
     public var spacers: [ProfileSpacer]
 
     public init(
         displayID: MenuBarDisplayID,
+        displayFingerprint: MenuBarDisplayHardwareFingerprint? = nil,
         layout: ProfileLayout,
         groups: [ProfileGroup] = [],
         spacers: [ProfileSpacer] = []
     ) {
         self.displayID = displayID
+        self.displayFingerprint = displayFingerprint
         self.layout = layout
         self.groups = groups
         self.spacers = spacers
@@ -311,29 +314,190 @@ public struct ProfileWorkspaceState: Codable, Hashable, Sendable {
     public var revealTriggers: ProfileRevealTriggers
     public var autoRehide: ProfileAutoRehide
     public var applicationMenuOverlapBehavior: ApplicationMenuOverlapBehavior
+    public var presentation: ResolvedProfilePresentation?
 
     public init(
         appearance: ProfileAppearance,
         shelfBehavior: ProfileShelfBehavior,
         revealTriggers: ProfileRevealTriggers,
         autoRehide: ProfileAutoRehide,
-        applicationMenuOverlapBehavior: ApplicationMenuOverlapBehavior
+        applicationMenuOverlapBehavior: ApplicationMenuOverlapBehavior,
+        presentation: ResolvedProfilePresentation? = nil
     ) {
         self.appearance = appearance
         self.shelfBehavior = shelfBehavior
         self.revealTriggers = revealTriggers
         self.autoRehide = autoRehide
         self.applicationMenuOverlapBehavior = applicationMenuOverlapBehavior
+        self.presentation = presentation
     }
 
-    public init(profile: BarlineProfile) {
+    public init(profile: BarlineProfile, displayID: MenuBarDisplayID? = nil) {
         self.init(
             appearance: profile.appearance,
             shelfBehavior: profile.shelfBehavior,
             revealTriggers: profile.revealTriggers,
             autoRehide: profile.autoRehide,
-            applicationMenuOverlapBehavior: profile.applicationMenuOverlapBehavior
+            applicationMenuOverlapBehavior: profile.applicationMenuOverlapBehavior,
+            presentation: profile.resolvedPresentation(for: displayID)
         )
+    }
+}
+
+public struct ResolvedProfilePresentation: Codable, Hashable, Sendable {
+    public enum Source: Codable, Hashable, Sendable {
+        case base
+        case displayOverride(MenuBarDisplayID)
+    }
+
+    public var source: Source
+    public var destinationDisplayID: MenuBarDisplayID?
+    public var layout: ProfileLayout
+    public var groups: [ProfileGroup]
+    public var spacers: [ProfileSpacer]
+
+    public init(
+        source: Source,
+        destinationDisplayID: MenuBarDisplayID?,
+        layout: ProfileLayout,
+        groups: [ProfileGroup],
+        spacers: [ProfileSpacer]
+    ) {
+        self.source = source
+        self.destinationDisplayID = destinationDisplayID
+        self.layout = layout
+        self.groups = groups
+        self.spacers = spacers
+    }
+}
+
+public enum ProfileDisplayMatchMethod: String, Codable, Hashable, Sendable {
+    case exactRuntimeID
+    case uniqueHardwareFingerprint
+}
+
+public struct ResolvedDisplayProfileOverride: Hashable, Sendable {
+    public let override: DisplayProfileOverride
+    public let liveDisplayID: MenuBarDisplayID
+    public let method: ProfileDisplayMatchMethod
+
+    public init(
+        override: DisplayProfileOverride,
+        liveDisplayID: MenuBarDisplayID,
+        method: ProfileDisplayMatchMethod
+    ) {
+        self.override = override
+        self.liveDisplayID = liveDisplayID
+        self.method = method
+    }
+}
+
+public struct DisplayProfileOverrideResolver: Sendable {
+    public init() {}
+
+    public func resolve(
+        profile: BarlineProfile,
+        requestedDisplayID: MenuBarDisplayID,
+        snapshot: MenuBarSnapshot
+    ) -> ResolvedDisplayProfileOverride? {
+        guard snapshot.displayIDs.contains(requestedDisplayID) else { return nil }
+        let liveIdentity = snapshot.displayIdentity(for: requestedDisplayID)
+        let exact = profile.displayOverrides.first(where: { $0.displayID == requestedDisplayID })
+
+        if let fingerprint = liveIdentity?.hardwareFingerprint {
+            let matchingOverrides = profile.displayOverrides.filter {
+                $0.displayFingerprint == fingerprint
+            }
+            let matchingDisplays = snapshot.displayIdentities?.filter {
+                $0.hardwareFingerprint == fingerprint
+            } ?? []
+            if !matchingOverrides.isEmpty {
+                guard matchingOverrides.count == 1, matchingDisplays.count == 1 else { return nil }
+                return ResolvedDisplayProfileOverride(
+                    override: matchingOverrides[0],
+                    liveDisplayID: requestedDisplayID,
+                    method: .uniqueHardwareFingerprint
+                )
+            }
+            guard let exact, exact.displayFingerprint == nil else { return nil }
+            return ResolvedDisplayProfileOverride(
+                override: exact,
+                liveDisplayID: requestedDisplayID,
+                method: .exactRuntimeID
+            )
+        }
+
+        guard let exact, exact.displayFingerprint == nil else { return nil }
+        return ResolvedDisplayProfileOverride(
+            override: exact,
+            liveDisplayID: requestedDisplayID,
+            method: .exactRuntimeID
+        )
+    }
+}
+
+public enum ProfilePresentationElement: Codable, Hashable, Sendable, Identifiable {
+    public enum ID: Hashable, Sendable {
+        case group(UUID)
+        case item(MenuBarItemID)
+        case spacer(UUID)
+    }
+
+    case groupMarker(id: UUID, name: String, symbol: String?)
+    case item(MenuBarItemID)
+    case spacer(id: UUID, width: Double)
+
+    public var id: ID {
+        switch self {
+        case let .groupMarker(id, _, _): .group(id)
+        case let .item(itemID): .item(itemID)
+        case let .spacer(id, _): .spacer(id)
+        }
+    }
+}
+
+public struct ProfilePresentationProjector: Sendable {
+    public init() {}
+
+    public func elements(
+        presentation: ResolvedProfilePresentation?,
+        section: MenuBarSection,
+        orderedItemIDs: [MenuBarItemID]
+    ) -> [ProfilePresentationElement] {
+        guard let presentation else {
+            return orderedItemIDs.map(ProfilePresentationElement.item)
+        }
+        var result: [ProfilePresentationElement] = presentation.spacers.compactMap { spacer in
+            guard case let .beginning(spacerSection) = spacer.placement,
+                  spacerSection == section
+            else { return nil }
+            return ProfilePresentationElement.spacer(id: spacer.id, width: spacer.width)
+        }
+        let presentIDs = Set(orderedItemIDs)
+        let firstMembers = presentation.groups.compactMap { group -> (MenuBarItemID, ProfileGroup)? in
+            guard let first = orderedItemIDs.first(where: {
+                group.itemIDs.contains($0) && presentIDs.contains($0)
+            }) else { return nil }
+            return (first, group)
+        }
+        for itemID in orderedItemIDs {
+            result += firstMembers.compactMap { first, group in
+                guard first == itemID else { return nil }
+                return .groupMarker(id: group.id, name: group.name, symbol: group.symbol)
+            }
+            result.append(.item(itemID))
+            result += presentation.spacers.compactMap { spacer in
+                guard case let .after(anchor) = spacer.placement, anchor == itemID else { return nil }
+                return .spacer(id: spacer.id, width: spacer.width)
+            }
+        }
+        result += presentation.spacers.compactMap { spacer in
+            guard case let .end(spacerSection) = spacer.placement,
+                  spacerSection == section
+            else { return nil }
+            return .spacer(id: spacer.id, width: spacer.width)
+        }
+        return result
     }
 }
 
@@ -413,16 +577,26 @@ public enum ProfileAuthorityMatcher {
         profile: BarlineProfile,
         checkpoint: MenuBarWorkspaceCheckpoint
     ) -> Bool {
-        guard ProfileWorkspaceState(profile: profile) == checkpoint.workspace else {
+        let match = checkpoint.activeDisplayID.flatMap { displayID in
+            DisplayProfileOverrideResolver().resolve(
+                profile: profile,
+                requestedDisplayID: displayID,
+                snapshot: checkpoint.snapshot
+            )
+        }
+        let presentation = profile.resolvedPresentation(using: match)
+        var expectedWorkspace = ProfileWorkspaceState(profile: profile)
+        expectedWorkspace.presentation = presentation
+        guard expectedWorkspace == checkpoint.workspace else {
             return false
         }
-        let scopedItems = checkpoint.activeDisplayID.map { activeDisplayID in
+        let scopedItems = presentation.destinationDisplayID.map { activeDisplayID in
             checkpoint.snapshot.items.filter { $0.displayID == activeDisplayID }
         } ?? checkpoint.snapshot.items
         let visible = scopedItems.filter { $0.section == .visible }.map(\.id)
         let hidden = scopedItems.filter { $0.section == .hidden }.map(\.id)
         let alwaysHidden = scopedItems.filter { $0.section == .alwaysHidden }.map(\.id)
-        let layout = profile.layout(for: checkpoint.activeDisplayID)
+        let layout = presentation.layout
         return visible.starts(with: layout.visible)
             && hidden.starts(with: layout.hidden)
             && alwaysHidden.starts(with: layout.alwaysHidden)
@@ -505,6 +679,40 @@ public struct BarlineProfile: Codable, Hashable, Sendable, Identifiable {
     public func layout(for displayID: MenuBarDisplayID?) -> ProfileLayout {
         guard let displayID else { return layout }
         return displayOverrides.first { $0.displayID == displayID }?.layout ?? layout
+    }
+
+    public func resolvedPresentation(for displayID: MenuBarDisplayID?) -> ResolvedProfilePresentation {
+        guard let displayID,
+              let override = displayOverrides.first(where: { $0.displayID == displayID })
+        else {
+            return ResolvedProfilePresentation(
+                source: .base,
+                destinationDisplayID: nil,
+                layout: layout,
+                groups: groups,
+                spacers: spacers
+            )
+        }
+        return ResolvedProfilePresentation(
+            source: .displayOverride(override.displayID),
+            destinationDisplayID: displayID,
+            layout: override.layout,
+            groups: override.groups,
+            spacers: override.spacers
+        )
+    }
+
+    public func resolvedPresentation(
+        using match: ResolvedDisplayProfileOverride?
+    ) -> ResolvedProfilePresentation {
+        guard let match else { return resolvedPresentation(for: nil) }
+        return ResolvedProfilePresentation(
+            source: .displayOverride(match.override.displayID),
+            destinationDisplayID: match.liveDisplayID,
+            layout: match.override.layout,
+            groups: match.override.groups,
+            spacers: match.override.spacers
+        )
     }
 
     /// All item identities referenced by the profile, including display-specific

@@ -6,6 +6,9 @@ public enum SnapshotRejectionReason: Error, Codable, Equatable, Sendable {
     case staleSnapshot
     case futureDatedSnapshot
     case unknownItemDisplay(MenuBarDisplayID)
+    case displayIdentitySetMismatch
+    case duplicateDisplayIdentity(MenuBarDisplayID)
+    case malformedDisplayFingerprint
     case duplicateItemIdentity(MenuBarItemID)
     case unstableItemIdentity(MenuBarItemID)
     case invalidItemGeometry(MenuBarItemID)
@@ -68,6 +71,25 @@ public struct SnapshotValidator: Sendable {
         }
         guard policy.allowsEmptySnapshot || !candidate.items.isEmpty else {
             return .failure(.emptySnapshot)
+        }
+
+        if let displayIdentities = candidate.displayIdentities {
+            var identityIDs = Set<MenuBarDisplayID>()
+            for identity in displayIdentities {
+                guard !identity.runtimeID.value.isEmpty,
+                      identityIDs.insert(identity.runtimeID).inserted
+                else {
+                    return .failure(.duplicateDisplayIdentity(identity.runtimeID))
+                }
+                if let fingerprint = identity.hardwareFingerprint,
+                   !fingerprint.isWellFormed
+                {
+                    return .failure(.malformedDisplayFingerprint)
+                }
+            }
+            guard identityIDs == candidate.displayIDs else {
+                return .failure(.displayIdentitySetMismatch)
+            }
         }
 
         var seen = Set<MenuBarItemID>()
