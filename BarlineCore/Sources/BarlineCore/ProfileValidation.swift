@@ -82,6 +82,26 @@ public struct ProfileValidator: Sendable {
         }
     }
 
+    public func validate(_ workspace: ProfileWorkspaceState) throws {
+        guard workspace.appearance.itemSpacing.isFinite,
+              ProfileAppearance.itemSpacingRange.contains(workspace.appearance.itemSpacing),
+              workspace.appearance.gradientHex.count <= 8,
+              workspace.appearance.gradientHex.allSatisfy({
+                  $0.count <= ProfileCodec.maximumStringLength
+              }),
+              workspace.appearance.tintHex.map({
+                  $0.count <= ProfileCodec.maximumStringLength
+              }) ?? true
+        else {
+            throw ProfileValidationError.invalidAppearance
+        }
+        guard workspace.autoRehide.delaySeconds.isFinite,
+              workspace.autoRehide.delaySeconds >= 0
+        else {
+            throw ProfileValidationError.invalidAutoRehideDelay
+        }
+    }
+
     private func validateLayout(
         _ layout: ProfileLayout,
         groups: [ProfileGroup],

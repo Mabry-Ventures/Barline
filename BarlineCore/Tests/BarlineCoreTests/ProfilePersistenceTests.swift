@@ -124,6 +124,31 @@ struct ProfilePersistenceTests {
         #expect(try await store.load().profiles == [valid])
     }
 
+    @Test("Oversized saves preserve both primary and backup archives")
+    func oversizedSaveDoesNotClobber() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileFileStore(directoryURL: directory)
+        let first = profile(id: UUID(20), name: "First")
+        let second = profile(id: UUID(21), name: "Second")
+        try await store.save([first])
+        try await store.save([second])
+        let primaryBefore = try Data(contentsOf: store.primaryURL)
+        let backupBefore = try Data(contentsOf: store.backupURL)
+
+        var oversized = profile(id: UUID(22), name: "Oversized")
+        let knownItem = oversized.layout.visible[0]
+        oversized.groups = (0 ... ProfileCodec.maximumCollectionCount).map { index in
+            ProfileGroup(name: "Group \(index)", itemIDs: [knownItem])
+        }
+        await #expect(throws: ProfileValidationError.archiveLimitExceeded("collection count")) {
+            try await store.save([oversized])
+        }
+
+        #expect(try Data(contentsOf: store.primaryURL) == primaryBefore)
+        #expect(try Data(contentsOf: store.backupURL) == backupBefore)
+    }
+
     @Test("Ice preferences produce a complete preview without changing storage")
     func previewsIceImport() throws {
         let preferences = IcePreferenceSnapshot(

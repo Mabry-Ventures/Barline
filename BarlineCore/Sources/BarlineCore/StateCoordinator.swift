@@ -24,6 +24,46 @@ public enum MenuBarMutation: Sendable {
     }
 }
 
+public struct MenuBarWorkspaceCheckpoint: Codable, Hashable, Sendable {
+    public let snapshot: MenuBarSnapshot
+    public let activeProfileID: UUID?
+    public let activeDisplayID: MenuBarDisplayID?
+    public let workspace: ProfileWorkspaceState
+
+    public init(
+        snapshot: MenuBarSnapshot,
+        activeProfileID: UUID?,
+        activeDisplayID: MenuBarDisplayID? = nil,
+        workspace: ProfileWorkspaceState
+    ) {
+        self.snapshot = snapshot
+        self.activeProfileID = activeProfileID
+        self.activeDisplayID = activeDisplayID
+        self.workspace = workspace
+    }
+}
+
+public struct MenuBarWorkspaceTransaction: Sendable {
+    fileprivate let captureClosure: @Sendable () async throws -> ProfileWorkspaceState
+    fileprivate let applyClosure: @Sendable (ProfileWorkspaceState) async throws -> Void
+
+    public init(
+        capture: @escaping @Sendable () async throws -> ProfileWorkspaceState,
+        apply: @escaping @Sendable (ProfileWorkspaceState) async throws -> Void
+    ) {
+        captureClosure = capture
+        applyClosure = apply
+    }
+
+    fileprivate func capture() async throws -> ProfileWorkspaceState {
+        try await captureClosure()
+    }
+
+    fileprivate func apply(_ workspace: ProfileWorkspaceState) async throws {
+        try await applyClosure(workspace)
+    }
+}
+
 public struct RetryPolicy: Sendable {
     public let maximumAttempts: Int
     public let baseDelay: Duration
@@ -59,10 +99,12 @@ public actor MenuBarStateCoordinator {
     private struct HistoryCheckpoint: Sendable {
         let snapshot: MenuBarSnapshot
         let activeProfileID: UUID?
+        let workspace: ProfileWorkspaceState?
     }
 
     private struct LogicalLayoutItem: Hashable, Sendable {
         let id: MenuBarItemID
+        let displayID: MenuBarDisplayID?
         let section: MenuBarSection
         let order: Int
     }
@@ -85,6 +127,7 @@ public actor MenuBarStateCoordinator {
     private var mutationWaiters = [CheckedContinuation<Void, Never>]()
     private var undoCheckpoints = [HistoryCheckpoint]()
     private var redoCheckpoints = [HistoryCheckpoint]()
+    private var backendGenerationOffset: UInt64 = 0
 
     public init(
         backend: any MenuBarBackend,
@@ -125,7 +168,7 @@ public actor MenuBarStateCoordinator {
         for attempt in 0 ..< retryPolicy.maximumAttempts {
             try Task.checkCancellation()
             do {
-                let candidate = try await backend.snapshot()
+                let candidate = try await normalizedBackendSnapshot()
                 switch validator.validate(candidate, previous: currentSnapshot, now: now) {
                 case let .success(snapshot):
                     currentSnapshot = snapshot
@@ -209,11 +252,18 @@ public actor MenuBarStateCoordinator {
         do {
             try await apply(mutation)
             try Task.checkCancellation()
-            let candidate = try await backend.snapshot()
+            let candidate = try await normalizedBackendSnapshot()
             switch validator.validate(candidate, previous: before, now: now) {
             case let .success(snapshot):
                 guard generation == mutationGeneration else {
                     throw CancellationError()
+                }
+                if case let .move(operation) = mutation,
+                   !MenuBarMovePlanner().resultMatches(operation, in: snapshot)
+                {
+                    throw MenuBarBackendError.operationFailed(
+                        "menu bar move did not reach requested section"
+                    )
                 }
                 if let restoreTarget {
                     try validateHistoryResult(snapshot, matches: restoreTarget)
@@ -231,12 +281,34 @@ public actor MenuBarStateCoordinator {
                 throw MenuBarBackendError.invalidSnapshot(reason)
             }
         } catch {
-            if await backend.capabilities.canRestore {
-                _ = try? await backend.restore(before)
+            let mutationError = error
+            guard await backend.capabilities.canRestore else {
+                currentSnapshot = nil
+                activeProfileID = nil
+                throw mutationError
             }
-            currentSnapshot = before
-            lastKnownGoodSnapshot = before
-            throw error
+            do {
+                _ = try await backend.restore(before)
+                let rollbackCandidate = try await normalizedBackendSnapshot()
+                let rollbackSnapshot: MenuBarSnapshot
+                switch validator.validate(rollbackCandidate, previous: nil, now: now) {
+                case let .success(snapshot):
+                    try validateHistoryResult(snapshot, matches: before)
+                    rollbackSnapshot = snapshot
+                case let .failure(reason):
+                    throw MenuBarBackendError.invalidSnapshot(reason)
+                }
+                currentSnapshot = rollbackSnapshot
+                lastKnownGoodSnapshot = rollbackSnapshot
+            } catch {
+                let rollbackError = error
+                currentSnapshot = nil
+                activeProfileID = nil
+                throw MenuBarBackendError.operationFailed(
+                    "mutation failed: \(mutationError); rollback failed: \(rollbackError)"
+                )
+            }
+            throw mutationError
         }
     }
 
@@ -249,14 +321,13 @@ public actor MenuBarStateCoordinator {
             (.hidden, layout.hidden),
             (.alwaysHidden, layout.alwaysHidden),
         ] {
-            for (index, itemID) in itemIDs.enumerated() {
-                guard snapshot.items.contains(where: {
-                    $0.id == itemID && $0.section == section && $0.order == index
-                }) else {
-                    throw MenuBarBackendError.operationFailed(
-                        "profile activation did not reach requested layout"
-                    )
-                }
+            let actualItemIDs = snapshot.items
+                .filter { $0.section == section }
+                .map(\.id)
+            guard actualItemIDs.starts(with: itemIDs) else {
+                throw MenuBarBackendError.operationFailed(
+                    "profile activation did not reach requested layout"
+                )
             }
         }
     }
@@ -269,7 +340,9 @@ public actor MenuBarStateCoordinator {
         profile: BarlineProfile,
         on displayID: MenuBarDisplayID? = nil,
         now: Date = Date(),
-        expectedGeneration: UInt64? = nil
+        expectedGeneration: UInt64? = nil,
+        workspaceTransaction: MenuBarWorkspaceTransaction? = nil,
+        prepareCheckpoint: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
@@ -301,24 +374,51 @@ public actor MenuBarStateCoordinator {
         }
 
         let priorProfileID = activeProfileID
+        let workspaceBefore = try await workspaceTransaction?.capture()
+        if let prepareCheckpoint {
+            guard let workspaceBefore else {
+                throw MenuBarBackendError.operationFailed(
+                    "checkpoint preparation requires a workspace transaction"
+                )
+            }
+            try await prepareCheckpoint(
+                MenuBarWorkspaceCheckpoint(
+                    snapshot: before,
+                    activeProfileID: priorProfileID,
+                    activeDisplayID: activeDisplayID,
+                    workspace: workspaceBefore
+                )
+            )
+        }
+        let targetWorkspace = ProfileWorkspaceState(profile: profile)
         mutationGeneration &+= 1
         let generation = mutationGeneration
+        var didBeginLayoutMutation = false
 
         do {
+            if let workspaceTransaction {
+                try await workspaceTransaction.apply(targetWorkspace)
+            }
             for (section, itemIDs) in [
                 (MenuBarSection.visible, layout.visible),
                 (.hidden, layout.hidden),
                 (.alwaysHidden, layout.alwaysHidden),
             ] {
                 for (index, itemID) in itemIDs.enumerated() {
+                    didBeginLayoutMutation = true
                     _ = try await backend.move(
-                        MenuBarMoveOperation(itemID: itemID, section: section, index: index)
+                        MenuBarMoveOperation(
+                            itemID: itemID,
+                            section: section,
+                            index: index,
+                            destinationDisplayID: activeDisplayID
+                        )
                     )
                 }
             }
 
             try Task.checkCancellation()
-            let candidate = try await backend.snapshot()
+            let candidate = try await normalizedBackendSnapshot()
             switch validator.validate(candidate, previous: before, now: now) {
             case let .success(snapshot):
                 guard generation == mutationGeneration else {
@@ -329,20 +429,65 @@ public actor MenuBarStateCoordinator {
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
                 activeProfileID = profile.id
-                recordUndoCheckpoint(before, activeProfileID: priorProfileID)
+                recordUndoCheckpoint(
+                    before,
+                    activeProfileID: priorProfileID,
+                    workspace: workspaceBefore
+                )
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
                 throw MenuBarBackendError.invalidSnapshot(reason)
             }
         } catch {
-            if await backend.capabilities.canRestore {
-                _ = try? await backend.restore(before)
+            let activationError = error
+            var workspaceRollbackError: (any Error)?
+            var layoutRollbackError: (any Error)?
+            var verifiedRollbackSnapshot: MenuBarSnapshot?
+            if let workspaceBefore, let workspaceTransaction {
+                do {
+                    try await workspaceTransaction.apply(workspaceBefore)
+                } catch {
+                    workspaceRollbackError = error
+                }
             }
-            currentSnapshot = before
-            lastKnownGoodSnapshot = before
-            activeProfileID = priorProfileID
-            throw error
+            if didBeginLayoutMutation {
+                if await backend.capabilities.canRestore {
+                    do {
+                        _ = try await backend.restore(before)
+                        let candidate = try await normalizedBackendSnapshot()
+                        switch validator.validate(candidate, previous: nil, now: now) {
+                        case let .success(snapshot):
+                            try validateHistoryResult(snapshot, matches: before)
+                            verifiedRollbackSnapshot = snapshot
+                        case let .failure(reason):
+                            throw MenuBarBackendError.invalidSnapshot(reason)
+                        }
+                    } catch {
+                        layoutRollbackError = error
+                    }
+                } else {
+                    layoutRollbackError = MenuBarBackendError.unavailableCapability("restore")
+                }
+            } else {
+                verifiedRollbackSnapshot = before
+            }
+            if workspaceRollbackError == nil,
+               layoutRollbackError == nil,
+               let verifiedRollbackSnapshot
+            {
+                currentSnapshot = verifiedRollbackSnapshot
+                lastKnownGoodSnapshot = verifiedRollbackSnapshot
+                activeProfileID = priorProfileID
+                throw activationError
+            }
+            currentSnapshot = nil
+            activeProfileID = nil
+            let workspaceDescription = workspaceRollbackError.map(String.init(describing:)) ?? "none"
+            let layoutDescription = layoutRollbackError.map(String.init(describing:)) ?? "none"
+            throw MenuBarBackendError.operationFailed(
+                "profile activation failed: \(activationError); workspace rollback: \(workspaceDescription); layout rollback: \(layoutDescription)"
+            )
         }
     }
 
@@ -369,13 +514,61 @@ public actor MenuBarStateCoordinator {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
+        let preservedCurrent = currentSnapshot
+        let preservedLastKnownGood = lastKnownGoodSnapshot
         mutationGeneration &+= 1
         backendHealth = MenuBarBackendHealth(backendName: "XPC", state: .restarting)
         await backend.restart()
-        if let lastKnownGoodSnapshot, await backend.capabilities.canRestore {
-            _ = try await backend.restore(lastKnownGoodSnapshot)
+
+        do {
+            let restoredLastKnownGood: Bool
+            if let preservedLastKnownGood, await backend.capabilities.canRestore {
+                _ = try await backend.restore(preservedLastKnownGood)
+                restoredLastKnownGood = true
+            } else {
+                restoredLastKnownGood = false
+            }
+            let raw = try await backend.snapshot()
+            let priorGeneration = max(
+                preservedCurrent?.generation ?? 0,
+                preservedLastKnownGood?.generation ?? 0
+            )
+            if raw.generation <= priorGeneration {
+                let (nextGeneration, overflowed) = priorGeneration.addingReportingOverflow(1)
+                guard !overflowed else {
+                    throw MenuBarBackendError.operationFailed("helper generation rebase overflow")
+                }
+                backendGenerationOffset = nextGeneration - raw.generation
+            } else {
+                backendGenerationOffset = 0
+            }
+            let candidate = try normalizeGeneration(of: raw)
+            let continuityBaseline = preservedCurrent ?? preservedLastKnownGood
+            switch validator.validate(candidate, previous: continuityBaseline, now: now) {
+            case let .success(snapshot):
+                if restoredLastKnownGood, let preservedLastKnownGood {
+                    try validateHistoryResult(snapshot, matches: preservedLastKnownGood)
+                } else if let continuityBaseline,
+                          logicalLayout(of: snapshot) != logicalLayout(of: continuityBaseline)
+                {
+                    activeProfileID = nil
+                }
+                currentSnapshot = snapshot
+                lastKnownGoodSnapshot = snapshot
+                lastRejection = nil
+                backendHealth = await backend.health()
+                return snapshot
+            case let .failure(reason):
+                lastRejection = reason
+                throw MenuBarBackendError.invalidSnapshot(reason)
+            }
+        } catch {
+            currentSnapshot = nil
+            lastKnownGoodSnapshot = preservedLastKnownGood
+            activeProfileID = nil
+            backendGenerationOffset = 0
+            throw error
         }
-        return try await refreshAssumingMutationTurn(now: now)
     }
 
     public var canUndo: Bool {
@@ -395,18 +588,101 @@ public actor MenuBarStateCoordinator {
     }
 
     @discardableResult
-    public func undo(now: Date = Date()) async throws -> MenuBarSnapshot {
+    public func clearActiveProfileAuthority(ifMatches profileID: UUID) async -> Bool {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        guard activeProfileID == profileID else { return false }
+        activeProfileID = nil
+        return true
+    }
+
+    public func captureWorkspaceCheckpoint(
+        workspaceTransaction: MenuBarWorkspaceTransaction,
+        now: Date = Date()
+    ) async throws -> MenuBarWorkspaceCheckpoint {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        let snapshot = try await refreshAssumingMutationTurn(now: now)
+        let workspace = try await workspaceTransaction.capture()
+        let activeDisplayID: MenuBarDisplayID? = if let environment = try? await backend.environment(),
+                                                    let displayID = environment.activeStableDisplayID,
+                                                    snapshot.displayIDs.contains(displayID)
+        {
+            displayID
+        } else {
+            nil
+        }
+        return MenuBarWorkspaceCheckpoint(
+            snapshot: snapshot,
+            activeProfileID: activeProfileID,
+            activeDisplayID: activeDisplayID,
+            workspace: workspace
+        )
+    }
+
+    @discardableResult
+    public func restoreWorkspaceCheckpoint(
+        _ checkpoint: MenuBarWorkspaceCheckpoint,
+        workspaceTransaction: MenuBarWorkspaceTransaction,
+        now: Date = Date()
+    ) async throws -> MenuBarSnapshot {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try ProfileValidator().validate(checkpoint.workspace)
+        switch validator.validate(
+            checkpoint.snapshot,
+            previous: nil,
+            now: checkpoint.snapshot.capturedAt
+        ) {
+        case .success:
+            break
+        case let .failure(reason):
+            throw MenuBarBackendError.invalidSnapshot(reason)
+        }
+        let live = try await refreshedHistoryStartingCheckpoint(
+            workspace: workspaceTransaction.capture(),
+            now: now
+        )
+        let target = HistoryCheckpoint(
+            snapshot: checkpoint.snapshot,
+            activeProfileID: checkpoint.activeProfileID,
+            workspace: checkpoint.workspace
+        )
+        let restored = try await restoreHistoryCheckpoint(
+            target,
+            previous: live,
+            now: now,
+            workspaceTransaction: workspaceTransaction
+        )
+        recordUndoCheckpoint(
+            live.snapshot,
+            activeProfileID: live.activeProfileID,
+            workspace: live.workspace
+        )
+        return restored
+    }
+
+    @discardableResult
+    public func undo(
+        now: Date = Date(),
+        workspaceTransaction: MenuBarWorkspaceTransaction? = nil
+    ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
         guard let target = undoCheckpoints.last else {
             throw MenuBarBackendError.operationFailed("no layout undo checkpoint")
         }
-        let before = try await HistoryCheckpoint(
-            snapshot: validatedStartingSnapshot(now: now),
-            activeProfileID: activeProfileID
+        let before = try await refreshedHistoryStartingCheckpoint(
+            workspace: workspaceTransaction?.capture(),
+            now: now
         )
-        let restored = try await restoreHistoryCheckpoint(target, previous: before, now: now)
+        let restored = try await restoreHistoryCheckpoint(
+            target,
+            previous: before,
+            now: now,
+            workspaceTransaction: workspaceTransaction
+        )
         undoCheckpoints.removeLast()
         redoCheckpoints.append(before)
         trimHistory(&redoCheckpoints)
@@ -414,18 +690,26 @@ public actor MenuBarStateCoordinator {
     }
 
     @discardableResult
-    public func redo(now: Date = Date()) async throws -> MenuBarSnapshot {
+    public func redo(
+        now: Date = Date(),
+        workspaceTransaction: MenuBarWorkspaceTransaction? = nil
+    ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
 
         guard let target = redoCheckpoints.last else {
             throw MenuBarBackendError.operationFailed("no layout redo checkpoint")
         }
-        let before = try await HistoryCheckpoint(
-            snapshot: validatedStartingSnapshot(now: now),
-            activeProfileID: activeProfileID
+        let before = try await refreshedHistoryStartingCheckpoint(
+            workspace: workspaceTransaction?.capture(),
+            now: now
         )
-        let restored = try await restoreHistoryCheckpoint(target, previous: before, now: now)
+        let restored = try await restoreHistoryCheckpoint(
+            target,
+            previous: before,
+            now: now,
+            workspaceTransaction: workspaceTransaction
+        )
         redoCheckpoints.removeLast()
         undoCheckpoints.append(before)
         trimHistory(&undoCheckpoints)
@@ -435,15 +719,24 @@ public actor MenuBarStateCoordinator {
     private func restoreHistoryCheckpoint(
         _ target: HistoryCheckpoint,
         previous: HistoryCheckpoint,
-        now: Date
+        now: Date,
+        workspaceTransaction: MenuBarWorkspaceTransaction? = nil
     ) async throws -> MenuBarSnapshot {
         guard await backend.capabilities.canRestore else {
             throw MenuBarBackendError.unavailableCapability("restore")
         }
+        if target.workspace != nil, workspaceTransaction == nil {
+            throw MenuBarBackendError.operationFailed(
+                "workspace history requires a rollback-capable transaction"
+            )
+        }
         mutationGeneration &+= 1
         do {
+            if let workspace = target.workspace, let workspaceTransaction {
+                try await workspaceTransaction.apply(workspace)
+            }
             _ = try await backend.restore(target.snapshot)
-            let candidate = try await backend.snapshot()
+            let candidate = try await normalizedBackendSnapshot()
             // History restoration intentionally targets an older logical layout;
             // structural validation remains strict, but monotonic comparison with
             // the newer pre-undo snapshot would reject a correct restore.
@@ -462,8 +755,11 @@ public actor MenuBarStateCoordinator {
         } catch {
             let historyRestoreError = error
             do {
+                if let workspace = previous.workspace, let workspaceTransaction {
+                    try await workspaceTransaction.apply(workspace)
+                }
                 _ = try await backend.restore(previous.snapshot)
-                let rollbackCandidate = try await backend.snapshot()
+                let rollbackCandidate = try await normalizedBackendSnapshot()
                 let rollbackSnapshot: MenuBarSnapshot
                 switch validator.validate(rollbackCandidate, previous: nil, now: now) {
                 case let .success(snapshot):
@@ -490,11 +786,26 @@ public actor MenuBarStateCoordinator {
         _ snapshot: MenuBarSnapshot,
         matches target: MenuBarSnapshot
     ) throws {
+        guard snapshot.displayIDs == target.displayIDs else {
+            throw MenuBarBackendError.operationFailed(
+                "history restore did not reach requested displays"
+            )
+        }
         let restoredLayout = Set(snapshot.items.map {
-            LogicalLayoutItem(id: $0.id, section: $0.section, order: $0.order)
+            LogicalLayoutItem(
+                id: $0.id,
+                displayID: $0.displayID,
+                section: $0.section,
+                order: $0.order
+            )
         })
         let targetLayout = Set(target.items.map {
-            LogicalLayoutItem(id: $0.id, section: $0.section, order: $0.order)
+            LogicalLayoutItem(
+                id: $0.id,
+                displayID: $0.displayID,
+                section: $0.section,
+                order: $0.order
+            )
         })
         guard restoredLayout == targetLayout else {
             throw MenuBarBackendError.operationFailed(
@@ -505,10 +816,15 @@ public actor MenuBarStateCoordinator {
 
     private func recordUndoCheckpoint(
         _ snapshot: MenuBarSnapshot,
-        activeProfileID: UUID?
+        activeProfileID: UUID?,
+        workspace: ProfileWorkspaceState? = nil
     ) {
         undoCheckpoints.append(
-            HistoryCheckpoint(snapshot: snapshot, activeProfileID: activeProfileID)
+            HistoryCheckpoint(
+                snapshot: snapshot,
+                activeProfileID: activeProfileID,
+                workspace: workspace
+            )
         )
         trimHistory(&undoCheckpoints)
         redoCheckpoints.removeAll(keepingCapacity: true)
@@ -543,6 +859,55 @@ public actor MenuBarStateCoordinator {
             return currentSnapshot
         }
         return try await refreshAssumingMutationTurn(now: now)
+    }
+
+    private func refreshedHistoryStartingCheckpoint(
+        workspace: ProfileWorkspaceState?,
+        now: Date
+    ) async throws -> HistoryCheckpoint {
+        let cached = currentSnapshot
+        let live = try await refreshAssumingMutationTurn(now: now)
+        if let cached, logicalLayout(of: cached) != logicalLayout(of: live) {
+            activeProfileID = nil
+        }
+        return HistoryCheckpoint(
+            snapshot: live,
+            activeProfileID: activeProfileID,
+            workspace: workspace
+        )
+    }
+
+    private func logicalLayout(of snapshot: MenuBarSnapshot) -> Set<LogicalLayoutItem> {
+        Set(snapshot.items.map {
+            LogicalLayoutItem(
+                id: $0.id,
+                displayID: $0.displayID,
+                section: $0.section,
+                order: $0.order
+            )
+        })
+    }
+
+    private func normalizedBackendSnapshot() async throws -> MenuBarSnapshot {
+        try await normalizeGeneration(of: backend.snapshot())
+    }
+
+    private func normalizeGeneration(of snapshot: MenuBarSnapshot) throws -> MenuBarSnapshot {
+        let (generation, overflowed) = snapshot.generation.addingReportingOverflow(
+            backendGenerationOffset
+        )
+        guard !overflowed else {
+            throw MenuBarBackendError.operationFailed("helper generation normalization overflow")
+        }
+        guard backendGenerationOffset != 0 else { return snapshot }
+        return MenuBarSnapshot(
+            generation: generation,
+            capturedAt: snapshot.capturedAt,
+            items: snapshot.items,
+            displayIDs: snapshot.displayIDs,
+            activeSpaceIsValid: snapshot.activeSpaceIsValid,
+            menuTrackingIsActive: snapshot.menuTrackingIsActive
+        )
     }
 
     private func requireCurrentGeneration(_ expectedGeneration: UInt64) throws {

@@ -647,28 +647,51 @@ extension MenuBarItemManager {
         )
     }
 
-    private func operation(for item: MenuBarItem, destination: MoveDestination) -> MenuBarMoveOperation? {
+    private func operation(
+        for item: MenuBarItem,
+        destination: MoveDestination,
+        in snapshot: MenuBarSnapshot
+    ) -> MenuBarMoveOperation? {
         let target = destination.targetItem
+        guard let targetDescriptor = snapshot.items.first(where: {
+            $0.id == target.stableID
+        }) else {
+            return nil
+        }
 
         let address: (section: MenuBarSection.Name, index: Int)
         if target.tag == .hiddenControlItem {
+            let hiddenCount = snapshot.items.count(where: { $0.section == .hidden })
             address = switch destination {
-            case .leftOfItem: (.hidden, itemCache[.hidden].count)
+            case .leftOfItem: (.hidden, hiddenCount)
             case .rightOfItem: (.visible, 0)
             }
         } else if target.tag == .alwaysHiddenControlItem {
+            let alwaysHiddenCount = snapshot.items.count(where: {
+                $0.section == .alwaysHidden
+            })
             address = switch destination {
-            case .leftOfItem: (.alwaysHidden, itemCache[.alwaysHidden].count)
+            case .leftOfItem: (.alwaysHidden, alwaysHiddenCount)
             case .rightOfItem: (.hidden, 0)
             }
         } else {
-            guard var targetAddress = itemCache.address(for: target.tag) else {
+            let candidates = snapshot.items.filter {
+                $0.section == targetDescriptor.section
+            }
+            guard var targetIndex = candidates.firstIndex(where: {
+                $0.id == targetDescriptor.id
+            }) else {
                 return nil
             }
             if case .rightOfItem = destination {
-                targetAddress.index += 1
+                targetIndex += 1
             }
-            address = targetAddress
+            let section: MenuBarSection.Name = switch targetDescriptor.section {
+            case .visible: .visible
+            case .hidden: .hidden
+            case .alwaysHidden: .alwaysHidden
+            }
+            address = (section, targetIndex)
         }
 
         let section = switch address.section {
@@ -676,22 +699,47 @@ extension MenuBarItemManager {
         case .hidden: BarlineCore.MenuBarSection.hidden
         case .alwaysHidden: BarlineCore.MenuBarSection.alwaysHidden
         }
-        return MenuBarMoveOperation(itemID: item.stableID, section: section, index: address.index)
+        return MenuBarMoveOperation(
+            itemID: item.stableID,
+            section: section,
+            index: address.index,
+            destinationDisplayID: targetDescriptor.displayID
+        )
     }
 
     func move(item: MenuBarItem, to destination: MoveDestination) async throws {
+        guard appState?.permissions.accessibility.hasPermission == true else {
+            throw EventError.cannotComplete
+        }
         guard item.isMovable else {
             throw EventError.itemNotMovable(item)
         }
-        guard let operation = operation(for: item, destination: destination) else {
+        try await waitForUserToPauseInput()
+        guard let appState,
+              appState.permissions.accessibility.hasPermission == true
+        else {
             throw EventError.cannotComplete
         }
-        try await waitForUserToPauseInput()
         logger.log("Moving \(item.logString, privacy: .public) \(destination.logString, privacy: .public)")
         lastMoveOperationTimestamp = .now
         defer { lastMoveOperationTimestamp = .now }
         do {
-            _ = try await BarlineMenuService.Connection.shared.move(operation)
+            let snapshot = try await appState.compatibilityCoordinator.refresh()
+            guard let operation = operation(
+                for: item,
+                destination: destination,
+                in: snapshot
+            ) else {
+                throw EventError.cannotComplete
+            }
+            let priorProfileID = await appState.compatibilityCoordinator.activeProfileID
+            _ = try await appState.compatibilityCoordinator.perform(
+                .move(operation),
+                expectedGeneration: snapshot.generation
+            )
+            await appState.profileManager.clearActiveProfileAuthority(
+                ifMatches: priorProfileID
+            )
             await cacheItemsRegardless()
         } catch {
             logger.error("Typed helper move failed: \(error, privacy: .public)")
@@ -986,6 +1034,9 @@ extension MenuBarItemManager {
     /// control item for the always-hidden section is positioned to the
     /// left of control item for the hidden section.
     private func enforceControlItemOrder(controlItems: ControlItemPair) async {
+        guard appState?.permissions.accessibility.hasPermission == true else {
+            return
+        }
         let hidden = controlItems.hidden
 
         guard

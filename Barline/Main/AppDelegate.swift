@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
         Logger.default.debug("Handling reopen")
         // A reopen is also a safe recovery opportunity for the compatibility
         // backend. This keeps the app process alive while replacing an
@@ -95,7 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        if !hasVisibleWindows {
+        let settingsIsVisible = NSApp.windows.contains {
+            $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
+        }
+        if !settingsIsVisible {
             openSettingsWindow()
         }
         return true

@@ -188,13 +188,16 @@ struct SwitchBarlineProfileIntent: AppIntent {
     static let description = IntentDescription(
         "Requests a saved profile. Barline validates and applies it transactionally in the app process."
     )
+    static var supportedModes: IntentModes {
+        .foreground
+    }
 
     @Parameter(title: "Profile")
     var profile: BarlineProfileEntity
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         try BarlineIntentBridge.store(profileID: profile.id)
-        return .result(dialog: "Barline will apply \(profile.name).")
+        return .result(dialog: "Profile request sent to Barline for \(profile.name).")
     }
 }
 

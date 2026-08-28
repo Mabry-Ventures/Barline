@@ -30,9 +30,18 @@ responses cannot become authoritative.
    timestamp, generation, item identities, required controls, and continuity.
 4. Only a valid candidate becomes current and last-known-good state.
 5. Mutations take an explicit FIFO coordinator turn, validate before and
-   after the operation, and restore the prior snapshot after failure.
-6. Recovery invalidates the helper connection, re-probes, restores when the
-   backend supports it, and refreshes authoritative state.
+   after the operation, and accept rollback only after a fresh snapshot proves
+   the exact logical layout was restored. Unverifiable rollback clears current
+   and profile authority while retaining last-known-good recovery data.
+6. Profile activation and history treat menu-bar layout plus user-facing
+   workspace settings as one transaction. History stores both, move planning
+   uses section-relative global order plus an explicit stable destination
+   display, and a restored profile ID remains authoritative only while the
+   definition selected for that display still matches.
+7. Recovery invalidates the helper connection, re-probes, rebases helper
+   generations monotonically, restores when the backend supports it, and
+   refreshes authoritative state. A failed recovery never republishes cached
+   state from the superseded helper.
 
 Recurring 1–10 second refresh and image-capture timers have been removed.
 Refreshes are driven by application, workspace, wake, active-space, display,

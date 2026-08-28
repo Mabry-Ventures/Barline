@@ -129,11 +129,18 @@ public struct MenuBarMoveOperation: Codable, Equatable, Sendable {
     public let itemID: MenuBarItemID
     public let section: MenuBarSection
     public let index: Int
+    public let destinationDisplayID: MenuBarDisplayID?
 
-    public init(itemID: MenuBarItemID, section: MenuBarSection, index: Int) {
+    public init(
+        itemID: MenuBarItemID,
+        section: MenuBarSection,
+        index: Int,
+        destinationDisplayID: MenuBarDisplayID? = nil
+    ) {
         self.itemID = itemID
         self.section = section
         self.index = index
+        self.destinationDisplayID = destinationDisplayID
     }
 }
 

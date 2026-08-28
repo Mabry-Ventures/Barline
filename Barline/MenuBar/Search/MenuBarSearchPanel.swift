@@ -428,7 +428,7 @@ private struct MenuBarSearchContentView: View {
                     kind: .profile,
                     entity: .profile(ProfileID(profile.id.uuidString)),
                     title: profile.name,
-                    groups: profile.groups.map(\.name),
+                    groups: profile.searchableGroupNames,
                     synonyms: ["profile", "layout"],
                     keywords: ["switch", "activate"],
                     lastUsedAt: profile.id == profileManager.activeProfileID
@@ -464,7 +464,7 @@ private struct MenuBarSearchContentView: View {
                     MenuBarSearchItemView(item: item)
                 }
                 let memberships = profileManager.profiles
-                    .filter { $0.layout.allItemIDs.contains(item.stableID) }
+                    .filter { $0.searchableItemIDs.contains(item.stableID) }
                     .map(\.name)
                 let document = SearchDocument(
                     id: SearchDocumentID("menu item \(item.stableID.description)"),
@@ -474,7 +474,7 @@ private struct MenuBarSearchContentView: View {
                     bundleIdentifier: item.stableID.bundleIdentifier,
                     aliases: [item.title, item.stableID.alias].compactMap(\.self),
                     groups: profileManager.profiles.flatMap { profile in
-                        profile.groups.filter { $0.itemIDs.contains(item.stableID) }.map(\.name)
+                        profile.searchableGroupNames(containing: item.stableID)
                     },
                     profileMemberships: memberships,
                     keywords: ["menu bar", "status item"]
@@ -607,11 +607,12 @@ private struct MenuBarSearchContentView: View {
                 switch command.operation {
                 case .reveal:
                     guard let itemID = command.targetItemIDs.first else { return }
+                    let priorProfileID = await appState.compatibilityCoordinator.activeProfileID
                     _ = try await appState.compatibilityCoordinator.perform(
                         .reveal(itemID),
                         expectedGeneration: snapshot.generation
                     )
-                    await profileManager.clearActiveProfileAuthority()
+                    await profileManager.clearActiveProfileAuthority(ifMatches: priorProfileID)
                 case .activate:
                     guard let itemID = command.targetItemIDs.first else { return }
                     _ = try await appState.compatibilityCoordinator.perform(
@@ -633,20 +634,24 @@ private struct MenuBarSearchContentView: View {
                         closePanel()
                         return
                     }
-                    let targetIndex = snapshot.items.count(where: {
-                        $0.section == targetSection && $0.displayID == item.displayID
-                    })
+                    let targetIndex = MenuBarMovePlanner().destinationIndex(
+                        in: snapshot,
+                        section: targetSection,
+                        preferredDisplayID: item.displayID
+                    )
+                    let priorProfileID = await appState.compatibilityCoordinator.activeProfileID
                     _ = try await appState.compatibilityCoordinator.perform(
                         .move(
                             MenuBarMoveOperation(
                                 itemID: itemID,
                                 section: targetSection,
-                                index: targetIndex
+                                index: targetIndex,
+                                destinationDisplayID: item.displayID
                             )
                         ),
                         expectedGeneration: snapshot.generation
                     )
-                    await profileManager.clearActiveProfileAuthority()
+                    await profileManager.clearActiveProfileAuthority(ifMatches: priorProfileID)
                 case .activateProfile, .replaceWithProfile:
                     guard let profileID = command.targetProfileID,
                           let profile = profileManager.profiles.first(where: {

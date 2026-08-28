@@ -11,6 +11,13 @@ import OSLog
 
 @MainActor
 final class ProfileManager: ObservableObject {
+    private struct WorkspaceLayoutItem: Hashable {
+        let id: MenuBarItemID
+        let displayID: MenuBarDisplayID?
+        let section: BarlineCore.MenuBarSection
+        let order: Int
+    }
+
     @Published private(set) var profiles = [BarlineProfile]()
     @Published private(set) var activeProfileID: UUID?
     @Published private(set) var activeProfileActivatedAt: Date?
@@ -26,6 +33,7 @@ final class ProfileManager: ObservableObject {
     private static let profileBeforeFocusIDKey = "focus.profileBeforeFocusID"
     private static let presentationProfileIDKey = "focus.presentationProfileID"
     private static let presentationFocusActiveKey = "focus.presentationModeIsActive"
+    private static let workspaceBeforeFocusKey = "focus.workspaceBeforeFocus"
     private static let maximumProcessedCommandCount = 256
 
     private let store: ProfileFileStore
@@ -37,6 +45,9 @@ final class ProfileManager: ObservableObject {
     private var profileBeforeFocusID: UUID?
     private var activationRequests = [ProfileActivationSource: ProfileActivationRequest]()
     private var bridgeObserver: DarwinNotificationObserver?
+    private var bridgeRetryTask: Task<Void, Never>?
+    private var bridgeRetryAttempt = 0
+    private nonisolated let profileOperationSemaphore = AsyncSemaphore(value: 1)
     private var isProcessingBridgeCommands = false
     private var needsBridgeCommandRescan = false
 
@@ -89,8 +100,9 @@ final class ProfileManager: ObservableObject {
 
     func createPresentationProfile() async {
         guard let appState else { return }
-        let presentationID = resolvedPresentationProfile()?.id ?? PresentationProfileTemplateBuilder.profileID
         await performOperation(successMessage: "Presentation profile saved.") {
+            let presentationID = self.resolvedPresentationProfile()?.id
+                ?? PresentationProfileTemplateBuilder.profileID
             let snapshot = try await appState.compatibilityCoordinator.refresh()
             let profile = PresentationProfileTemplateBuilder().makeTemplate(
                 from: snapshot,
@@ -98,11 +110,11 @@ final class ProfileManager: ObservableObject {
             ).profile
             let updated = self.profiles.filter { $0.id != presentationID } + [profile]
             try await self.store.save(updated)
-            return updated
-        } completion: { [weak self] updated in
-            self?.profiles = updated
+            return (profiles: updated, presentationID: presentationID)
+        } completion: { [weak self] result in
+            self?.profiles = result.profiles
             self?.processedDefaults.set(
-                presentationID.uuidString,
+                result.presentationID.uuidString,
                 forKey: Self.presentationProfileIDKey
             )
             self?.publishCatalog()
@@ -113,47 +125,37 @@ final class ProfileManager: ObservableObject {
     func activate(
         _ profile: BarlineProfile,
         source: ProfileActivationSource = .manual,
-        expectedGeneration: UInt64? = nil
+        expectedGeneration: UInt64? = nil,
+        prepareCheckpoint: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = nil
     ) async -> Bool {
         guard let appState else { return false }
-        activationRequests[source] = ProfileActivationRequest(profileID: profile.id, source: source)
-        let request = ProfileActivationResolver().resolve(activationRequests.values)
-        if !source.retainsArbitrationRequestWhileActive {
-            activationRequests.removeValue(forKey: source)
-        }
-        guard
-            let request,
-            let resolvedProfile = profiles.first(where: { $0.id == request.profileID })
-        else {
-            return false
-        }
         var didActivate = false
         await performOperation(successMessage: "Profile applied.") {
-            let previousSpacingOffset = appState.spacingManager.offset
-            appState.spacingManager.offset = Int(resolvedProfile.appearance.itemSpacing)
-            do {
-                try await appState.spacingManager.applyOffset()
-                _ = try await appState.compatibilityCoordinator.activate(
-                    profile: resolvedProfile,
-                    expectedGeneration: expectedGeneration
-                )
-            } catch {
-                let activationError = error
-                appState.spacingManager.offset = previousSpacingOffset
-                do {
-                    try await appState.spacingManager.applyOffset()
-                } catch {
-                    throw MenuBarBackendError.operationFailed(
-                        "profile activation failed: \(activationError); spacing rollback failed: \(error)"
-                    )
-                }
-                throw activationError
+            self.activationRequests[source] = ProfileActivationRequest(
+                profileID: profile.id,
+                source: source
+            )
+            let request = ProfileActivationResolver().resolve(self.activationRequests.values)
+            if !source.retainsArbitrationRequestWhileActive {
+                self.activationRequests.removeValue(forKey: source)
             }
+            guard let request,
+                  let resolvedProfile = self.profiles.first(where: {
+                      $0.id == request.profileID
+                  })
+            else {
+                throw MenuBarBackendError.operationFailed("requested profile is unavailable")
+            }
+            _ = try await appState.compatibilityCoordinator.activate(
+                profile: resolvedProfile,
+                expectedGeneration: expectedGeneration,
+                workspaceTransaction: self.workspaceTransaction(),
+                prepareCheckpoint: prepareCheckpoint
+            )
             return resolvedProfile.id
         } completion: { [weak self] profileID in
             self?.activeProfileID = profileID
             self?.activeProfileActivatedAt = Date()
-            self?.applyWorkspaceSettings(from: resolvedProfile)
             didActivate = true
         }
         return didActivate
@@ -166,44 +168,60 @@ final class ProfileManager: ObservableObject {
         groups: [ProfileGroup],
         spacers: [ProfileSpacer]
     ) async {
-        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
-        if profile.name == "Presentation" || profile.id == PresentationProfileTemplateBuilder.profileID {
-            processedDefaults.set(profile.id.uuidString, forKey: Self.presentationProfileIDKey)
+        await performOperation(successMessage: "Profile updated.") {
+            guard let index = self.profiles.firstIndex(where: { $0.id == profile.id }) else {
+                throw MenuBarBackendError.operationFailed("profile is unavailable")
+            }
+            let current = self.profiles[index]
+            let updatedProfile = BarlineProfile(
+                id: current.id,
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                symbol: symbol,
+                layout: current.layout,
+                groups: groups,
+                spacers: spacers,
+                displayOverrides: current.displayOverrides,
+                appearance: current.appearance,
+                shelfBehavior: current.shelfBehavior,
+                revealTriggers: current.revealTriggers,
+                autoRehide: current.autoRehide,
+                applicationMenuOverlapBehavior: current.applicationMenuOverlapBehavior,
+                hotkey: current.hotkey,
+                createdAt: current.createdAt,
+                updatedAt: Date()
+            )
+            var updated = self.profiles
+            updated[index] = updatedProfile
+            try await self.store.save(updated)
+            return updated
+        } completion: { [weak self] saved in
+            self?.profiles = saved
+            if profile.name == "Presentation"
+                || profile.id == PresentationProfileTemplateBuilder.profileID
+            {
+                self?.processedDefaults.set(
+                    profile.id.uuidString,
+                    forKey: Self.presentationProfileIDKey
+                )
+            }
+            self?.publishCatalog()
         }
-        let updatedProfile = BarlineProfile(
-            id: profile.id,
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            symbol: symbol,
-            layout: profile.layout,
-            groups: groups,
-            spacers: spacers,
-            displayOverrides: profile.displayOverrides,
-            appearance: profile.appearance,
-            shelfBehavior: profile.shelfBehavior,
-            revealTriggers: profile.revealTriggers,
-            autoRehide: profile.autoRehide,
-            applicationMenuOverlapBehavior: profile.applicationMenuOverlapBehavior,
-            hotkey: profile.hotkey,
-            createdAt: profile.createdAt,
-            updatedAt: Date()
-        )
-        var updated = profiles
-        updated[index] = updatedProfile
-        await persist(updated, successMessage: "Profile updated.")
     }
 
     func resetFromCurrentWorkspace(_ profile: BarlineProfile) async {
-        guard let appState,
-              let index = profiles.firstIndex(where: { $0.id == profile.id })
-        else { return }
+        guard let appState else { return }
         await performOperation(successMessage: "Profile reset from the current workspace.") {
+            guard let index = self.profiles.firstIndex(where: { $0.id == profile.id }) else {
+                throw MenuBarBackendError.operationFailed("profile is unavailable")
+            }
+            let current = self.profiles[index]
             let snapshot = try await appState.compatibilityCoordinator.refresh()
             let reset = self.profileFromCurrentWorkspace(
-                id: profile.id,
-                name: profile.name,
-                symbol: profile.symbol,
+                id: current.id,
+                name: current.name,
+                symbol: current.symbol,
                 snapshot: snapshot,
-                createdAt: profile.createdAt
+                createdAt: current.createdAt
             )
             var updated = self.profiles
             updated[index] = reset
@@ -289,28 +307,40 @@ final class ProfileManager: ObservableObject {
 
     func commitArchiveImport(replacingExisting: Bool) async {
         guard let preview = pendingArchiveImport else { return }
-        let importedIDs = Set(preview.profiles.map(\.id))
-        let importedProfiles = replacingExisting
-            ? preview.profiles
-            : preview.profiles.filter { !preview.conflictingProfileIDs.contains($0.id) }
-        guard !importedProfiles.isEmpty else {
-            statusMessage = "Every imported profile already exists. Approve replacement to continue."
-            return
-        }
-        let retained = profiles.filter { !replacingExisting || !importedIDs.contains($0.id) }
-        let updated = retained + importedProfiles
-        let invalidatesActiveProfile = replacingExisting
-            && activeProfileID.map(importedIDs.contains) == true
         await performOperation(successMessage: "Profile archive imported.") {
-            try await self.store.save(updated)
-            if invalidatesActiveProfile {
-                await self.appState?.compatibilityCoordinator.clearActiveProfileAuthority()
+            let importedIDs = Set(preview.profiles.map(\.id))
+            let importedProfiles = replacingExisting
+                ? preview.profiles
+                : preview.profiles.filter { imported in
+                    !self.profiles.contains(where: { $0.id == imported.id })
+                }
+            guard !importedProfiles.isEmpty else {
+                throw MenuBarBackendError.operationFailed("every imported profile already exists")
             }
-            return (profiles: updated, invalidatedAuthority: invalidatesActiveProfile)
+            let retained = self.profiles.filter {
+                !replacingExisting || !importedIDs.contains($0.id)
+            }
+            let updated = retained + importedProfiles
+            try await self.store.save(updated)
+            let invalidatedAuthority: Bool = if replacingExisting,
+                                                let appState = self.appState,
+                                                let coordinatorProfileID = await appState.compatibilityCoordinator.activeProfileID,
+                                                importedIDs.contains(coordinatorProfileID)
+            {
+                await appState.compatibilityCoordinator
+                    .clearActiveProfileAuthority(ifMatches: coordinatorProfileID)
+            } else {
+                false
+            }
+            return (
+                profiles: updated,
+                invalidatedAuthority: invalidatedAuthority,
+                importedIDs: importedIDs
+            )
         } completion: { [weak self] result in
             if result.invalidatedAuthority {
                 self?.activationRequests = self?.activationRequests.filter {
-                    !importedIDs.contains($0.value.profileID)
+                    !result.importedIDs.contains($0.value.profileID)
                 } ?? [:]
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
@@ -349,31 +379,42 @@ final class ProfileManager: ObservableObject {
 
     func commitIceImport(_ preview: IceImportPreview, replacingExisting: Bool) async {
         await performOperation(successMessage: "Ice settings imported as a Barline profile.") {
-            try await self.store.commit(
+            let updated = try await self.store.commit(
                 preview,
                 confirmed: true,
                 replacingExisting: replacingExisting
             )
-        } completion: { [weak self] updated in
-            self?.profiles = updated
+            let invalidatedAuthority: Bool = if replacingExisting, let appState = self.appState {
+                await appState.compatibilityCoordinator
+                    .clearActiveProfileAuthority(ifMatches: preview.profile.id)
+            } else {
+                false
+            }
+            return (profiles: updated, invalidatedAuthority: invalidatedAuthority)
+        } completion: { [weak self] result in
+            if result.invalidatedAuthority {
+                self?.activationRequests = self?.activationRequests.filter {
+                    $0.value.profileID != preview.profile.id
+                } ?? [:]
+                self?.activeProfileID = nil
+                self?.activeProfileActivatedAt = nil
+            }
+            self?.profiles = result.profiles
             self?.pendingIceImports.removeAll { $0.source == preview.source }
             self?.publishCatalog()
         }
     }
 
     func delete(_ profile: BarlineProfile) async {
-        let remaining = profiles.filter { $0.id != profile.id }
-        guard !remaining.isEmpty else {
-            statusMessage = "Keep at least one profile so the store remains recoverable."
-            return
-        }
-        let invalidatesActiveProfile = activeProfileID == profile.id
         await performOperation(successMessage: "Profile deleted.") {
-            try await self.store.save(remaining)
-            if invalidatesActiveProfile {
-                await self.appState?.compatibilityCoordinator.clearActiveProfileAuthority()
+            let remaining = self.profiles.filter { $0.id != profile.id }
+            guard !remaining.isEmpty else {
+                throw MenuBarBackendError.operationFailed("at least one profile is required")
             }
-            return (profiles: remaining, invalidatedAuthority: invalidatesActiveProfile)
+            try await self.store.save(remaining)
+            let invalidatedAuthority = await self.appState?.compatibilityCoordinator
+                .clearActiveProfileAuthority(ifMatches: profile.id) == true
+            return (profiles: remaining, invalidatedAuthority: invalidatedAuthority)
         } completion: { [weak self] result in
             self?.activationRequests = self?.activationRequests.filter { $0.value.profileID != profile.id } ?? [:]
             self?.profiles = result.profiles
@@ -381,16 +422,6 @@ final class ProfileManager: ObservableObject {
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
             }
-            self?.publishCatalog()
-        }
-    }
-
-    private func persist(_ updated: [BarlineProfile], successMessage: String) async {
-        await performOperation(successMessage: successMessage) {
-            try await self.store.save(updated)
-            return updated
-        } completion: { [weak self] saved in
-            self?.profiles = saved
             self?.publishCatalog()
         }
     }
@@ -444,18 +475,67 @@ final class ProfileManager: ObservableObject {
         )
     }
 
-    private func applyWorkspaceSettings(from profile: BarlineProfile) {
+    private func applyWorkspaceSettings(_ workspace: ProfileWorkspaceState) {
         guard let appState else { return }
         let general = appState.settings.general
-        general.useBarlineShelf = profile.shelfBehavior.isEnabled
-        general.showOnClick = profile.revealTriggers.click
-        general.showOnHover = profile.revealTriggers.hover
-        general.showOnScroll = profile.revealTriggers.scroll
-        general.itemSpacingOffset = profile.appearance.itemSpacing
-        general.autoRehide = profile.autoRehide.isEnabled
-        general.rehideInterval = profile.autoRehide.delaySeconds
+        general.useBarlineShelf = workspace.shelfBehavior.isEnabled
+        general.showOnClick = workspace.revealTriggers.click
+        general.showOnHover = workspace.revealTriggers.hover
+        general.showOnScroll = workspace.revealTriggers.scroll
+        general.itemSpacingOffset = workspace.appearance.itemSpacing
+        general.autoRehide = workspace.autoRehide.isEnabled
+        general.rehideInterval = workspace.autoRehide.delaySeconds
         appState.settings.advanced.hideApplicationMenus =
-            profile.applicationMenuOverlapBehavior == .hideWhenNeeded
+            workspace.applicationMenuOverlapBehavior == .hideWhenNeeded
+    }
+
+    private func currentWorkspaceState() -> ProfileWorkspaceState {
+        guard let appState else {
+            return ProfileWorkspaceState(profile: BarlineProfile(name: "Unavailable workspace"))
+        }
+        let general = appState.settings.general
+        return ProfileWorkspaceState(
+            appearance: ProfileAppearance(itemSpacing: general.itemSpacingOffset),
+            shelfBehavior: ProfileShelfBehavior(isEnabled: general.useBarlineShelf),
+            revealTriggers: ProfileRevealTriggers(
+                click: general.showOnClick,
+                hover: general.showOnHover,
+                scroll: general.showOnScroll
+            ),
+            autoRehide: ProfileAutoRehide(
+                isEnabled: general.autoRehide,
+                delaySeconds: general.rehideInterval
+            ),
+            applicationMenuOverlapBehavior:
+            appState.settings.advanced.hideApplicationMenus ? .hideWhenNeeded : .leaveVisible
+        )
+    }
+
+    private func applyWorkspaceState(_ workspace: ProfileWorkspaceState) async throws {
+        guard let appState else {
+            throw MenuBarBackendError.operationFailed("app state unavailable")
+        }
+        try ProfileValidator().validate(workspace)
+        appState.spacingManager.offset = Int(workspace.appearance.itemSpacing)
+        try await appState.spacingManager.applyOffset()
+        applyWorkspaceSettings(workspace)
+    }
+
+    private func workspaceTransaction() -> MenuBarWorkspaceTransaction {
+        MenuBarWorkspaceTransaction(
+            capture: { @MainActor [weak self] in
+                guard let self else {
+                    throw MenuBarBackendError.operationFailed("profile manager unavailable")
+                }
+                return currentWorkspaceState()
+            },
+            apply: { @MainActor [weak self] workspace in
+                guard let self else {
+                    throw MenuBarBackendError.operationFailed("profile manager unavailable")
+                }
+                try await applyWorkspaceState(workspace)
+            }
+        )
     }
 
     private func configureBridgeObservers() {
@@ -489,15 +569,29 @@ final class ProfileManager: ObservableObject {
                 commands = try await commandInbox.pendingCommands()
             } catch {
                 Logger(category: "Profiles").error("Intent command inbox could not be read")
+                scheduleBridgeRetry()
                 return
             }
 
-            for command in commands {
+            for (index, command) in commands.enumerated() {
                 if hasProcessed(command.id) {
                     try? await commandInbox.acknowledge(command.id)
                     continue
                 }
-                guard await handle(command) else { continue }
+                guard await handle(command) else {
+                    if command.kind == .setPresentationMode,
+                       commands.dropFirst(index + 1).contains(where: {
+                           $0.kind == .setPresentationMode
+                       })
+                    {
+                        recordProcessed(command.id)
+                        try? await commandInbox.acknowledge(command.id)
+                        continue
+                    }
+                    scheduleBridgeRetry()
+                    break
+                }
+                bridgeRetryAttempt = 0
                 recordProcessed(command.id)
                 do {
                     try await commandInbox.acknowledge(command.id)
@@ -506,6 +600,18 @@ final class ProfileManager: ObservableObject {
                 }
             }
         } while needsBridgeCommandRescan
+    }
+
+    private func scheduleBridgeRetry() {
+        guard bridgeRetryTask == nil else { return }
+        bridgeRetryAttempt = min(bridgeRetryAttempt + 1, 6)
+        let delaySeconds = min(1 << (bridgeRetryAttempt - 1), 30)
+        bridgeRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delaySeconds))
+            guard let self, !Task.isCancelled else { return }
+            bridgeRetryTask = nil
+            await processBridgeCommands()
+        }
     }
 
     private func handle(_ command: BarlineIntentCommand) async -> Bool {
@@ -548,31 +654,186 @@ final class ProfileManager: ObservableObject {
                 statusMessage = "Create a Presentation profile before enabling the Focus filter."
                 return false
             }
-            let wasActive = processedDefaults.bool(forKey: Self.presentationFocusActiveKey)
-            let priorProfileID = activeProfileID
-            guard await activate(presentation, source: .focus) else {
-                activationRequests.removeValue(forKey: .focus)
+            // A persisted workspace journal is the durable source of truth. It is
+            // written before activation so a crash at any later point cannot cause
+            // a retry to overwrite the user's original pre-Presentation workspace.
+            let existingJournal = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey)
+            if let existingJournal, decodeFocusCheckpoint(existingJournal) == nil {
+                statusMessage = "The pre-Presentation workspace checkpoint is invalid."
                 return false
             }
-            if !wasActive {
-                profileBeforeFocusID = priorProfileID
-                processedDefaults.set(priorProfileID?.uuidString, forKey: Self.profileBeforeFocusIDKey)
-                processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+            let hasJournal = existingJournal != nil
+            let journal: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = hasJournal
+                ? nil
+                : { @MainActor [weak self] checkpoint in
+                    guard let self else {
+                        throw MenuBarBackendError.operationFailed("profile manager unavailable")
+                    }
+                    let data = try JSONEncoder().encode(checkpoint)
+                    guard data.count <= ProfileCodec.maximumArchiveByteCount else {
+                        throw ProfileValidationError.archiveTooLarge(data.count)
+                    }
+                    processedDefaults.set(data, forKey: Self.workspaceBeforeFocusKey)
+                    guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) == data else {
+                        throw MenuBarBackendError.operationFailed("workspace journal persistence failed")
+                    }
+                    profileBeforeFocusID = checkpoint.activeProfileID
+                    processedDefaults.set(
+                        checkpoint.activeProfileID?.uuidString,
+                        forKey: Self.profileBeforeFocusIDKey
+                    )
+                }
+            guard await activate(
+                presentation,
+                source: .focus,
+                prepareCheckpoint: journal
+            ) else {
+                activationRequests.removeValue(forKey: .focus)
+                if !hasJournal,
+                   let data = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey),
+                   let checkpoint = decodeFocusCheckpoint(data),
+                   await currentWorkspaceMatches(checkpoint)
+                {
+                    clearProfileBeforeFocus()
+                }
+                return false
             }
+            processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
             return true
         }
 
-        guard let priorID = profileBeforeFocusID,
-              let prior = profiles.first(where: { $0.id == priorID })
-        else {
+        guard let appState else { return false }
+        guard let data = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) else {
+            if !processedDefaults.bool(forKey: Self.presentationFocusActiveKey) {
+                activationRequests.removeValue(forKey: .focus)
+                return true
+            }
+            statusMessage = "The pre-Presentation workspace checkpoint is unavailable."
+            return false
+        }
+        guard let checkpoint = decodeFocusCheckpoint(data) else {
+            statusMessage = "The pre-Presentation workspace checkpoint is unavailable."
+            return false
+        }
+        if !processedDefaults.bool(forKey: Self.presentationFocusActiveKey),
+           await currentWorkspaceMatches(checkpoint)
+        {
             activationRequests.removeValue(forKey: .focus)
             clearProfileBeforeFocus()
             return true
         }
-        guard await activate(prior, source: .focus) else { return false }
+        var didRestore = false
+        await performOperation(successMessage: nil) {
+            _ = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
+                checkpoint,
+                workspaceTransaction: self.workspaceTransaction()
+            )
+            let retainedProfileID = checkpoint.activeProfileID.flatMap { profileID in
+                self.profiles.first(where: { $0.id == profileID }).flatMap { profile in
+                    self.profileMatchesCheckpoint(profile, checkpoint: checkpoint) ? profileID : nil
+                }
+            }
+            if let checkpointProfileID = checkpoint.activeProfileID,
+               retainedProfileID == nil
+            {
+                _ = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                    ifMatches: checkpointProfileID
+                )
+            }
+            return retainedProfileID
+        } completion: { [weak self] retainedProfileID in
+            self?.activeProfileID = retainedProfileID
+            self?.activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
+            didRestore = true
+        }
+        guard didRestore else {
+            statusMessage = "Barline could not restore the pre-Presentation workspace."
+            return false
+        }
         activationRequests.removeValue(forKey: .focus)
         clearProfileBeforeFocus()
         return true
+    }
+
+    private func profileMatchesCheckpoint(
+        _ profile: BarlineProfile,
+        checkpoint: MenuBarWorkspaceCheckpoint
+    ) -> Bool {
+        guard ProfileWorkspaceState(profile: profile) == checkpoint.workspace else {
+            return false
+        }
+        let visible = checkpoint.snapshot.items.filter { $0.section == .visible }.map(\.id)
+        let hidden = checkpoint.snapshot.items.filter { $0.section == .hidden }.map(\.id)
+        let alwaysHidden = checkpoint.snapshot.items
+            .filter { $0.section == .alwaysHidden }
+            .map(\.id)
+        let layout = profile.layout(for: checkpoint.activeDisplayID)
+        return visible.starts(with: layout.visible)
+            && hidden.starts(with: layout.hidden)
+            && alwaysHidden.starts(with: layout.alwaysHidden)
+    }
+
+    private func decodeFocusCheckpoint(_ data: Data) -> MenuBarWorkspaceCheckpoint? {
+        guard data.count <= ProfileCodec.maximumArchiveByteCount,
+              let checkpoint = try? JSONDecoder().decode(
+                  MenuBarWorkspaceCheckpoint.self,
+                  from: data
+              ),
+              (try? ProfileValidator().validate(checkpoint.workspace)) != nil
+        else {
+            return nil
+        }
+        switch SnapshotValidator().validate(
+            checkpoint.snapshot,
+            previous: nil,
+            now: checkpoint.snapshot.capturedAt
+        ) {
+        case .success:
+            return checkpoint
+        case .failure:
+            return nil
+        }
+    }
+
+    private func currentWorkspaceMatches(_ expected: MenuBarWorkspaceCheckpoint) async -> Bool {
+        guard let appState,
+              let current = try? await appState.compatibilityCoordinator.captureWorkspaceCheckpoint(
+                  workspaceTransaction: workspaceTransaction()
+              )
+        else {
+            return false
+        }
+        return checkpointsHaveSameState(current, expected)
+    }
+
+    private func checkpointsHaveSameState(
+        _ lhs: MenuBarWorkspaceCheckpoint,
+        _ rhs: MenuBarWorkspaceCheckpoint
+    ) -> Bool {
+        guard lhs.activeProfileID == rhs.activeProfileID,
+              lhs.activeDisplayID == rhs.activeDisplayID,
+              lhs.workspace == rhs.workspace,
+              lhs.snapshot.displayIDs == rhs.snapshot.displayIDs
+        else {
+            return false
+        }
+        let lhsLayout = Set(lhs.snapshot.items.map {
+            WorkspaceLayoutItem(
+                id: $0.id,
+                displayID: $0.displayID,
+                section: $0.section,
+                order: $0.order
+            )
+        })
+        let rhsLayout = Set(rhs.snapshot.items.map {
+            WorkspaceLayoutItem(
+                id: $0.id,
+                displayID: $0.displayID,
+                section: $0.section,
+                order: $0.order
+            )
+        })
+        return lhsLayout == rhsLayout
     }
 
     private func performHistoryChange(isUndo: Bool) async {
@@ -580,68 +841,84 @@ final class ProfileManager: ObservableObject {
         let successMessage = isUndo ? "Layout change undone." : "Layout change redone."
         await performOperation(successMessage: successMessage) {
             if isUndo {
-                _ = try await appState.compatibilityCoordinator.undo()
+                _ = try await appState.compatibilityCoordinator.undo(
+                    workspaceTransaction: self.workspaceTransaction()
+                )
             } else {
-                _ = try await appState.compatibilityCoordinator.redo()
+                _ = try await appState.compatibilityCoordinator.redo(
+                    workspaceTransaction: self.workspaceTransaction()
+                )
             }
-            let profileID = await appState.compatibilityCoordinator.activeProfileID
-            return try await self.synchronizeProfileAuthority(to: profileID)
+            return try await self.synchronizeProfileAuthority()
         } completion: { [weak self] profileID in
             self?.activeProfileID = profileID
             self?.activeProfileActivatedAt = profileID == nil ? nil : Date()
         }
     }
 
-    private func synchronizeProfileAuthority(to profileID: UUID?) async throws -> UUID? {
+    private func synchronizeProfileAuthority(
+        clearsActivationRequests: Bool = true
+    ) async throws -> UUID? {
         guard let appState else { return nil }
-        activationRequests.removeAll()
+        if clearsActivationRequests {
+            activationRequests.removeAll()
+        }
+        let checkpoint = try await appState.compatibilityCoordinator.captureWorkspaceCheckpoint(
+            workspaceTransaction: workspaceTransaction()
+        )
+        let profileID = checkpoint.activeProfileID
         guard let profileID,
               let profile = profiles.first(where: { $0.id == profileID })
         else {
             activeProfileID = nil
             activeProfileActivatedAt = nil
-            await appState.compatibilityCoordinator.clearActiveProfileAuthority()
-            try await clearWorkspaceProfileSettings()
             return nil
         }
-        do {
-            appState.spacingManager.offset = Int(profile.appearance.itemSpacing)
-            try await appState.spacingManager.applyOffset()
-            applyWorkspaceSettings(from: profile)
-            return profileID
-        } catch {
+        guard profileMatchesCheckpoint(profile, checkpoint: checkpoint) else {
+            _ = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                ifMatches: profileID
+            )
             activeProfileID = nil
             activeProfileActivatedAt = nil
-            await appState.compatibilityCoordinator.clearActiveProfileAuthority()
-            try? await clearWorkspaceProfileSettings()
-            throw error
+            return nil
         }
-    }
-
-    private func clearWorkspaceProfileSettings() async throws {
-        guard let appState else { return }
-        let defaults = BarlineProfile(name: "Workspace defaults")
-        appState.spacingManager.offset = Int(defaults.appearance.itemSpacing)
-        do {
-            try await appState.spacingManager.applyOffset()
-        } catch {
-            applyWorkspaceSettings(from: defaults)
-            throw error
-        }
-        applyWorkspaceSettings(from: defaults)
+        return profileID
     }
 
     private func clearProfileBeforeFocus() {
+        processedDefaults.set(false, forKey: Self.presentationFocusActiveKey)
+        guard !processedDefaults.bool(forKey: Self.presentationFocusActiveKey) else {
+            statusMessage = "Presentation mode state could not be cleared."
+            return
+        }
         profileBeforeFocusID = nil
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusIDKey)
-        processedDefaults.set(false, forKey: Self.presentationFocusActiveKey)
+        processedDefaults.removeObject(forKey: Self.workspaceBeforeFocusKey)
     }
 
-    func clearActiveProfileAuthority() async {
-        activationRequests.removeAll()
-        activeProfileID = nil
-        activeProfileActivatedAt = nil
-        await appState?.compatibilityCoordinator.clearActiveProfileAuthority()
+    func clearActiveProfileAuthority(ifMatches expectedProfileID: UUID?) async {
+        await profileOperationSemaphore.wait()
+        defer { profileOperationSemaphore.signal() }
+        guard let appState else { return }
+        if let expectedProfileID {
+            _ = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                ifMatches: expectedProfileID
+            )
+        }
+        do {
+            let retainedProfileID = try await synchronizeProfileAuthority(
+                clearsActivationRequests: false
+            )
+            activeProfileID = retainedProfileID
+            activeProfileActivatedAt = retainedProfileID == nil ? nil : Date()
+            if retainedProfileID == nil {
+                activationRequests.removeAll()
+            }
+        } catch {
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            Logger(category: "Profiles").error("Profile authority reconciliation failed")
+        }
     }
 
     private func resolvedPresentationProfile() -> BarlineProfile? {
@@ -691,6 +968,8 @@ final class ProfileManager: ObservableObject {
         operation: () async throws -> Value,
         completion: (Value) -> Void
     ) async {
+        await profileOperationSemaphore.wait()
+        defer { profileOperationSemaphore.signal() }
         isBusy = true
         defer { isBusy = false }
         do {

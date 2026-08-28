@@ -172,16 +172,46 @@ final class WindowServerClient: @unchecked Sendable {
         for attempt in 0 ..< maximumAttempts {
             let windows = try currentWindows()
             let identified = identifiedWindows(windows)
-            guard let item = identified.first(where: { $0.id == operation.itemID })?.window else {
+            guard let sourceIndex = identified.firstIndex(where: { $0.id == operation.itemID }) else {
                 throw MenuBarBackendError.staleItem(operation.itemID)
             }
-            let candidates = classifiedWindows(windows)
-                .filter { $0.section == operation.section }
-                .map(\.window)
+            let item = identified[sourceIndex].window
+            let classified = classifiedWindows(windows)
+            let candidateIndices = classified.indices.filter {
+                classified[$0].section == operation.section
+            }
+            let candidates = candidateIndices.map { classified[$0].window }
             guard !candidates.isEmpty else {
                 throw MenuBarBackendError.operationFailed("No destination item is available")
             }
-            let targetIndex = min(max(operation.index, 0), candidates.count - 1)
+            let requestedIndex = min(max(operation.index, 0), candidates.count - 1)
+            let targetIndex: Int
+            if let destinationDisplayID = operation.destinationDisplayID {
+                let displayCandidateIndices = candidates.indices.filter {
+                    displayID(containing: candidates[$0].bounds) == destinationDisplayID
+                }
+                guard let closestIndex = displayCandidateIndices.min(by: {
+                    abs($0 - requestedIndex) < abs($1 - requestedIndex)
+                }) else {
+                    throw MenuBarBackendError.operationFailed(
+                        "No destination item is available on the requested display"
+                    )
+                }
+                targetIndex = closestIndex
+            } else {
+                targetIndex = requestedIndex
+            }
+            let sourceDisplayID = displayID(containing: item.bounds)
+            if classified[sourceIndex].section == operation.section,
+               candidateIndices.firstIndex(of: sourceIndex) == requestedIndex,
+               operation.destinationDisplayID.map({ sourceDisplayID == $0 }) != false
+            {
+                let updated = try snapshot()
+                return MenuBarMutationResult(
+                    generation: updated.generation,
+                    changedItemIDs: []
+                )
+            }
             let target = candidates[targetIndex]
             lastOrigin = item.bounds.origin
             try await synthesizeDrag(item: item, target: target)
@@ -376,15 +406,9 @@ final class WindowServerClient: @unchecked Sendable {
 
     func restore(_ priorSnapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
         var changed = [MenuBarItemID]()
-        for descriptor in priorSnapshot.items.sorted(by: { $0.order < $1.order }) {
-            _ = try await move(
-                MenuBarMoveOperation(
-                    itemID: descriptor.id,
-                    section: descriptor.section,
-                    index: descriptor.order
-                )
-            )
-            changed.append(descriptor.id)
+        for operation in MenuBarMovePlanner().restoreOperations(for: priorSnapshot) {
+            _ = try await move(operation)
+            changed.append(operation.itemID)
         }
         let updated = try snapshot()
         return MenuBarMutationResult(generation: updated.generation, changedItemIDs: changed)

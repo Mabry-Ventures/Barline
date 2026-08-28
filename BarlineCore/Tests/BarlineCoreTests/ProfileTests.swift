@@ -42,6 +42,89 @@ struct ProfileTests {
         #expect(profile.layout(for: nil) == profile.layout)
     }
 
+    @Test("Search metadata includes every display override exactly once")
+    func searchableOverrideMetadata() {
+        let base = item(1)
+        let overrideOnly = item(2)
+        let sharedGroup = ProfileGroup(id: UUID(90), name: "Shared", itemIDs: [base])
+        let overrideGroup = ProfileGroup(id: UUID(91), name: "External", itemIDs: [overrideOnly])
+        let profile = BarlineProfile(
+            name: "Displays",
+            layout: ProfileLayout(visible: [base]),
+            groups: [sharedGroup],
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: primaryDisplay,
+                    layout: ProfileLayout(visible: [base, overrideOnly]),
+                    groups: [sharedGroup, overrideGroup]
+                ),
+            ]
+        )
+
+        #expect(profile.searchableItemIDs == [base, overrideOnly])
+        #expect(profile.searchableGroups == [sharedGroup, overrideGroup])
+        #expect(profile.searchableGroupNames == ["Shared", "External"])
+        #expect(profile.searchableGroupNames(containing: overrideOnly) == ["External"])
+    }
+
+    @Test("Move planner uses global section candidates across displays")
+    func plansGlobalCrossDisplayIndex() {
+        let first = MenuBarDisplayID("first")
+        let second = MenuBarDisplayID("second")
+        let snapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: item(1), section: .hidden, order: 0, displayID: first),
+                MenuBarItemDescriptor(id: item(2), section: .hidden, order: 1, displayID: first),
+                MenuBarItemDescriptor(id: item(3), section: .hidden, order: 2, displayID: second),
+            ],
+            displayIDs: [first, second],
+            activeSpaceIsValid: true
+        )
+
+        #expect(MenuBarMovePlanner().destinationIndex(
+            in: snapshot,
+            section: .hidden,
+            preferredDisplayID: first
+        ) == 1)
+
+        #expect(MenuBarMovePlanner().restoreOperations(for: snapshot) == [
+            MenuBarMoveOperation(
+                itemID: item(1),
+                section: .hidden,
+                index: 0,
+                destinationDisplayID: first
+            ),
+            MenuBarMoveOperation(
+                itemID: item(2),
+                section: .hidden,
+                index: 1,
+                destinationDisplayID: first
+            ),
+            MenuBarMoveOperation(
+                itemID: item(3),
+                section: .hidden,
+                index: 2,
+                destinationDisplayID: second
+            ),
+        ])
+
+        let swapped = MenuBarSnapshot(
+            generation: 2,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: item(1), section: .hidden, order: 0, displayID: second),
+                MenuBarItemDescriptor(id: item(2), section: .hidden, order: 1, displayID: first),
+                MenuBarItemDescriptor(id: item(3), section: .hidden, order: 2, displayID: first),
+            ],
+            displayIDs: [first, second],
+            activeSpaceIsValid: true
+        )
+        let firstRestore = MenuBarMovePlanner().restoreOperations(for: snapshot)[0]
+        #expect(MenuBarMovePlanner().resultMatches(firstRestore, in: swapped) == false)
+    }
+
     @Test("Activation precedence is deterministic before request recency")
     func activationPrecedence() {
         let low = ProfileActivationRequest(
@@ -409,6 +492,39 @@ struct ProfileTests {
             try ProfileCodec().importArchive(
                 JSONSerialization.data(withJSONObject: archiveDocument(profiles: [excessiveField]))
             )
+        }
+    }
+
+    @Test("Export enforces the same JSON bounds as import")
+    func exportRejectsOversizedStrings() {
+        var profile = completeProfile()
+        profile.name = String(repeating: "x", count: ProfileCodec.maximumStringLength + 1)
+
+        #expect(throws: ProfileValidationError.archiveLimitExceeded("string length")) {
+            try ProfileCodec().export([profile])
+        }
+        #expect(throws: ProfileValidationError.archiveLimitExceeded("string length")) {
+            try ProfileCodec().encode(profile)
+        }
+    }
+
+    @Test("Export bounds collections and accepts the exact collection limit")
+    func exportBoundsCollections() throws {
+        let knownItem = item(1)
+        var profile = completeProfile()
+        profile.layout = ProfileLayout(visible: [knownItem])
+        profile.groups = (0 ..< ProfileCodec.maximumCollectionCount).map { index in
+            ProfileGroup(name: "Group \(index)", itemIDs: [knownItem])
+        }
+        profile.spacers = []
+        profile.displayOverrides = []
+
+        let boundaryArchive = try ProfileCodec().export([profile])
+        #expect(try ProfileCodec().importArchive(boundaryArchive).profiles == [profile])
+
+        profile.groups.append(ProfileGroup(name: "Too many", itemIDs: [knownItem]))
+        #expect(throws: ProfileValidationError.archiveLimitExceeded("collection count")) {
+            try ProfileCodec().export([profile])
         }
     }
 
