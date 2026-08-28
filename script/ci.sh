@@ -183,7 +183,9 @@ run_fast() {
         run_step "project-list" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \
             -list -json -project Barline.xcodeproj
         plist_files=()
-        while IFS= read -r -d '' file; do plist_files+=("$file"); done < <(find Barline BarlineMenuService -name '*.plist' -print0)
+        while IFS= read -r -d '' file; do plist_files+=("$file"); done < <(
+            find Barline BarlineMenuService BarlineIntents -name '*.plist' -print0
+        )
         run_step "plist-validation" plutil -lint "${plist_files[@]}"
     fi
 }
@@ -203,11 +205,24 @@ run_full() {
         -project Barline.xcodeproj -scheme Barline -configuration Debug \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/analyze.xcresult" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO analyze
+    run_step "test-plan-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
+        -project Barline.xcodeproj -scheme Barline -testPlan Barline \
+        -configuration Debug -destination 'platform=macOS,arch=arm64' \
+        -derivedDataPath "$ARTIFACT_DIR/test-derived" \
+        CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build-for-testing
+    run_step "test-plan-core" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
+        -project Barline.xcodeproj -scheme Barline -testPlan Barline \
+        -configuration Debug -destination 'platform=macOS,arch=arm64' \
+        -derivedDataPath "$ARTIFACT_DIR/test-derived" \
+        -resultBundlePath "$ARTIFACT_DIR/results/tests.xcresult" \
+        -only-testing:BarlineTests -only-testing:BarlineIntegrationTests \
+        CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test-without-building
     require_gate_script ./script/test-menu-bar-recovery.sh
     require_gate_script ./script/test-notch-overflow.sh
     require_gate_script ./script/test-fixtures.sh
     require_gate_script ./script/test-xpc-interruption.sh
     require_gate_script ./script/test-ui-smoke.sh
+    require_gate_script ./script/test-xcode-ui.sh
     require_gate_script ./script/test-accessibility.sh
     require_gate_script ./script/test-support-bundle-privacy.sh
     require_gate_script ./script/test-performance-smoke.sh

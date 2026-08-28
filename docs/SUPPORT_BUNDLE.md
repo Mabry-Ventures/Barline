@@ -2,9 +2,8 @@
 
 Barline now has a bounded JSON diagnostics encoder and atomic exporter. It
 returns an in-memory preview for explicit review before a caller writes to a
-user-selected destination. The current product UI does not yet expose that
-preview/save flow, so support-bundle export is implemented at the platform
-layer but is not yet user-accessible. The fail-closed
+user-selected destination. Advanced Settings exposes this as an explicit
+create, review, choose-destination, and save flow. The fail-closed
 `script/test-support-bundle-privacy.sh` checks the exporter, tracked credentials,
 and obvious sensitive logging sources.
 

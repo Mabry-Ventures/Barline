@@ -6,7 +6,7 @@ enum AuditFailure: Error, CustomStringConvertible {
     case permissionUnavailable
     case attribute(String)
     case noWindows
-    case noInteractiveElements
+    case noInteractiveElements([String])
     case unlabeledElements([String])
 
     var description: String {
@@ -15,7 +15,8 @@ enum AuditFailure: Error, CustomStringConvertible {
         case .permissionUnavailable: "Accessibility access is not granted to the invoking terminal/Codex host"
         case let .attribute(name): "unable to read accessibility attribute \(name)"
         case .noWindows: "Barline has no accessibility-visible window"
-        case .noInteractiveElements: "Barline window has no accessibility-visible interactive controls"
+        case let .noInteractiveElements(roles):
+            "Barline window has no accessibility-visible interactive controls; observed roles: \(roles.joined(separator: ", "))"
         case let .unlabeledElements(roles): "unlabeled enabled controls: \(roles.joined(separator: ", "))"
         }
     }
@@ -50,6 +51,10 @@ do {
     guard let windows = value(application, kAXWindowsAttribute) as? [AXUIElement], !windows.isEmpty else {
         throw AuditFailure.noWindows
     }
+    let windowRoles = windows.map { text($0, kAXRoleAttribute) }
+    guard windowRoles.contains(kAXWindowRole as String) else {
+        throw AuditFailure.permissionUnavailable
+    }
 
     let interactiveRoles: Set<String> = [
         kAXButtonRole as String,
@@ -59,10 +64,13 @@ do {
         kAXSliderRole as String,
         kAXTextFieldRole as String,
     ]
-    let controls = windows.flatMap { walk($0) }.filter {
+    let elements = windows.flatMap { walk($0) }
+    let controls = elements.filter {
         interactiveRoles.contains(text($0, kAXRoleAttribute))
     }
-    guard !controls.isEmpty else { throw AuditFailure.noInteractiveElements }
+    guard !controls.isEmpty else {
+        throw AuditFailure.noInteractiveElements(Array(Set(elements.map { text($0, kAXRoleAttribute) })).sorted())
+    }
 
     let unlabeled = controls.compactMap { control -> String? in
         let enabled = (value(control, kAXEnabledAttribute) as? Bool) ?? true

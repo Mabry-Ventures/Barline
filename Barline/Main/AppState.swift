@@ -50,6 +50,9 @@ final class AppState: ObservableObject {
     /// Serialized authority for validated compatibility snapshots and recovery.
     let compatibilityCoordinator = MenuBarStateCoordinator(backend: XPCMenuBarBackend())
 
+    /// Persistence and transactional activation for menu bar profiles.
+    let profileManager = ProfileManager()
+
     /// Manager for user notifications.
     let userNotificationManager = UserNotificationManager()
 
@@ -74,6 +77,8 @@ final class AppState: ObservableObject {
                 logger.warning("Compatibility snapshot unavailable during setup: \(error.localizedDescription)")
             }
         }
+
+        await profileManager.performSetup(with: self)
 
         appearanceManager.performSetup(with: self)
         hidEventManager.performSetup(with: self)
@@ -203,6 +208,11 @@ final class AppState: ObservableObject {
             }
             .store(in: &c)
         updatesManager.objectWillChange
+            .sink { [weak self] in
+                self?.objectWillChange.send()
+            }
+            .store(in: &c)
+        profileManager.objectWillChange
             .sink { [weak self] in
                 self?.objectWillChange.send()
             }

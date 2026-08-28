@@ -2,9 +2,10 @@
 
 `BarlineCore` defines profile schema version **3** and archive format version
 **1**. The models, validator, JSON codec, migrations, file store, Ice-import
-preview, and Swift Testing coverage exist. The app does not yet select a
-production store location or provide profile UI, activation integration, or an
-Ice-import UI, so this is a domain contract rather than a shipping feature.
+preview, and Swift Testing coverage exist. The app uses the Barline App Group
+container (with an Application Support fallback for unsigned local builds),
+provides profile capture/apply/delete and Presentation-profile UI, and routes
+activation through the validated transactional coordinator.
 
 ## Model
 
@@ -51,8 +52,8 @@ uses `profiles.json` and `profiles.backup.json`, creates the directory with
 owner-only permissions, validates before saving, writes atomically, retains the
 previous valid primary as backup, recovers a missing/corrupt primary from a
 valid backup, and fails closed when both files are unreadable. Tests use
-temporary directories; no shipping Application Support or App Group location
-is configured yet.
+temporary directories and the shipping app selects the shared App Group
+`group.com.mabryventures.Barline`.
 
 The Ice importer recognizes only `com.jordanbaird.Ice` and
 `com.lxy1992.Ice`, creates a confirmation-required preview from an explicit
@@ -63,5 +64,7 @@ appearance/hotkey data, and requires explicit replacement on repeated import.
 
 The implemented resolver orders sources from lowest to highest precedence:
 configured default, Focus, Shortcut, App Intent, manual, recovery. Ties use the
-newest request and then a stable UUID ordering. Applying that resolution to the
-live menu bar with rollback remains lead-code work.
+newest request and then a stable UUID ordering. `ProfileManager` retains one
+request per source, resolves it before every activation, and commits an active
+profile only after the coordinator validates the resulting snapshot; failures
+restore the prior layout and profile authority.

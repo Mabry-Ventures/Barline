@@ -3,15 +3,18 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
 import Combine
-import Ifrit
+import OSLog
 
 @MainActor
 final class MenuBarSearchModel: ObservableObject {
     enum ItemID: Hashable {
         case header(MenuBarSection.Name)
         case item(MenuBarItemTag)
+        case profileHeader
+        case profile(UUID)
     }
 
     @Published var searchText = ""
@@ -21,7 +24,32 @@ final class MenuBarSearchModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
-    let fuse = Fuse(threshold: 0.5)
+    private var spotlightDocuments = [SearchDocument]()
+
+    func rankedDocumentIDs(for query: String, documents: [SearchDocument]) -> [SearchDocumentID] {
+        do {
+            let index = try DeterministicSearchIndex(documents: documents)
+            synchronizeSpotlightIfNeeded(with: documents)
+            return index.search(query, limit: documents.count).map(\.document.id)
+        } catch {
+            Logger(category: "Search").error("Search index synchronization failed")
+            return []
+        }
+    }
+
+    func synchronizeSpotlightIfNeeded(with documents: [SearchDocument]) {
+        guard documents != spotlightDocuments else { return }
+        spotlightDocuments = documents
+        Task {
+            do {
+                try await CoreSpotlightIndexer.shared.replaceAll(with: documents)
+            } catch CoreSpotlightIndexingError.unavailable {
+                // Search remains fully available through the in-process index.
+            } catch {
+                Logger(category: "Search").error("Spotlight synchronization failed")
+            }
+        }
+    }
 
     func performSetup(with panel: MenuBarSearchPanel) {
         configureCancellables(with: panel)

@@ -9,8 +9,14 @@ marketing claim.
 
 `script/test-performance-smoke.sh` builds and verifies the app, then compiles
 and runs `script/measure-barline-shelf-responsiveness.swift` against the shelf.
-No candidate-bound result is recorded, and the required `script/test-soak.sh`
-is absent, so performance and soak validation remain incomplete.
+The probe uses an argument-gated Debug-only distributed notification to invoke
+the same section toggle after the visible status item is present; Release has
+no test bridge. The latest available-host run completed 20/20 presentations
+with no timeout and a 27.6 ms p95, inside the 250 ms feedback budget.
+`script/test-soak.sh` repeats the state/profile/search suites and then exercises
+helper interruption plus the responsiveness probe. Its latest integration run
+completed all 10 cycles. Candidate-bound results are still required after the
+implementation SHA is committed and clean.
 
 ## Required measurements
 

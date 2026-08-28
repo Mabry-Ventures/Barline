@@ -13,8 +13,9 @@ The user-facing policy is [PRIVACY.md](../PRIVACY.md).
   arrangement.
 - Screen Recording is optional and enables local item-image and appearance
   capture.
-- App Sandbox is disabled; Release uses Hardened Runtime. Entitlement files are
-  currently empty.
+- The host app remains unsandboxed because it manages other applications' menu
+  bar items; Release uses Hardened Runtime. The host and sandboxed App Intents
+  extension share only the Barline application-group entitlement.
 
 The compatibility migration is complete. Typed capability, snapshot,
 mutation, capture, environment, health, recovery, and last-known-good
@@ -24,11 +25,12 @@ helper-only. See [compatibility firewall status](COMPATIBILITY_FIREWALL_STATUS.m
 ## Storage
 
 Current app settings and optional custom icon data use `UserDefaults`. Runtime
-window metadata and captured images are held in memory. `BarlineCore` includes
-an atomic profile file store, but the app has not assigned or invoked a shipping
-location. A privacy-bounded Core Spotlight adapter exists but is not wired to
-live app data. Support bundles are bounded JSON, require preview before write,
-and omit backend messages and raw environment identifiers.
+window metadata and captured images are held in memory. Profiles use the shared
+App Group container with atomic primary/backup persistence. Search synchronizes
+only the closed `SearchDocument` fields to Barline's private Spotlight domain.
+Support bundles are bounded JSON, require an in-app review confirmation and a
+user-selected destination, and omit backend messages and raw environment
+identifiers.
 
 ## Logging
 
@@ -47,5 +49,5 @@ data transfer.
 
 ## Outstanding privacy gates
 
-Contextual permissions, revocation behavior, runtime log-redaction tests, and
-local no-network verification remain required before distribution.
+Complete permission-revocation behavior, runtime log-redaction observation,
+and local no-network verification remain required before distribution.

@@ -5,20 +5,20 @@ under ignored `.artifacts/ci/<sha>/` directories.
 
 | Area | Current automated evidence | Status |
 | --- | --- | --- |
-| Pure domain | Swift Testing for snapshots, state coordination, profiles, persistence/import, search, Spotlight records, and command/service validation | 83 tests passed locally on 2026-08-28; rerun required after integration changes |
+| Pure domain | Swift Testing for snapshots, state coordination, profiles, persistence/import, search, Spotlight records, and command/service validation | 84 tests pass locally on 2026-08-28 |
 | Recovery policy | Standalone Swift script | Implemented |
 | Notch overflow resolver | Standalone Swift script | Implemented |
 | Debug/Release/analyze | Local Xcode steps in `script/ci.sh full` | Implemented command surface |
-| Architecture firewall | Static boundary script | Implemented; known migration violations remain |
-| Fixture regression | Script runs 20+ snapshot/state/profile/command cases | Implemented; this is not the required fixture app |
-| Fixture app | Controllable status-item helper | Missing |
-| XPC interruption | Local kill/relaunch probe | Implemented; no current passing evidence recorded |
-| UI smoke | Exact-build launch/window probe | Implemented; no Xcode UI target or interaction suite |
-| Accessibility | Source assertions and runtime AX label audit | Implemented; permission-bound and not a manual VoiceOver pass |
-| Support-bundle privacy | Static logging/credential check | Failed locally: exporter absent and relaunch logging path flagged |
-| Performance smoke | Shelf responsiveness probe | Implemented; no candidate result recorded |
-| Soak | Bounded repeated-cycle harness | Missing |
-| Release/install/update | Local release gate | Missing |
+| Architecture firewall | Static boundary script | Implemented and passing |
+| Fixture regression | Script runs 20+ snapshot/state/profile/command cases and launches a configurable three-status-item app | Implemented |
+| Fixture app | Environment-configurable status items plus deterministic accessibility surface | Implemented as `BarlineFixture` |
+| XPC interruption | Local kill/relaunch probe | Passing in the 10-cycle integration soak; clean exact-head rerun required |
+| UI smoke | Exact-build visible-status-item probe plus compiled XCUITest target | Status-item smoke passes; XCUITest execution blocked by disabled Developer Tools automation mode |
+| Accessibility | Source assertions and fixture runtime AX label audit | Source/fixture build passes; host does not expose the fixture window through `AXWindows`, so runtime audit is unavailable |
+| Support-bundle privacy | Encoder content probes plus static logging/credential checks | Implemented and previously passing; exact-head rerun required |
+| Performance smoke | Shelf responsiveness probe | Integration 20/20 pass, 27.6 ms p95, 29.8 ms max; clean exact-head rerun required |
+| Soak | Repeated Core cycles plus XPC interruption and responsiveness | Integration 10-cycle pass; clean exact-head rerun required |
+| Release/install/update | Clean unsigned archive/topology gate | Implemented dry run; signed install/update externally blocked |
 
 The fail-closed full gate runs these scripts and reports unavailable permissions
 or missing product behavior instead of silently treating them as passed.

@@ -3,13 +3,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/.artifacts/run/DerivedData/Build/Products/Debug/Barline.app"
+DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/barline-accessibility.XXXXXX")"
+APP="$DERIVED_DATA/Build/Products/Debug/BarlineFixture.app"
 MODULE_CACHE="${TMPDIR:-/tmp}/barline-accessibility-module-cache"
 BINARY="${TMPDIR:-/tmp}/barline-accessibility-audit"
 
 cleanup() {
-    /usr/bin/pkill -x Barline >/dev/null 2>&1 || true
-    /usr/bin/pkill -x BarlineMenuService >/dev/null 2>&1 || true
+    /usr/bin/pkill -x BarlineFixture >/dev/null 2>&1 || true
+    /bin/rm -rf "$DERIVED_DATA"
 }
 trap cleanup EXIT
 
@@ -19,12 +20,17 @@ rg -q '\.accessibilityAction\(named: "left click"' "$ROOT/Barline/MenuBar/Barlin
 rg -q '\.accessibilityAction\(named: "right click"' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
 rg -q '\.accessibilityLabel\(label\)' "$ROOT/Barline/UI/Views/HotkeyRecorder.swift"
 
-"$ROOT/script/build_and_run.sh" --verify
-/usr/bin/open -a "$APP"
-/bin/sleep 0.5
+env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
+    -project "$ROOT/Barline.xcodeproj" -scheme BarlineFixture -configuration Debug \
+    -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
+/usr/bin/xattr -cr "$APP"
+/usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
+/usr/bin/open -n "$APP"
+/bin/sleep 1
 
-pid="$(/usr/bin/pgrep -x Barline | head -1)"
-[[ -n "$pid" ]] || { printf 'error: Barline is not running\n' >&2; exit 1; }
+pid="$(/usr/bin/pgrep -x BarlineFixture | head -1)"
+[[ -n "$pid" ]] || { printf 'error: BarlineFixture is not running\n' >&2; exit 1; }
 
 mkdir -p "$MODULE_CACHE"
 xcrun swiftc -module-cache-path "$MODULE_CACHE" \

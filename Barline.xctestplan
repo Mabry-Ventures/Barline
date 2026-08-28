@@ -1,0 +1,45 @@
+{
+  "configurations" : [
+    {
+      "id" : "BA4C1001-0000-4000-8000-000000000001",
+      "name" : "Default",
+      "options" : {
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Barline.xcodeproj",
+      "identifier" : "BA4C20040000000000000001",
+      "name" : "BarlineFixture"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Barline.xcodeproj",
+        "identifier" : "BA4C20010000000000000001",
+        "name" : "BarlineTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:Barline.xcodeproj",
+        "identifier" : "BA4C20020000000000000001",
+        "name" : "BarlineIntegrationTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:Barline.xcodeproj",
+        "identifier" : "BA4C20030000000000000001",
+        "name" : "BarlineUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

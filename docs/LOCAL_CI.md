@@ -17,25 +17,31 @@ hooks. Bootstrap never uses `sudo` or changes the global Xcode selection.
   runs strict SwiftLint, builds/tests BarlineCore with coverage, validates the
   Xcode project, and runs the same repository hygiene used on Linux.
 - `./script/ci.sh full` adds the architecture firewall, unsigned Debug/Release
-  builds, analysis, regression fixtures, XPC interruption, UI smoke,
-  accessibility, support-bundle privacy, and performance smoke.
-- `./script/ci.sh release` runs full and then the local release gate. It remains
-  red until `script/release.sh` is implemented and distribution prerequisites
-  exist.
+  builds, analysis, explicit test-plan build plus unit/integration execution,
+  regression fixtures, XPC interruption, UI smoke, XCUITest, accessibility,
+  support-bundle privacy, and performance smoke.
+- `./script/ci.sh release` runs full and then the clean-candidate unsigned
+  archive/topology release dry run. Credentialed signing and publication remain
+  separate external gates.
 - `./script/ci.sh xcode27 --xcode /Applications/Xcode-27.app` requires an
   explicit Xcode 27. It reports runtime support as unverified unless the host is
   actually running macOS 27.
-- `./script/ci.sh soak` requires the bounded release-preparation soak harness.
+- `./script/ci.sh soak` repeats state/profile/search tests (10 cycles by
+  default), then runs helper interruption and responsiveness probes. Override
+  the bounded count with `BARLINE_SOAK_ITERATIONS`.
 
 Every run writes logs, result bundles where available, command records, and a
 machine-readable `summary.json` under ignored `.artifacts/ci/<sha>/`.
 
-The UI smoke gate launches the exact local build and verifies a visible window
-without clicking permission controls. The accessibility gate uses the macOS AX
-tree without requesting access; it returns unavailable when the invoking host
-lacks an existing grant. The XPC gate forcibly interrupts the embedded helper
-and requires automatic replacement while the app survives. The support-bundle
-privacy gate remains red until a product exporter exists and can be audited.
+The UI smoke gate launches the exact local build and verifies Barline's visible
+Control Center status item without clicking permission controls. XCUITest uses `BarlineFixture`; it fails
+with a clear administrator boundary when Developer Tools automation mode is
+disabled. The accessibility gate uses the macOS AX tree without requesting
+access; it returns unavailable when the invoking host cannot expose the fixture
+window through `AXWindows`.
+The XPC gate forcibly interrupts the embedded helper and requires automatic
+replacement while the app survives. The support-bundle privacy gate audits both
+the product exporter and source/logging boundary.
 
 ## Commit status publishing
 

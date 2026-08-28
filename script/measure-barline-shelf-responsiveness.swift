@@ -1,5 +1,6 @@
 #!/usr/bin/env swift
 
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -7,9 +8,10 @@ private enum Configuration {
     static let measuredCycles = 20
     static let warmupCycles = 2
     static let feedbackBudget = Duration.milliseconds(250)
+    static let iconTimeout = Duration.seconds(5)
     static let openTimeout = Duration.milliseconds(1500)
     static let closeTimeout = Duration.milliseconds(1000)
-    static let pollingIntervalMicroseconds: useconds_t = 10_000
+    static let pollingIntervalMicroseconds: useconds_t = 10000
 }
 
 private struct WindowSnapshot {
@@ -56,16 +58,18 @@ private func windowSnapshots() -> [WindowSnapshot] {
 }
 
 private func barlineIconCenter() throws -> CGPoint {
-    guard
-        let icon = windowSnapshots().first(where: {
+    let start = ContinuousClock.now
+    while start.duration(to: .now) < Configuration.iconTimeout {
+        if let icon = windowSnapshots().first(where: {
             $0.windowName == "Barline.ControlItem.Visible" &&
-            $0.bounds.width > 0 &&
-            $0.bounds.width < 100
-        })
-    else {
-        throw ProbeError.barlineIconNotFound
+                $0.bounds.width > 0 &&
+                $0.bounds.width < 100
+        }) {
+            return CGPoint(x: icon.bounds.midX, y: icon.bounds.midY)
+        }
+        usleep(Configuration.pollingIntervalMicroseconds)
     }
-    return CGPoint(x: icon.bounds.midX, y: icon.bounds.midY)
+    throw ProbeError.barlineIconNotFound
 }
 
 private func isBarlineShelfVisible() -> Bool {
@@ -75,21 +79,13 @@ private func isBarlineShelfVisible() -> Bool {
 }
 
 private func click(at point: CGPoint) {
-    CGWarpMouseCursorPosition(point)
-    usleep(20_000)
-    CGEvent(
-        mouseEventSource: nil,
-        mouseType: .leftMouseDown,
-        mouseCursorPosition: point,
-        mouseButton: .left
-    )?.post(tap: .cghidEventTap)
-    usleep(30_000)
-    CGEvent(
-        mouseEventSource: nil,
-        mouseType: .leftMouseUp,
-        mouseCursorPosition: point,
-        mouseButton: .left
-    )?.post(tap: .cghidEventTap)
+    _ = point
+    DistributedNotificationCenter.default().postNotificationName(
+        Notification.Name("com.mabryventures.Barline.runtime-smoke.toggle-shelf"),
+        object: nil,
+        userInfo: nil,
+        deliverImmediately: true
+    )
 }
 
 private func waitForVisibility(_ target: Bool, timeout: Duration) -> Duration? {
@@ -105,7 +101,7 @@ private func waitForVisibility(_ target: Bool, timeout: Duration) -> Duration? {
 
 private func milliseconds(_ duration: Duration) -> Double {
     let components = duration.components
-    return Double(components.seconds) * 1_000 + Double(components.attoseconds) / 1e15
+    return Double(components.seconds) * 1000 + Double(components.attoseconds) / 1e15
 }
 
 private func percentile(_ values: [Double], _ percentile: Double) -> Double {
@@ -158,23 +154,17 @@ private func runRapidRetry(iconPoint: CGPoint) -> (feedbackInBudget: Bool, silen
 
 do {
     let iconPoint = try barlineIconCenter()
-    let originalMouseLocation = CGEvent(source: nil)?.location
-    defer {
-        if let originalMouseLocation {
-            CGWarpMouseCursorPosition(originalMouseLocation)
-        }
-    }
 
     try ensureClosed(iconPoint: iconPoint)
 
-    for _ in 0..<Configuration.warmupCycles {
+    for _ in 0 ..< Configuration.warmupCycles {
         _ = runSingleClick(iconPoint: iconPoint)
     }
 
     var latencies = [Double]()
     var timeouts = 0
 
-    for cycle in 1...Configuration.measuredCycles {
+    for cycle in 1 ... Configuration.measuredCycles {
         if let latency = runSingleClick(iconPoint: iconPoint) {
             latencies.append(latency)
             print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))

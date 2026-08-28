@@ -3,12 +3,18 @@
 //  Barline
 //
 
+import AppKit
+import BarlineCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AdvancedSettingsPane: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var settings: AdvancedSettings
     @State private var maxSliderLabelWidth: CGFloat = 0
+    @State private var supportBundlePreview: SupportBundlePreview?
+    @State private var supportBundleStatus: String?
+    @State private var showsSupportBundleReview = false
 
     private var menuBarManager: MenuBarManager {
         appState.menuBarManager
@@ -39,10 +45,24 @@ struct AdvancedSettingsPane: View {
             BarlineSection("Permissions") {
                 allPermissions
             }
+            BarlineSection("Diagnostics") {
+                supportBundleControls
+            }
+        }
+        .alert(
+            "Review Support Bundle",
+            isPresented: $showsSupportBundleReview,
+            presenting: supportBundlePreview
+        ) { preview in
+            Button("Cancel", role: .cancel) {}
+            Button("Choose Save Location") {
+                chooseSupportBundleDestination(for: preview)
+            }
+        } message: { preview in
+            Text("This JSON contains only \(preview.summary). Review the file before sharing it.")
         }
     }
 
-    @ViewBuilder
     private var enableAlwaysHiddenSection: some View {
         Toggle(
             "Enable the always-hidden section",
@@ -50,7 +70,6 @@ struct AdvancedSettingsPane: View {
         )
     }
 
-    @ViewBuilder
     private var showAllSectionsOnUserDrag: some View {
         Toggle(
             "Show all sections when ⌘ Command + dragging menu bar items",
@@ -58,7 +77,6 @@ struct AdvancedSettingsPane: View {
         )
     }
 
-    @ViewBuilder
     private var sectionDividerStyle: some View {
         BarlinePicker("Section divider style", selection: $settings.sectionDividerStyle) {
             ForEach(SectionDividerStyle.allCases) { style in
@@ -67,7 +85,6 @@ struct AdvancedSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var hideApplicationMenus: some View {
         Toggle(
             "Hide app menus when showing menu bar items",
@@ -85,7 +102,6 @@ struct AdvancedSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var enableSecondaryContextMenu: some View {
         Toggle(
             "Enable secondary context menu",
@@ -103,13 +119,12 @@ struct AdvancedSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var showOnHoverDelay: some View {
         LabeledContent {
             BarlineSlider(
                 formattedToSeconds(settings.showOnHoverDelay),
                 value: $settings.showOnHoverDelay,
-                in: 0...1,
+                in: 0 ... 1,
                 step: 0.1
             )
         } label: {
@@ -122,13 +137,12 @@ struct AdvancedSettingsPane: View {
         .annotation("The amount of time to wait before showing on hover.")
     }
 
-    @ViewBuilder
     private var tempShowInterval: some View {
         LabeledContent {
             BarlineSlider(
                 formattedToSeconds(settings.tempShowInterval),
                 value: $settings.tempShowInterval,
-                in: 0...60,
+                in: 0 ... 60,
                 step: 1
             )
         } label: {
@@ -141,7 +155,6 @@ struct AdvancedSettingsPane: View {
         .annotation("The amount of time to wait before hiding temporarily shown menu bar items.")
     }
 
-    @ViewBuilder
     private var allPermissions: some View {
         ForEach(appState.permissions.allPermissions) { permission in
             LabeledContent {
@@ -161,6 +174,78 @@ struct AdvancedSettingsPane: View {
                 Text(permission.title)
             }
             .frame(height: 22)
+        }
+    }
+
+    @ViewBuilder
+    private var supportBundleControls: some View {
+        LabeledContent {
+            Button("Create Support Bundle") {
+                prepareSupportBundle()
+            }
+        } label: {
+            Text("Privacy-bounded diagnostics")
+        }
+        .annotation("Creates a local JSON preview with no paths, item names, screenshots, process list, or logs.")
+
+        if let supportBundleStatus {
+            Text(supportBundleStatus)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("support-bundle-status")
+        }
+    }
+
+    private func prepareSupportBundle() {
+        supportBundleStatus = "Preparing preview…"
+        Task {
+            do {
+                let health = await appState.compatibilityCoordinator.backendHealth
+                let snapshot = await appState.compatibilityCoordinator.currentSnapshot
+                let capabilities = (try? await BarlineMenuService.Connection.shared.capabilities()) ?? .fallback
+                let preview = try await SupportBundleExporter().preview(
+                    permissions: .init(
+                        accessibility: appState.permissions.accessibility.hasPermission,
+                        screenRecording: appState.permissions.screenRecording.hasPermission
+                    ),
+                    compatibility: health,
+                    capabilities: capabilities,
+                    lastSnapshotAt: snapshot?.capturedAt,
+                    lastSnapshotRejectionCode: nil,
+                    searchAvailabilityCode: Self.searchAvailabilityCode(),
+                    recentErrorCodes: []
+                )
+                supportBundlePreview = preview
+                supportBundleStatus = "Preview ready. Choose whether to save it."
+                showsSupportBundleReview = true
+            } catch {
+                supportBundleStatus = "The support bundle preview could not be created."
+            }
+        }
+    }
+
+    private func chooseSupportBundleDestination(for preview: SupportBundlePreview) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = preview.suggestedFilename
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+
+        Task {
+            do {
+                try await SupportBundleExporter().write(preview, to: destination)
+                supportBundleStatus = "Support bundle saved. Review it before sharing."
+            } catch {
+                supportBundleStatus = "The support bundle could not be saved."
+            }
+        }
+    }
+
+    private static func searchAvailabilityCode() -> String {
+        switch SearchRuntimeAvailability.current().coreSpotlight {
+        case .available:
+            "core_spotlight_available"
+        case let .unavailable(reason):
+            "core_spotlight_\(reason.rawValue)"
         }
     }
 }

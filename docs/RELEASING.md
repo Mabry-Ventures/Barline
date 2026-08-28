@@ -1,9 +1,11 @@
 # Releasing Barline
 
-Barline is not distribution-ready and has no published binary release. There is
-currently no `script/release.sh`; consequently `./script/ci.sh release` fails
-closed. Sparkle is disabled and no Barline appcast, feed URL, or public EdDSA key
-exists.
+Barline is not distribution-ready and has no published binary release.
+`script/release.sh` now performs the clean-SHA unsigned archive dry run,
+validates app/XPC/App-Intents topology, arm64 output, plists, App Group source
+entitlements, and required GPL/privacy/security documents, then records the
+credential-bound steps it did not perform. Sparkle has no Barline appcast, feed
+URL, public key, or private EdDSA material.
 
 ## Preconditions
 
@@ -15,7 +17,8 @@ build instructions, lockfiles, project files, and notices.
 
 ## Required local pipeline
 
-The future local release script must prepare, archive, notarize, and publish
+The credentialed extension of the local release pipeline must sign, notarize,
+and publish
 without GitHub Actions. It must validate arm64-only output, nested signing order
 (including Sparkle helpers and Barline's XPC service), Developer ID Application
 signing, Hardened Runtime, release entitlements, absence of `get-task-allow`,
@@ -37,4 +40,3 @@ When credentials are absent, only unsigned archive topology and a dry run may
 be reported. Current baseline evidence proves an unsigned arm64 archive can be
 created; it does not prove signing, Gatekeeper acceptance, notarization, update,
 installation, or publication.
-

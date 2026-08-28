@@ -8,8 +8,9 @@ LOG_SUBSYSTEM="com.mabryventures.Barline"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$ROOT_DIR/Barline.xcodeproj"
-DERIVED_DATA="$ROOT_DIR/.artifacts/run/DerivedData"
-SOURCE_PACKAGES="$ROOT_DIR/.artifacts/run/SourcePackages"
+RUN_ROOT="${BARLINE_RUN_ROOT:-/private/tmp/barline-run-$(id -u)}"
+DERIVED_DATA="$RUN_ROOT/DerivedData"
+SOURCE_PACKAGES="$RUN_ROOT/SourcePackages"
 
 CONFIGURATION="Debug"
 MODE="run"
@@ -112,7 +113,11 @@ fi
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE"
 
 open_app() {
-    /usr/bin/open -n "$APP_BUNDLE"
+    if [[ "${BARLINE_RUNTIME_SMOKE:-0}" == "1" ]]; then
+        /usr/bin/open -n "$APP_BUNDLE" --args --barline-runtime-smoke
+    else
+        /usr/bin/open -n "$APP_BUNDLE"
+    fi
 }
 
 verify_app() {

@@ -20,17 +20,20 @@ removes a private Barline search domain. Its platform-neutral records bound
 titles and keywords and expose only the closed search fields. Runtime probes
 report actual Core Spotlight availability and Foundation Models
 eligibility/readiness without creating a model session. The existing app search
-panel is still the inherited menu item search and does not invoke these new
-adapters.
+panel now constructs bounded documents for live menu items and saved profiles,
+uses the deterministic index for ranking, exposes profile activation results,
+and replaces Barline's private Spotlight domain when the document set changes.
 
 ## Not implemented
 
-- Core Spotlight query/deep-link handling, app wiring, and reindex controls
-- App Entity lookup through Spotlight or App Intents
+- Core Spotlight query/deep-link handling and user-facing reindex controls
 - Foundation Models typed parsing or inference sessions
 - macOS 27 `SpotlightSearchTool`
-- an app adapter that turns live items/profiles into privacy-bounded documents
 - release-lane model evaluation and recorded thresholds
+
+The App Intents extension implements stable-ID profile entity lookup against a
+privacy-bounded App Group catalog. It does not read menu-bar snapshots or call
+the compatibility helper.
 
 The availability model always keeps deterministic local search enabled and can
 plan optional Spotlight/model stages. Capability probes may mark frameworks

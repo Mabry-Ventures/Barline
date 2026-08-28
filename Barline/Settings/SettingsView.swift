@@ -66,7 +66,6 @@ struct SettingsView: View {
         .navigationTitle(navigationTitle)
     }
 
-    @ViewBuilder
     private var sidebar: some View {
         List(selection: $navigationState.settingsNavigationIdentifier) {
             Section {
@@ -90,7 +89,6 @@ struct SettingsView: View {
         .navigationSplitViewColumnWidth(sidebarWidth)
     }
 
-    @ViewBuilder
     private func sidebarItem(for identifier: SettingsNavigationIdentifier) -> some View {
         Label {
             Text(identifier.localized)
@@ -135,6 +133,8 @@ struct SettingsView: View {
             MenuBarLayoutSettingsPane(itemManager: appState.itemManager)
         case .menuBarAppearance:
             MenuBarAppearanceSettingsPane(appearanceManager: appState.appearanceManager)
+        case .profiles:
+            ProfilesSettingsPane(manager: appState.profileManager)
         case .hotkeys:
             HotkeysSettingsPane(settings: appState.settings.hotkeys)
         case .advanced:

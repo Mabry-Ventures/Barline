@@ -1,0 +1,189 @@
+import AppIntents
+import Foundation
+
+private enum BarlineIntentBridge {
+    static let appGroupIdentifier = "group.com.mabryventures.Barline"
+    static let pendingDestinationKey = "intent.pendingDestination"
+    static let pendingDestinationTokenKey = "intent.pendingDestinationToken"
+    static let pendingProfileKey = "intent.pendingProfile"
+    static let pendingProfileTokenKey = "intent.pendingProfileToken"
+    static let presentationModeKey = "focus.presentationMode"
+    static let presentationModeTokenKey = "focus.presentationModeToken"
+    static let profileCatalogKey = "intent.profileCatalog"
+
+    static func store(destination: BarlineDestination) {
+        let defaults = UserDefaults(suiteName: appGroupIdentifier)
+        defaults?.set(destination.rawValue, forKey: pendingDestinationKey)
+        defaults?.set(UUID().uuidString, forKey: pendingDestinationTokenKey)
+    }
+
+    static func store(profileID: UUID) {
+        let defaults = UserDefaults(suiteName: appGroupIdentifier)
+        defaults?.set(profileID.uuidString, forKey: pendingProfileKey)
+        defaults?.set(UUID().uuidString, forKey: pendingProfileTokenKey)
+    }
+
+    static func storePresentationMode(_ isEnabled: Bool) {
+        let defaults = UserDefaults(suiteName: appGroupIdentifier)
+        defaults?.set(isEnabled, forKey: presentationModeKey)
+        defaults?.set(UUID().uuidString, forKey: presentationModeTokenKey)
+    }
+}
+
+private struct ProfileCatalogEntry: Codable {
+    let id: UUID
+    let name: String
+}
+
+struct BarlineProfileEntity: AppEntity {
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Barline Profile")
+    static let defaultQuery = BarlineProfileQuery()
+
+    let id: UUID
+    let name: String
+
+    var displayRepresentation: DisplayRepresentation {
+        DisplayRepresentation(title: "\(name)")
+    }
+}
+
+struct BarlineProfileQuery: EntityStringQuery {
+    func entities(for identifiers: [UUID]) async throws -> [BarlineProfileEntity] {
+        catalog().filter { identifiers.contains($0.id) }
+    }
+
+    func entities(matching string: String) async throws -> [BarlineProfileEntity] {
+        let normalized = string.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        return catalog().filter {
+            $0.name.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .contains(normalized)
+        }
+    }
+
+    func suggestedEntities() async throws -> [BarlineProfileEntity] {
+        catalog()
+    }
+
+    private func catalog() -> [BarlineProfileEntity] {
+        guard let encoded = UserDefaults(suiteName: BarlineIntentBridge.appGroupIdentifier)?
+            .string(forKey: BarlineIntentBridge.profileCatalogKey),
+            let data = encoded.data(using: .utf8),
+            let entries = try? JSONDecoder().decode([ProfileCatalogEntry].self, from: data)
+        else {
+            return []
+        }
+        return entries.map { BarlineProfileEntity(id: $0.id, name: $0.name) }
+    }
+}
+
+enum BarlineDestination: String, AppEnum {
+    case search
+    case profiles
+    case settings
+
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Barline Destination")
+    static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
+        .search: "Search Menu Bar Items",
+        .profiles: "Profiles",
+        .settings: "Settings",
+    ]
+}
+
+struct OpenBarlineIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open Barline"
+    static let description = IntentDescription("Opens Barline at a specific destination.")
+    static var supportedModes: IntentModes {
+        .foreground
+    }
+
+    @Parameter(title: "Destination", default: .search)
+    var destination: BarlineDestination
+
+    func perform() async throws -> some IntentResult {
+        BarlineIntentBridge.store(destination: destination)
+        return .result()
+    }
+}
+
+struct SetBarlinePresentationModeIntent: AppIntent {
+    static let title: LocalizedStringResource = "Set Barline Presentation Mode"
+    static let description = IntentDescription(
+        "Requests Barline's presentation profile without moving menu bar items in the extension process."
+    )
+
+    @Parameter(title: "Enabled", default: true)
+    var isEnabled: Bool
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        BarlineIntentBridge.storePresentationMode(isEnabled)
+        return .result(
+            dialog: isEnabled
+                ? "Barline will enable Presentation Mode."
+                : "Barline will restore the previous profile."
+        )
+    }
+}
+
+struct SwitchBarlineProfileIntent: AppIntent {
+    static let title: LocalizedStringResource = "Switch Barline Profile"
+    static let description = IntentDescription(
+        "Requests a saved profile. Barline validates and applies it transactionally in the app process."
+    )
+
+    @Parameter(title: "Profile")
+    var profile: BarlineProfileEntity
+
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        BarlineIntentBridge.store(profileID: profile.id)
+        return .result(dialog: "Barline will apply \(profile.name).")
+    }
+}
+
+struct BarlineFocusFilter: SetFocusFilterIntent {
+    static let title: LocalizedStringResource = "Barline Presentation Mode"
+    static let description = IntentDescription(
+        "Select whether Barline should use Presentation Mode while this Focus is active."
+    )
+
+    @Parameter(title: "Use Presentation Mode", default: false)
+    var presentationMode: Bool
+
+    var displayRepresentation: DisplayRepresentation {
+        presentationMode ? "Presentation Mode On" : "Presentation Mode Off"
+    }
+
+    func perform() async throws -> some IntentResult {
+        BarlineIntentBridge.storePresentationMode(presentationMode)
+        return .result()
+    }
+}
+
+struct BarlineShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: OpenBarlineIntent(),
+            phrases: [
+                "Open \(.applicationName)",
+                "Search my menu bar with \(.applicationName)",
+            ],
+            shortTitle: "Open Barline",
+            systemImageName: "menubar.rectangle"
+        )
+        AppShortcut(
+            intent: SetBarlinePresentationModeIntent(),
+            phrases: [
+                "Set presentation mode in \(.applicationName)",
+            ],
+            shortTitle: "Presentation Mode",
+            systemImageName: "rectangle.on.rectangle"
+        )
+        AppShortcut(
+            intent: SwitchBarlineProfileIntent(),
+            phrases: [
+                "Switch profile in \(.applicationName)",
+            ],
+            shortTitle: "Switch Profile",
+            systemImageName: "person.crop.rectangle.stack"
+        )
+    }
+}

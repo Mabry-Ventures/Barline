@@ -3,8 +3,8 @@
 //  Barline
 //
 
+import BarlineCore
 import Combine
-import Ifrit
 import OSLog
 import SwiftUI
 
@@ -175,6 +175,7 @@ private final class MenuBarSearchHostingView: NSHostingView<AnyView> {
                 .environmentObject(appState)
                 .environmentObject(appState.itemManager)
                 .environmentObject(appState.imageCache)
+                .environmentObject(appState.profileManager)
                 .environmentObject(model)
                 .erasedToAnyView()
         )
@@ -196,12 +197,13 @@ private struct MenuBarSearchContentView: View {
 
     @EnvironmentObject var itemManager: MenuBarItemManager
     @EnvironmentObject var model: MenuBarSearchModel
+    @EnvironmentObject var profileManager: ProfileManager
     @FocusState private var searchFieldIsFocused: Bool
 
     let closePanel: () -> Void
 
     private var hasItems: Bool {
-        !itemManager.itemCache.managedItems.isEmpty
+        !itemManager.itemCache.managedItems.isEmpty || !profileManager.profiles.isEmpty
     }
 
     private var bottomBarPadding: CGFloat {
@@ -232,6 +234,12 @@ private struct MenuBarSearchContentView: View {
             selectFirstDisplayedItem()
         }
         .onChange(of: itemManager.itemCache, initial: true) {
+            updateDisplayedItems()
+            if model.selection == nil {
+                selectFirstDisplayedItem()
+            }
+        }
+        .onChange(of: profileManager.profiles, initial: true) {
             updateDisplayedItems()
             if model.selection == nil {
                 selectFirstDisplayedItem()
@@ -307,69 +315,97 @@ private struct MenuBarSearchContentView: View {
     }
 
     private func updateDisplayedItems() {
-        typealias SearchItem = (listItem: ListItem, title: String)
-        typealias ScoredItem = (listItem: ListItem, score: Double)
+        typealias SearchItem = (listItem: ListItem, document: SearchDocument?)
 
-        let searchItems: [SearchItem] = MenuBarSection.Name.allCases
-            .reduce(into: []) { items, name in
-                if
-                    let appState = itemManager.appState,
-                    let section = appState.menuBarManager.section(withName: name),
-                    !section.isEnabled
-                {
-                    return
-                }
+        var searchItems = [SearchItem]()
 
-                let headerItem = ListItem.header(id: .header(name)) {
-                    Text(name.displayString)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 10)
-                }
-                items.append(SearchItem(headerItem, name.displayString))
-
-                for item in itemManager.itemCache.managedItems(for: name).reversed() {
-                    let listItem = ListItem.item(id: .item(item.tag)) {
-                        performAction(for: item)
-                    } content: {
-                        MenuBarSearchItemView(item: item)
-                    }
-                    items.append(SearchItem(listItem, item.displayName))
-                }
+        if !profileManager.profiles.isEmpty {
+            let headerItem = ListItem.header(id: .profileHeader) {
+                Text("Profiles")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 10)
             }
+            searchItems.append(SearchItem(headerItem, nil))
+
+            for profile in profileManager.profiles.sorted(by: { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) {
+                let listItem = ListItem.item(id: .profile(profile.id)) {
+                    performAction(for: profile)
+                } content: {
+                    Label(profile.name, systemImage: profile.symbol ?? "rectangle.3.group")
+                        .padding(8)
+                }
+                let document = SearchDocument(
+                    id: SearchDocumentID("profile \(profile.id.uuidString)"),
+                    kind: .profile,
+                    entity: .profile(ProfileID(profile.id.uuidString)),
+                    title: profile.name,
+                    groups: profile.groups.map(\.name),
+                    synonyms: ["profile", "layout"],
+                    keywords: ["switch", "activate"],
+                    lastUsedAt: profile.id == profileManager.activeProfileID ? Date() : nil
+                )
+                searchItems.append(SearchItem(listItem, document))
+            }
+        }
+
+        for name in MenuBarSection.Name.allCases {
+            if
+                let appState = itemManager.appState,
+                let section = appState.menuBarManager.section(withName: name),
+                !section.isEnabled
+            {
+                continue
+            }
+
+            let headerItem = ListItem.header(id: .header(name)) {
+                Text(name.displayString)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 10)
+            }
+            searchItems.append(SearchItem(headerItem, nil))
+
+            for item in itemManager.itemCache.managedItems(for: name).reversed() {
+                let listItem = ListItem.item(id: .item(item.tag)) {
+                    performAction(for: item)
+                } content: {
+                    MenuBarSearchItemView(item: item)
+                }
+                let memberships = profileManager.profiles
+                    .filter { $0.layout.allItemIDs.contains(item.stableID) }
+                    .map(\.name)
+                let document = SearchDocument(
+                    id: SearchDocumentID("menu item \(item.stableID.description)"),
+                    kind: .menuBarItem,
+                    entity: .menuBarItem(item.stableID),
+                    title: item.displayName,
+                    bundleIdentifier: item.stableID.bundleIdentifier,
+                    aliases: [item.title, item.stableID.alias].compactMap(\.self),
+                    groups: profileManager.profiles.flatMap { profile in
+                        profile.groups.filter { $0.itemIDs.contains(item.stableID) }.map(\.name)
+                    },
+                    profileMemberships: memberships,
+                    keywords: ["menu bar", "status item"]
+                )
+                searchItems.append(SearchItem(listItem, document))
+            }
+        }
+
+        let documents = searchItems.compactMap(\.document)
 
         if model.searchText.isEmpty {
             model.displayedItems = searchItems.map(\.listItem)
+            model.synchronizeSpotlightIfNeeded(with: documents)
         } else {
-            let selectableItems = searchItems.filter(\.listItem.isSelectable)
-            let fuseResults = model.fuse.searchSync(
-                model.searchText,
-                in: selectableItems.map(\.title)
-            )
-            let maxFuseScore = Double(fuseResults.count)
-
-            model.displayedItems = fuseResults.enumerated()
-                .map { index, result in
-                    let fuseScore = maxFuseScore - Double(index)
-                    let (listItem, title) = selectableItems[result.index]
-
-                    guard let match = bestMatch(
-                        query: model.searchText,
-                        input: title,
-                        boundaryBonus: 16,
-                        camelCaseBonus: 16
-                    ) else {
-                        return ScoredItem(listItem, fuseScore)
-                    }
-
-                    let matchScore = Double(match.score.value)
-                    let averageScore = (matchScore + fuseScore) / 2
-
-                    return ScoredItem(listItem, averageScore)
-                }
-                .sorted { $0.score > $1.score }
-                .map(\.listItem)
+            let itemsByDocumentID = Dictionary(uniqueKeysWithValues: searchItems.compactMap { searchItem in
+                searchItem.document.map { ($0.id, searchItem.listItem) }
+            })
+            model.displayedItems = model
+                .rankedDocumentIDs(for: model.searchText, documents: documents)
+                .compactMap { itemsByDocumentID[$0] }
         }
     }
 
@@ -377,8 +413,15 @@ private struct MenuBarSearchContentView: View {
         switch selection {
         case let .item(tag):
             itemManager.itemCache.managedItems.first(matching: tag)
-        case .header:
+        case .header, .profileHeader, .profile:
             nil
+        }
+    }
+
+    private func performAction(for profile: BarlineProfile) {
+        closePanel()
+        Task {
+            await profileManager.activate(profile)
         }
     }
 

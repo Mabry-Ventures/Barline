@@ -3,6 +3,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/barline-fixture.XXXXXX")"
+APP="$DERIVED_DATA/Build/Products/Debug/BarlineFixture.app"
+
+cleanup() {
+    /usr/bin/pkill -x BarlineFixture >/dev/null 2>&1 || true
+    /bin/rm -rf "$DERIVED_DATA"
+}
+trap cleanup EXIT
+
 cd "$ROOT"
 
 tests="$(swift test --package-path BarlineCore list)"
@@ -15,4 +24,23 @@ fi
 swift test --package-path BarlineCore \
     --filter 'BarlineCoreTests\.(SnapshotValidationTests|StateCoordinatorTests|ProfileTests|MenuBarCommandValidationTests)/'
 
-printf 'PASS: %d fixture/state regression cases were discovered and executed\n' "$fixture_count"
+env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
+    -project Barline.xcodeproj -scheme BarlineFixture -configuration Debug \
+    -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+[[ -x "$APP/Contents/MacOS/BarlineFixture" ]] || {
+    printf 'error: fixture application product is missing\n' >&2
+    exit 1
+}
+/usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
+BARLINE_FIXTURE_MODE=gate BARLINE_FIXTURE_ITEMS=Network,Battery,Clock /usr/bin/open -n "$APP"
+for _ in {1..20}; do
+    /usr/bin/pgrep -x BarlineFixture >/dev/null && break
+    /bin/sleep 0.25
+done
+/usr/bin/pgrep -x BarlineFixture >/dev/null || {
+    printf 'error: fixture application did not remain running\n' >&2
+    exit 1
+}
+
+printf 'PASS: %d fixture/state regression cases and the controllable status-item fixture app were validated\n' "$fixture_count"

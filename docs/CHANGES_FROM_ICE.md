@@ -31,10 +31,19 @@ baseline. It is updated with each milestone.
   destinations. Historical Ice names remain only in provenance, attribution,
   baseline records, and legacy preference keys needed for migration.
 
-## Remaining Barline product changes
+## Product platform and delivery
 
-The authoritative implementation ledger is `docs/EXECUTION_PLAN.md`. Product
-identity, private-API isolation, profiles, Focus Filters, App Intents, per-
-display layouts, deterministic and semantic local search, diagnostics,
-recovery, tests, local delivery gates, and Barline-owned distribution will be
-recorded here only after implementation and validation.
+- Isolated WindowServer/private-symbol work in the embedded XPC helper behind
+  typed stable-ID contracts, validation, recovery, and an architecture firewall.
+- Added versioned profiles with atomic App Group persistence, backup recovery,
+  transactional activation, precedence, Presentation templates, and settings UI.
+- Added an App Intents/Focus extension whose bridge carries stable identifiers
+  and tokens only; menu-bar mutations remain app/helper-owned.
+- Replaced inherited fuzzy-only search with deterministic Core ranking for menu
+  items/profiles plus privacy-bounded Core Spotlight synchronization.
+- Added opt-in, review-before-save bounded diagnostics.
+- Added a real fixture application, unit/integration/UI targets, test plan,
+  local gate orchestration, soak harness, and unsigned release dry run.
+
+The exact remaining system, hardware, macOS 27, and credential boundaries are
+tracked in `docs/EXECUTION_PLAN.md` and `docs/KNOWN_LIMITATIONS.md`.

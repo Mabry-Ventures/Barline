@@ -11,6 +11,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The shared app state.
     let appState = AppState()
 
+    #if DEBUG
+        private static let runtimeSmokeToggleNotification = Notification.Name(
+            "com.mabryventures.Barline.runtime-smoke.toggle-shelf"
+        )
+    #endif
+
     // MARK: NSApplicationDelegate Methods
 
     func applicationWillFinishLaunching(_: Notification) {
@@ -35,6 +41,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
             // Don't perform setup if running as a preview.
             if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" {
+                return
+            }
+
+            // Runtime smoke tests exercise Barline's own UI without depending on
+            // host-specific TCC grants. Release builds never include this path.
+            if CommandLine.arguments.contains("--barline-runtime-smoke") {
+                DistributedNotificationCenter.default().addObserver(
+                    self,
+                    selector: #selector(toggleShelfForRuntimeSmoke),
+                    name: Self.runtimeSmokeToggleNotification,
+                    object: nil
+                )
+                appState.performSetup(hasPermissions: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    self?.openSettingsWindow()
+                }
                 return
             }
         #endif
@@ -86,4 +108,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appState.openWindow(.settings)
         }
     }
+
+    #if DEBUG
+        /// Gives a separate local probe a deterministic activation path without
+        /// adding any behavior to Release builds.
+        @objc private func toggleShelfForRuntimeSmoke() {
+            appState.menuBarManager.section(withName: .visible)?.toggle()
+        }
+    #endif
 }
