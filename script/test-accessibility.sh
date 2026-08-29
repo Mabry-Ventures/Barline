@@ -39,7 +39,7 @@ env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
 /usr/bin/xattr -cr "$APP"
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
-/usr/bin/open -n "$APP"
+/usr/bin/open -g -n "$APP"
 /bin/sleep 1
 
 pid="$(/usr/bin/pgrep -x BarlineFixture | head -1)"

@@ -8,6 +8,7 @@ SHA="$(git -C "$ROOT" rev-parse HEAD)"
 RELEASE_ROOT="$ROOT/.artifacts/release/$SHA"
 ARCHIVE="$RELEASE_ROOT/Barline.xcarchive"
 RELEASE_DERIVED_DATA="$RELEASE_ROOT/DerivedData"
+SIGNING_SCRATCH=""
 UNSIGNED=false
 NOTARY_PROFILE="${BARLINE_NOTARY_PROFILE:-}"
 SPARKLE_ACCOUNT="${BARLINE_SPARKLE_ACCOUNT:-mabry-ventures-barline}"
@@ -48,7 +49,15 @@ validate_exact_candidate() {
 
 validate_exact_candidate
 
-for command in xcodebuild codesign ditto plutil ruby shasum; do
+if ! "$UNSIGNED"; then
+    [[ -n "$NOTARY_PROFILE" ]] || { printf 'error: signed release requires --notary-profile or BARLINE_NOTARY_PROFILE\n' >&2; exit 2; }
+    SIGNING_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/barline-release.${SHA}.XXXXXX")"
+    ARCHIVE="$SIGNING_SCRATCH/Barline.xcarchive"
+    RELEASE_DERIVED_DATA="$SIGNING_SCRATCH/DerivedData"
+    trap '[[ -z "$SIGNING_SCRATCH" ]] || /bin/rm -rf -- "$SIGNING_SCRATCH"' EXIT
+fi
+
+for command in xcodebuild codesign ditto plutil ruby shasum security openssl base64 date; do
     command -v "$command" >/dev/null 2>&1 || { printf 'error: missing %s\n' "$command" >&2; exit 1; }
 done
 for required in LICENSE NOTICE.md THIRD_PARTY_NOTICES.md PRIVACY.md SECURITY.md docs/PROVENANCE.md docs/BUILDING.md; do
@@ -112,13 +121,28 @@ if "$UNSIGNED"; then
     exit 0
 fi
 
-[[ -n "$NOTARY_PROFILE" ]] || { printf 'error: signed release requires --notary-profile or BARLINE_NOTARY_PROFILE\n' >&2; exit 2; }
-
-for product in "$APP" "$HELPER" "$INTENTS"; do
+SPARKLE_FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+SPARKLE_VERSION="$SPARKLE_FRAMEWORK/Versions/Current"
+SIGNED_CODE=(
+    "$APP"
+    "$HELPER"
+    "$INTENTS"
+    "$SPARKLE_FRAMEWORK"
+    "$SPARKLE_VERSION/Updater.app"
+    "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+    "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+    "$SPARKLE_VERSION/Autoupdate"
+)
+for product in "${SIGNED_CODE[@]}"; do
+    [[ -e "$product" ]] || { printf 'error: signed archive is missing nested code: %s\n' "$product" >&2; exit 1; }
     codesign --verify --strict --verbose=2 "$product"
     authority="$(codesign -dv --verbose=4 "$product" 2>&1)"
     grep -q 'Authority=Developer ID Application: Mabry Ventures LLC (A886EMZZW6)' <<<"$authority" || {
         printf 'error: %s is not signed by the required Developer ID identity\n' "$product" >&2
+        exit 1
+    }
+    grep -Eq '^CodeDirectory .*flags=.*\(.*runtime.*\)' <<<"$authority" || {
+        printf 'error: %s is missing Hardened Runtime\n' "$product" >&2
         exit 1
     }
 done
@@ -135,8 +159,43 @@ for entitlements in "$APP_ENTITLEMENTS" "$INTENTS_ENTITLEMENTS"; do
         exit 1
     fi
 done
-[[ -s "$APP/Contents/embedded.provisionprofile" ]] || { printf 'error: App Group release profile is not embedded in the app\n' >&2; exit 1; }
-[[ -s "$INTENTS/Contents/embedded.provisionprofile" ]] || { printf 'error: App Group release profile is not embedded in the Intents extension\n' >&2; exit 1; }
+SIGNING_CERT_PREFIX="$SIGNING_SCRATCH/barline-signing-cert"
+codesign -d --extract-certificates "$SIGNING_CERT_PREFIX" "$APP"
+SIGNING_CERT_FINGERPRINT="$(openssl x509 -inform DER -in "${SIGNING_CERT_PREFIX}0" -noout -fingerprint -sha1 | cut -d= -f2)"
+
+validate_embedded_profile() {
+    local product="$1" expected_application_identifier="$2" label="$3"
+    local profile="$product/Contents/embedded.provisionprofile"
+    local decoded="$SIGNING_SCRATCH/${label}-profile.plist"
+    local expiration expiration_epoch now_epoch profile_fingerprint groups
+
+    [[ -s "$profile" ]] || { printf 'error: %s release profile is not embedded\n' "$label" >&2; return 1; }
+    security cms -D -i "$profile" > "$decoded"
+    [[ "$(plutil -extract TeamIdentifier.0 raw -o - "$decoded")" == A886EMZZW6 ]] || {
+        printf 'error: %s profile has the wrong team\n' "$label" >&2; return 1;
+    }
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$decoded")" == "$expected_application_identifier" ]] || {
+        printf 'error: %s profile has the wrong application identifier\n' "$label" >&2; return 1;
+    }
+    groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$decoded")"
+    grep -Fxq '    group.com.mabryventures.Barline' <<<"$groups" || {
+        printf 'error: %s profile is missing the Barline App Group\n' "$label" >&2; return 1;
+    }
+    [[ "$(plutil -extract ProvisionsAllDevices raw -o - "$decoded")" == true ]] || {
+        printf 'error: %s profile is not a Developer ID distribution profile\n' "$label" >&2; return 1;
+    }
+    expiration="$(plutil -extract ExpirationDate raw -o - "$decoded")"
+    expiration_epoch="$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$expiration" '+%s')"
+    now_epoch="$(date -u '+%s')"
+    ((expiration_epoch > now_epoch)) || { printf 'error: %s profile is expired\n' "$label" >&2; return 1; }
+    profile_fingerprint="$(plutil -extract DeveloperCertificates.0 raw -o - "$decoded" | base64 -D | openssl x509 -inform DER -noout -fingerprint -sha1 | cut -d= -f2)"
+    [[ "$profile_fingerprint" == "$SIGNING_CERT_FINGERPRINT" ]] || {
+        printf 'error: %s profile does not contain the archive signing certificate\n' "$label" >&2; return 1;
+    }
+}
+
+validate_embedded_profile "$APP" 'A886EMZZW6.com.mabryventures.Barline' app
+validate_embedded_profile "$INTENTS" 'A886EMZZW6.com.mabryventures.Barline.Intents' intents
 
 DIST="$RELEASE_ROOT/dist"
 /bin/rm -rf "$DIST"
