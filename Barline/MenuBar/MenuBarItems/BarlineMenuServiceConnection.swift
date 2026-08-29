@@ -201,7 +201,20 @@ extension BarlineMenuService {
 
         func restart() async {
             session.cancel(reason: "Explicit compatibility restart")
-            _ = await send(.restart)
+            var helperRestarted = false
+            for attempt in 0 ..< 6 {
+                guard !Task.isCancelled else { return }
+                if !helperRestarted, case .restart? = await send(.restart) {
+                    helperRestarted = true
+                }
+                if helperRestarted, case .start? = await send(.start) {
+                    return
+                }
+                guard attempt < 5 else { break }
+                let delay = min(100 * (1 << attempt), 1_600)
+                try? await Task.sleep(for: .milliseconds(delay))
+            }
+            logger.error("Explicit compatibility restart did not reach a ready handshake")
         }
 
         private func send(_ request: Request) async -> Response? {
@@ -272,7 +285,13 @@ extension BarlineMenuService {
                 result.withLock { $0 = response }
                 semaphore.signal()
             }
-            guard semaphore.wait(timeout: .now() + 5) == .success else {
+            let timeout: TimeInterval = switch request {
+            case .start, .capabilities, .snapshot, .health, .restart:
+                1
+            default:
+                5
+            }
+            guard semaphore.wait(timeout: .now() + timeout) == .success else {
                 logger.error("Compatibility request timed out")
                 cancel(reason: "Request timed out")
                 return nil

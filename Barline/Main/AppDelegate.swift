@@ -102,14 +102,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     do {
                         _ = try await appState.compatibilityCoordinator.refresh()
                     } catch let error as MenuBarBackendError {
-                        guard case .invalidSnapshot(.nonMonotonicGeneration) = error else {
+                        switch error {
+                        case .interrupted, .invalidSnapshot(.nonMonotonicGeneration):
+                            // A replacement XPC helper can either interrupt the
+                            // in-flight request or start a new raw generation
+                            // epoch. In both cases, use the coordinator's explicit
+                            // recovery transaction to replace the session and
+                            // rebase the replacement monotonically.
+                            _ = try await appState.compatibilityCoordinator.recover()
+                        default:
                             throw error
                         }
-                        // A replacement XPC helper starts a new raw generation
-                        // epoch. Preserve normal stale-snapshot rejection, then
-                        // use the coordinator's explicit recovery transaction to
-                        // rebase that known replacement monotonically.
-                        _ = try await appState.compatibilityCoordinator.recover()
                     }
                     await appState.profileManager.reconcileActiveProfileAuthority()
                 } catch {
