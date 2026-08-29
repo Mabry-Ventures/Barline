@@ -262,7 +262,6 @@ do {
             let latency = try requestProductionReopen(processIdentifier: processIdentifier)
             latencies.append(latency)
             print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
-            usleep(50000)
         }
         let median = percentile(latencies, 0.50)
         let p95 = percentile(latencies, 0.95)

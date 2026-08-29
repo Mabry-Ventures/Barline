@@ -21,6 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Prevents bursts of reopen events from starting overlapping XPC refreshes.
     private var reopenRecoveryTask: Task<Void, Never>?
 
+    /// Preserves one completion acknowledgement for every reopen event received
+    /// while the serialized compatibility recovery task is still draining.
+    private var pendingReopenRecoveryCount = 0
+
     #if DEBUG
         private static let runtimeSmokeToggleNotification = Notification.Name(
             "com.mabryventures.Barline.runtime-smoke.toggle-shelf"
@@ -89,59 +93,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A reopen is also a safe recovery opportunity for the compatibility
         // backend. This keeps the app process alive while replacing an
         // interrupted XPC helper before the user performs another action.
+        pendingReopenRecoveryCount += 1
         if reopenRecoveryTask == nil {
             reopenRecoveryTask = Task { [weak self] in
                 guard let self else {
                     return
                 }
                 defer { reopenRecoveryTask = nil }
-                var succeeded = true
-                var failureDescription: String?
-                await appState.waitForSetup()
-                do {
-                    do {
-                        _ = try await appState.compatibilityCoordinator.refresh()
-                    } catch let error as MenuBarBackendError {
-                        switch error {
-                        case .interrupted, .invalidSnapshot(.nonMonotonicGeneration):
-                            // A replacement XPC helper can either interrupt the
-                            // in-flight request or start a new raw generation
-                            // epoch. In both cases, use the coordinator's explicit
-                            // recovery transaction to replace the session and
-                            // rebase the replacement monotonically.
-                            _ = try await appState.compatibilityCoordinator.recover()
-                        default:
-                            throw error
-                        }
-                    }
-                    await appState.profileManager.reconcileActiveProfileAuthority()
-                } catch {
-                    succeeded = false
-                    failureDescription = String(describing: error)
-                    Logger.default.error("Compatibility refresh on reopen failed: \(error)")
+                while pendingReopenRecoveryCount > 0 {
+                    pendingReopenRecoveryCount -= 1
+                    await completeReopenRecovery()
                 }
-                let visibilityDeadline = ContinuousClock.now + .seconds(1)
-                while ContinuousClock.now < visibilityDeadline,
-                      !NSApp.windows.contains(where: {
-                          $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
-                      })
-                {
-                    try? await Task.sleep(for: .milliseconds(10))
-                }
-                succeeded = succeeded && NSApp.windows.contains(where: {
-                    $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
-                })
-                let defaults = UserDefaults.standard
-                defaults.set(succeeded, forKey: Self.reopenRecoverySucceededKey)
-                defaults.set(failureDescription, forKey: Self.reopenRecoveryFailureKey)
-                defaults.set(
-                    defaults.integer(forKey: Self.reopenRecoveryGenerationKey) + 1,
-                    forKey: Self.reopenRecoveryGenerationKey
-                )
-                defaults.synchronize()
             }
         }
         return true
+    }
+
+    private func completeReopenRecovery() async {
+        var succeeded = true
+        var failureDescription: String?
+        await appState.waitForSetup()
+        do {
+            do {
+                _ = try await appState.compatibilityCoordinator.refresh()
+            } catch let error as MenuBarBackendError {
+                switch error {
+                case .interrupted, .invalidSnapshot(.nonMonotonicGeneration):
+                    // A replacement XPC helper can either interrupt the
+                    // in-flight request or start a new raw generation epoch.
+                    // In both cases, replace the session and rebase it.
+                    _ = try await appState.compatibilityCoordinator.recover()
+                default:
+                    throw error
+                }
+            }
+            await appState.profileManager.reconcileActiveProfileAuthority()
+        } catch {
+            succeeded = false
+            failureDescription = String(describing: error)
+            Logger.default.error("Compatibility refresh on reopen failed: \(error)")
+        }
+        let visibilityDeadline = ContinuousClock.now + .seconds(1)
+        while ContinuousClock.now < visibilityDeadline,
+              !NSApp.windows.contains(where: {
+                  $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
+              })
+        {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        succeeded = succeeded && NSApp.windows.contains(where: {
+            $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
+        })
+        let defaults = UserDefaults.standard
+        defaults.set(succeeded, forKey: Self.reopenRecoverySucceededKey)
+        defaults.set(failureDescription, forKey: Self.reopenRecoveryFailureKey)
+        defaults.set(
+            defaults.integer(forKey: Self.reopenRecoveryGenerationKey) + 1,
+            forKey: Self.reopenRecoveryGenerationKey
+        )
+        defaults.synchronize()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
