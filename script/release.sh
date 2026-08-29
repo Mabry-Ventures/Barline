@@ -9,6 +9,8 @@ RELEASE_ROOT="$ROOT/.artifacts/release/$SHA"
 ARCHIVE="$RELEASE_ROOT/Barline.xcarchive"
 RELEASE_DERIVED_DATA="$RELEASE_ROOT/DerivedData"
 SIGNING_SCRATCH=""
+EXPORT_PATH=""
+EXPORT_OPTIONS=""
 UNSIGNED=false
 NOTARY_PROFILE="${BARLINE_NOTARY_PROFILE:-}"
 SPARKLE_ACCOUNT="${BARLINE_SPARKLE_ACCOUNT:-mabry-ventures-barline}"
@@ -54,6 +56,8 @@ if ! "$UNSIGNED"; then
     SIGNING_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/barline-release.${SHA}.XXXXXX")"
     ARCHIVE="$SIGNING_SCRATCH/Barline.xcarchive"
     RELEASE_DERIVED_DATA="$SIGNING_SCRATCH/DerivedData"
+    EXPORT_PATH="$SIGNING_SCRATCH/Export"
+    EXPORT_OPTIONS="$SIGNING_SCRATCH/ExportOptions.plist"
     trap '[[ -z "$SIGNING_SCRATCH" ]] || /bin/rm -rf -- "$SIGNING_SCRATCH"' EXIT
 fi
 
@@ -83,7 +87,30 @@ if "$UNSIGNED"; then
 fi
 env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild "${archive_arguments[@]}"
 
-APP="$ARCHIVE/Products/Applications/Barline.app"
+if "$UNSIGNED"; then
+    APP="$ARCHIVE/Products/Applications/Barline.app"
+else
+    # A Developer ID archive alone does not distribution-sign Sparkle's nested
+    # updater executables. Xcode's export step signs the full nested graph with
+    # timestamps before the release gate validates or submits the app.
+    plutil -create xml1 "$EXPORT_OPTIONS"
+    plutil -insert method -string developer-id "$EXPORT_OPTIONS"
+    plutil -insert destination -string export "$EXPORT_OPTIONS"
+    plutil -insert signingStyle -string manual "$EXPORT_OPTIONS"
+    plutil -insert teamID -string A886EMZZW6 "$EXPORT_OPTIONS"
+    plutil -insert signingCertificate -string D3F13221A5E8B4D1E6FE0888B063B62344101B87 "$EXPORT_OPTIONS"
+    plutil -insert provisioningProfiles -dictionary "$EXPORT_OPTIONS"
+    /usr/libexec/PlistBuddy -c \
+        "Add :provisioningProfiles:com.mabryventures.Barline string 'Barline Developer ID D3F13221'" \
+        "$EXPORT_OPTIONS"
+    /usr/libexec/PlistBuddy -c \
+        "Add :provisioningProfiles:com.mabryventures.Barline.Intents string 'Barline Intents Developer ID D3F13221'" \
+        "$EXPORT_OPTIONS"
+    env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
+        -exportArchive -archivePath "$ARCHIVE" -exportPath "$EXPORT_PATH" \
+        -exportOptionsPlist "$EXPORT_OPTIONS"
+    APP="$EXPORT_PATH/Barline.app"
+fi
 HELPER="$APP/Contents/XPCServices/BarlineMenuService.xpc"
 INTENTS="$APP/Contents/PlugIns/BarlineIntents.appex"
 for product in "$APP" "$HELPER" "$INTENTS"; do
