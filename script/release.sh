@@ -177,8 +177,8 @@ codesign --verify --deep --strict --verbose=2 "$APP"
 
 APP_ENTITLEMENTS="$RELEASE_ROOT/app-entitlements.plist"
 INTENTS_ENTITLEMENTS="$RELEASE_ROOT/intents-entitlements.plist"
-codesign -d --entitlements "$APP_ENTITLEMENTS" "$APP"
-codesign -d --entitlements "$INTENTS_ENTITLEMENTS" "$INTENTS"
+codesign -d --entitlements - --xml "$APP" > "$APP_ENTITLEMENTS"
+codesign -d --entitlements - --xml "$INTENTS" > "$INTENTS_ENTITLEMENTS"
 for entitlements in "$APP_ENTITLEMENTS" "$INTENTS_ENTITLEMENTS"; do
     plutil -extract com.apple.security.application-groups xml1 -o - "$entitlements" | grep -q 'group.com.mabryventures.Barline'
     if plutil -extract com.apple.security.get-task-allow raw -o - "$entitlements" 2>/dev/null | grep -q true; then
