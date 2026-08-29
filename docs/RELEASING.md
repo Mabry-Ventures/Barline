@@ -35,6 +35,11 @@ GitHub publishing uses existing `gh` authentication. Never place credentials in
 source, tracked configuration, environment files, shell history, artifacts, or
 GitHub Actions secrets.
 
+Set `BARLINE_APP_PROVISIONING_PROFILE_SPECIFIER` and
+`BARLINE_INTENTS_PROVISIONING_PROFILE_SPECIFIER` in ignored
+`Config/Local.xcconfig`. Signed archives use a temporary local scratch directory
+so File Provider metadata from a synced workspace cannot invalidate code signing.
+
 Use `--notary-profile NAME` or `BARLINE_NOTARY_PROFILE` to select an existing
 notarytool Keychain profile; never pass a password. When profiles or credentials
 are absent, only `--unsigned` may pass and is not a release claim. Clean install

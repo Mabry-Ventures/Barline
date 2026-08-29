@@ -114,7 +114,9 @@ fi
 
 open_app() {
     if [[ "${BARLINE_RUNTIME_SMOKE:-0}" == "1" ]]; then
-        /usr/bin/open -n "$APP_BUNDLE" --args --barline-runtime-smoke
+        /usr/bin/open -g -n "$APP_BUNDLE" --args --barline-runtime-smoke
+    elif [[ "$MODE" == "verify" ]]; then
+        /usr/bin/open -g -n "$APP_BUNDLE"
     else
         /usr/bin/open -n "$APP_BUNDLE"
     fi

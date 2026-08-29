@@ -33,6 +33,8 @@ The bootstrap script resolves the dependencies pinned by
 and `BarlineCore/Package.resolved`. It does not change the system-wide Xcode
 selection. Machine-specific signing values belong in ignored
 `Config/Local.xcconfig`; begin with `Config/Local.example.xcconfig`.
+For Developer ID releases, set the app and Intents provisioning-profile
+specifier variables to profiles bound to the configured team and App Group.
 
 ## Build and run
 

@@ -33,7 +33,7 @@ env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
     exit 1
 }
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
-BARLINE_FIXTURE_MODE=gate BARLINE_FIXTURE_ITEMS=Network,Battery,Clock /usr/bin/open -n "$APP"
+BARLINE_FIXTURE_MODE=gate BARLINE_FIXTURE_ITEMS=Network,Battery,Clock /usr/bin/open -g -n "$APP"
 for _ in {1..20}; do
     /usr/bin/pgrep -x BarlineFixture >/dev/null && break
     /bin/sleep 0.25
