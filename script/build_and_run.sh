@@ -3,10 +3,10 @@ set -euo pipefail
 
 APP_NAME="Barline"
 HELPER_NAME="BarlineMenuService"
-BUNDLE_ID="com.mabryventures.Barline"
-LOG_SUBSYSTEM="com.mabryventures.Barline"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=script/lib/identity.sh
+source "$ROOT_DIR/script/lib/identity.sh"
 PROJECT="$ROOT_DIR/Barline.xcodeproj"
 RUN_ROOT="${BARLINE_RUN_ROOT:-/private/tmp/barline-run-$(id -u)}"
 DERIVED_DATA="$RUN_ROOT/DerivedData"
@@ -73,6 +73,16 @@ if [[ ! -x "$DEVELOPER_PATH/usr/bin/xcodebuild" ]]; then
 fi
 
 export DEVELOPER_DIR="$DEVELOPER_PATH"
+if [[ -n "${BARLINE_APP_BUNDLE_IDENTIFIER:-}" ]]; then
+    barline_validate_bundle_identifier "$BARLINE_APP_BUNDLE_IDENTIFIER" || {
+        printf 'error: inherited BARLINE_APP_BUNDLE_IDENTIFIER is invalid\n' >&2
+        exit 1
+    }
+    BUNDLE_ID="$BARLINE_APP_BUNDLE_IDENTIFIER"
+else
+    BUNDLE_ID="$(barline_resolve_app_bundle_identifier "$ROOT_DIR" "$CONFIGURATION")"
+fi
+LOG_SUBSYSTEM="$(barline_resolve_logging_subsystem "$ROOT_DIR" "$CONFIGURATION")"
 
 stop_processes() {
     /usr/bin/pkill -x "$APP_NAME" >/dev/null 2>&1 || true

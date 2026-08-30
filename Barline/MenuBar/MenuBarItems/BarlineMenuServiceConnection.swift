@@ -15,6 +15,9 @@ extension BarlineMenuService {
     final class Connection: Sendable {
         static let shared = Connection()
 
+        private static let restoreTimeout: Duration = .seconds(30)
+        private static let mutationBudgetNanoseconds: UInt64 = 4_000_000_000
+
         private let session: Session
         private let queue: DispatchQueue
         private let logger: Logger
@@ -99,21 +102,31 @@ extension BarlineMenuService {
         }
 
         func move(_ operation: MenuBarMoveOperation) async throws -> MenuBarMutationResult {
-            guard case let .mutation(result) = await send(.move(operation)) else {
+            guard case let .mutation(result) = await send(
+                .move(operation, deadlineUptimeNanoseconds: mutationDeadline())
+            ) else {
                 throw MenuBarBackendError.interrupted
             }
             return try result.value()
         }
 
         func reveal(_ item: MenuBarItemID) async throws -> MenuBarMutationResult {
-            guard case let .mutation(result) = await send(.reveal(item)) else {
+            guard case let .mutation(result) = await send(
+                .reveal(item, deadlineUptimeNanoseconds: mutationDeadline())
+            ) else {
                 throw MenuBarBackendError.interrupted
             }
             return try result.value()
         }
 
         func activate(_ item: MenuBarItemID, button: MenuBarMouseButton) async throws {
-            guard case let .activation(result) = await send(.activate(item: item, button: button)) else {
+            guard case let .activation(result) = await send(
+                .activate(
+                    item: item,
+                    button: button,
+                    deadlineUptimeNanoseconds: mutationDeadline()
+                )
+            ) else {
                 throw MenuBarBackendError.interrupted
             }
             _ = try result.value()
@@ -184,10 +197,32 @@ extension BarlineMenuService {
         }
 
         func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
-            guard case let .mutation(result) = await send(.restore(snapshot)) else {
-                throw MenuBarBackendError.interrupted
+            guard snapshot.items.count <= 256 else {
+                throw MenuBarBackendError.operationFailed("restore plan exceeds the safe operation limit")
             }
-            return try result.value()
+            let operations = MenuBarMovePlanner().restoreOperations(for: snapshot)
+            guard operations.count <= 256 else {
+                throw MenuBarBackendError.operationFailed("restore plan exceeds the safe operation limit")
+            }
+            let deadline = ContinuousClock.now.advanced(by: Self.restoreTimeout)
+            var changedItemIDs = [MenuBarItemID]()
+            for operation in operations {
+                try Task.checkCancellation()
+                guard ContinuousClock.now < deadline else {
+                    throw MenuBarBackendError.timedOut
+                }
+                let result = try await move(operation)
+                changedItemIDs.append(contentsOf: result.changedItemIDs)
+            }
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else {
+                throw MenuBarBackendError.timedOut
+            }
+            let updated = try await self.snapshot()
+            return MenuBarMutationResult(
+                generation: updated.generation,
+                changedItemIDs: changedItemIDs
+            )
         }
 
         func health() async -> MenuBarBackendHealth {
@@ -225,6 +260,14 @@ extension BarlineMenuService {
                     continuation.resume(returning: session.send(request: request))
                 }
             }
+        }
+
+        private func mutationDeadline() -> UInt64 {
+            let now = DispatchTime.now().uptimeNanoseconds
+            let (deadline, overflowed) = now.addingReportingOverflow(
+                Self.mutationBudgetNanoseconds
+            )
+            return overflowed ? .max : deadline
         }
     }
 }

@@ -4,6 +4,7 @@
 //
 
 import BarlineCore
+import Darwin
 import Foundation
 import OSLog
 import Security
@@ -76,7 +77,10 @@ final class Listener: @unchecked Sendable {
     }
 
     /// Handles a received message.
-    private func handleMessage(_ message: XPCReceivedMessage) -> BarlineMenuService.Response? {
+    private func handleMessage(
+        _ message: XPCReceivedMessage,
+        sessionCancellation: SessionCancellation
+    ) -> BarlineMenuService.Response? {
         do {
             let request = try message.decode(as: BarlineMenuService.Request.self)
             switch request {
@@ -99,13 +103,30 @@ final class Listener: @unchecked Sendable {
                     }
                 }
                 return .snapshot(result ?? .failure(.timedOut))
-            case let .move(operation):
-                return .mutation(runMutation { try await self.backend.move(operation) })
-            case let .reveal(item):
-                return .mutation(runMutation { try await self.backend.reveal(item) })
-            case let .activate(item, button):
+            case let .move(operation, deadlineUptimeNanoseconds: deadline):
+                return .mutation(runMutation(
+                    deadlineUptimeNanoseconds: deadline,
+                    sessionCancellation: sessionCancellation
+                ) {
+                    try await self.backend.move(operation)
+                })
+            case let .reveal(item, deadlineUptimeNanoseconds: deadline):
+                return .mutation(runMutation(
+                    deadlineUptimeNanoseconds: deadline,
+                    sessionCancellation: sessionCancellation
+                ) {
+                    try await self.backend.reveal(item)
+                })
+            case let .activate(
+                item: item,
+                button: button,
+                deadlineUptimeNanoseconds: deadline
+            ):
                 let result: BarlineMenuService.ServiceResult<BarlineMenuService.EmptyResult>? =
-                    AsyncRequestBridge.run {
+                    runOperation(
+                        deadlineUptimeNanoseconds: deadline,
+                        sessionCancellation: sessionCancellation
+                    ) {
                         do {
                             try await self.backend.activate(item, button: button)
                             return .success(BarlineMenuService.EmptyResult())
@@ -198,8 +219,13 @@ final class Listener: @unchecked Sendable {
             case let .endRevealObservation(token):
                 _ = AsyncRequestBridge.run { await self.backend.endRevealObservation(token) }
                 return .start
-            case let .restore(snapshot):
-                return .mutation(runMutation { try await self.backend.restore(snapshot) })
+            case let .restore(snapshot, deadlineUptimeNanoseconds: deadline):
+                return .mutation(runMutation(
+                    deadlineUptimeNanoseconds: deadline,
+                    sessionCancellation: sessionCancellation
+                ) {
+                    try await self.backend.restore(snapshot)
+                })
             case .health:
                 let health = AsyncRequestBridge.run { await self.backend.health() } ?? MenuBarBackendHealth(
                     backendName: "XPC",
@@ -218,9 +244,14 @@ final class Listener: @unchecked Sendable {
     }
 
     private func runMutation(
+        deadlineUptimeNanoseconds: UInt64,
+        sessionCancellation: SessionCancellation,
         _ operation: @escaping @Sendable () async throws -> MenuBarMutationResult
     ) -> BarlineMenuService.ServiceResult<MenuBarMutationResult> {
-        AsyncRequestBridge.run {
+        runOperation(
+            deadlineUptimeNanoseconds: deadlineUptimeNanoseconds,
+            sessionCancellation: sessionCancellation
+        ) {
             do {
                 return try await .success(operation())
             } catch let error as MenuBarBackendError {
@@ -231,13 +262,39 @@ final class Listener: @unchecked Sendable {
         } ?? .failure(.timedOut)
     }
 
+    private func runOperation<Value: Sendable>(
+        deadlineUptimeNanoseconds: UInt64,
+        sessionCancellation: SessionCancellation,
+        _ operation: @escaping @Sendable () async -> Value
+    ) -> Value? {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let maximumBudgetNanoseconds: UInt64 = 4_000_000_000
+        let (maximumDeadline, overflowed) = now.addingReportingOverflow(
+            maximumBudgetNanoseconds
+        )
+        let boundedMaximumDeadline = overflowed ? UInt64.max : maximumDeadline
+        let effectiveDeadline = min(
+            deadlineUptimeNanoseconds,
+            boundedMaximumDeadline
+        )
+        guard effectiveDeadline > now else { return nil }
+        return AsyncRequestBridge.run(
+            deadlineUptimeNanoseconds: effectiveDeadline,
+            sessionCancellation: sessionCancellation,
+            operation
+        )
+    }
+
     /// Activates the listener without checking if it is already active, using
     /// the strict certificate-signed or local ad-hoc peer requirement.
     @available(macOS 26.0, *)
     private func uncheckedActivateWithPeerRequirement() throws {
         listener = try XPCListener(service: name, requirement: Self.appPeerRequirement()) { request in
-            request.accept { message in
-                self.handleMessage(message)
+            let sessionCancellation = SessionCancellation()
+            return request.accept { message in
+                self.handleMessage(message, sessionCancellation: sessionCancellation)
+            } cancellationHandler: { _ in
+                sessionCancellation.cancelAll()
             }
         }
     }
@@ -245,8 +302,11 @@ final class Listener: @unchecked Sendable {
     /// Activates the listener without checking if it is already active.
     private func uncheckedActivate() throws {
         listener = try XPCListener(service: name) { request in
-            request.accept { message in
-                self.handleMessage(message)
+            let sessionCancellation = SessionCancellation()
+            return request.accept { message in
+                self.handleMessage(message, sessionCancellation: sessionCancellation)
+            } cancellationHandler: { _ in
+                sessionCancellation.cancelAll()
             }
         }
     }
@@ -278,20 +338,103 @@ final class Listener: @unchecked Sendable {
     }
 }
 
+private final class SessionCancellation: @unchecked Sendable {
+    private struct ActiveOperation: Sendable {
+        let task: Task<Void, Never>
+        let completion: DispatchGroup
+    }
+
+    private struct State: Sendable {
+        var isCancelled = false
+        var activeOperations = [UUID: ActiveOperation]()
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    func register(
+        _ task: Task<Void, Never>,
+        completion: DispatchGroup,
+        token: UUID
+    ) -> Bool {
+        state.withLock { state in
+            guard !state.isCancelled else { return false }
+            state.activeOperations[token] = ActiveOperation(task: task, completion: completion)
+            return true
+        }
+    }
+
+    func remove(token: UUID) {
+        state.withLock { $0.activeOperations[token] = nil }
+    }
+
+    func cancelAll() {
+        let operations = state.withLock { state in
+            state.isCancelled = true
+            return Array(state.activeOperations.values)
+        }
+        let deadline = DispatchTime.now() + AsyncRequestBridge.cancellationGrace
+        for operation in operations {
+            operation.task.cancel()
+        }
+        for operation in operations where operation.completion.wait(timeout: deadline) != .success {
+            AsyncRequestBridge.failStop()
+        }
+    }
+}
+
 private enum AsyncRequestBridge {
+    static let cancellationGrace: TimeInterval = 0.5
+
     static func run<Value: Sendable>(
+        timeout: TimeInterval = 5,
+        deadlineUptimeNanoseconds: UInt64? = nil,
+        sessionCancellation: SessionCancellation? = nil,
         _ operation: @escaping @Sendable () async -> Value
     ) -> Value? {
-        let semaphore = DispatchSemaphore(value: 0)
+        let completion = DispatchGroup()
+        completion.enter()
         let result = OSAllocatedUnfairLock<Value?>(initialState: nil)
-        Task.detached {
-            let resolved = await operation()
-            result.withLock { $0 = resolved }
-            semaphore.signal()
+        let (startGate, startGateContinuation) = AsyncStream<Void>.makeStream()
+        let task = Task.detached {
+            defer { completion.leave() }
+            for await _ in startGate {
+                guard !Task.isCancelled else { return }
+                let resolved = await operation()
+                result.withLock { $0 = resolved }
+                return
+            }
         }
-        guard semaphore.wait(timeout: .now() + 5) == .success else {
+        let token = UUID()
+        if let sessionCancellation,
+           !sessionCancellation.register(task, completion: completion, token: token)
+        {
+            task.cancel()
+            startGateContinuation.yield()
+            startGateContinuation.finish()
+            guard completion.wait(timeout: .now() + cancellationGrace) == .success else {
+                failStop()
+            }
+            return nil
+        }
+        startGateContinuation.yield()
+        startGateContinuation.finish()
+        defer { sessionCancellation?.remove(token: token) }
+        let deadline = deadlineUptimeNanoseconds.map(DispatchTime.init(uptimeNanoseconds:))
+            ?? .now() + timeout
+        guard completion.wait(timeout: deadline) == .success else {
+            task.cancel()
+            guard completion.wait(timeout: .now() + cancellationGrace) == .success else {
+                failStop()
+            }
             return nil
         }
         return result.withLock { $0.take() }
+    }
+
+    static func failStop() -> Never {
+        Logger.default.fault(
+            "Compatibility operation ignored cancellation; terminating helper"
+        )
+        Darwin._exit(70)
     }
 }

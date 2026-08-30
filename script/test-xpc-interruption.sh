@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=script/lib/identity.sh
+source "$ROOT/script/lib/identity.sh"
 APP_NAME=Barline
 HELPER_NAME=BarlineMenuService
 REUSE_RUNNING=false
@@ -78,7 +80,14 @@ if "$REUSE_RUNNING"; then
             "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe apple-event-reopen
     else
         # Exercise the DEBUG-only user path in the development interruption gate.
-        xcrun swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(Notification.Name("com.mabryventures.Barline.runtime-smoke.toggle-shelf"), object: nil, userInfo: nil, deliverImmediately: true)'
+        APP_BUNDLE_ID="$(barline_resolve_app_bundle_identifier "$ROOT" Debug)"
+        BARLINE_NOTIFICATION_NAME="$APP_BUNDLE_ID.runtime-smoke.toggle-shelf" xcrun swift -e '
+          import Foundation
+          let name = ProcessInfo.processInfo.environment["BARLINE_NOTIFICATION_NAME"]!
+          DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(name), object: nil, userInfo: nil, deliverImmediately: true
+          )
+        '
     fi
 fi
 

@@ -174,6 +174,7 @@ public actor MenuBarStateCoordinator {
         let snapshot: MenuBarSnapshot
         let activeProfileID: UUID?
         let workspace: ProfileWorkspaceState?
+        let workspaceRevision: UInt64?
     }
 
     private struct LogicalLayoutItem: Hashable, Sendable {
@@ -470,6 +471,7 @@ public actor MenuBarStateCoordinator {
         if workspaceTransaction != nil {
             startingCheckpoint = try await refreshedHistoryStartingCheckpoint(
                 workspace: workspaceBefore,
+                workspaceRevision: startingWorkspaceRevision,
                 now: now
             )
         } else {
@@ -477,7 +479,8 @@ public actor MenuBarStateCoordinator {
             startingCheckpoint = HistoryCheckpoint(
                 snapshot: snapshot,
                 activeProfileID: activeProfileID,
-                workspace: workspaceBefore
+                workspace: workspaceBefore,
+                workspaceRevision: startingWorkspaceRevision
             )
         }
         let before = startingCheckpoint.snapshot
@@ -652,6 +655,7 @@ public actor MenuBarStateCoordinator {
             var layoutRollbackError: (any Error)?
             var verifiedRollbackSnapshot: MenuBarSnapshot?
             var workspaceWasSuperseded = false
+            var rollbackWorkspaceRevision = startingWorkspaceRevision
             if let workspaceBefore, let workspaceTransaction {
                 do {
                     if let appliedWorkspaceRevision {
@@ -659,15 +663,18 @@ public actor MenuBarStateCoordinator {
                             workspaceBefore,
                             ifCurrentRevision: appliedWorkspaceRevision
                         )
-                        if restoredRevision == nil {
+                        if let restoredRevision {
+                            rollbackWorkspaceRevision = restoredRevision
+                        } else {
                             workspaceWasSuperseded = true
-                            _ = try await workspaceTransaction.rollbackSuperseded(
+                            rollbackWorkspaceRevision = try await workspaceTransaction.rollbackSuperseded(
                                 from: targetWorkspace,
                                 to: workspaceBefore
                             )
                         }
                     } else {
                         try await workspaceTransaction.apply(workspaceBefore)
+                        rollbackWorkspaceRevision = await workspaceTransaction.currentRevision()
                     }
                 } catch {
                     workspaceRollbackError = error
@@ -698,6 +705,11 @@ public actor MenuBarStateCoordinator {
                layoutRollbackError == nil,
                let verifiedRollbackSnapshot
             {
+                if let rollbackWorkspaceRevision,
+                   await workspaceTransaction?.currentRevision() != rollbackWorkspaceRevision
+                {
+                    workspaceWasSuperseded = true
+                }
                 currentSnapshot = verifiedRollbackSnapshot
                 lastKnownGoodSnapshot = verifiedRollbackSnapshot
                 activeProfileID = workspaceWasSuperseded ? nil : priorProfileID
@@ -920,13 +932,14 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.invalidSnapshot(reason)
         }
         let live = try await refreshedHistoryStartingCheckpoint(
-            workspace: workspaceTransaction.capture(),
+            workspaceTransaction: workspaceTransaction,
             now: now
         )
         let target = HistoryCheckpoint(
             snapshot: checkpoint.snapshot,
             activeProfileID: checkpoint.activeProfileID,
-            workspace: checkpoint.workspace
+            workspace: checkpoint.workspace,
+            workspaceRevision: nil
         )
         let restored = try await restoreHistoryCheckpoint(
             target,
@@ -968,7 +981,7 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.invalidSnapshot(reason)
         }
         let live = try await refreshedHistoryStartingCheckpoint(
-            workspace: workspaceTransaction.capture(),
+            workspaceTransaction: workspaceTransaction,
             now: now
         )
         guard let liveWorkspace = live.workspace else {
@@ -992,7 +1005,8 @@ public actor MenuBarStateCoordinator {
         let target = HistoryCheckpoint(
             snapshot: checkpoint.snapshot,
             activeProfileID: checkpoint.activeProfileID,
-            workspace: checkpoint.workspace
+            workspace: checkpoint.workspace,
+            workspaceRevision: nil
         )
         let restored = try await restoreHistoryCheckpoint(
             target,
@@ -1020,7 +1034,7 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.operationFailed("no layout undo checkpoint")
         }
         let before = try await refreshedHistoryStartingCheckpoint(
-            workspace: workspaceTransaction?.capture(),
+            workspaceTransaction: workspaceTransaction,
             now: now
         )
         let restored = try await restoreHistoryCheckpoint(
@@ -1047,7 +1061,7 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.operationFailed("no layout redo checkpoint")
         }
         let before = try await refreshedHistoryStartingCheckpoint(
-            workspace: workspaceTransaction?.capture(),
+            workspaceTransaction: workspaceTransaction,
             now: now
         )
         let restored = try await restoreHistoryCheckpoint(
@@ -1077,10 +1091,37 @@ public actor MenuBarStateCoordinator {
             )
         }
         mutationGeneration &+= 1
+        var didBeginLayoutMutation = false
+        var didBeginWorkspaceMutation = false
+        var appliedWorkspaceRevision: UInt64?
+        var workspaceWasSuperseded = false
         do {
             if let workspace = target.workspace, let workspaceTransaction {
-                try await workspaceTransaction.apply(workspace)
+                if let startingRevision = previous.workspaceRevision {
+                    do {
+                        guard let revision = try await workspaceTransaction.apply(
+                            workspace,
+                            ifCurrentRevision: startingRevision
+                        ) else {
+                            workspaceWasSuperseded = true
+                            activeProfileID = nil
+                            lastKnownGoodProfileID = nil
+                            throw MenuBarWorkspaceTransactionError.superseded
+                        }
+                        appliedWorkspaceRevision = revision
+                        didBeginWorkspaceMutation = true
+                    } catch let transactionError as MenuBarWorkspaceTransactionError {
+                        throw transactionError
+                    } catch {
+                        didBeginWorkspaceMutation = true
+                        throw error
+                    }
+                } else {
+                    didBeginWorkspaceMutation = true
+                    try await workspaceTransaction.apply(workspace)
+                }
             }
+            didBeginLayoutMutation = true
             _ = try await backend.restore(target.snapshot)
             let candidate = try await normalizedBackendSnapshot()
             // History restoration intentionally targets an older logical layout;
@@ -1089,6 +1130,13 @@ public actor MenuBarStateCoordinator {
             switch validator.validate(candidate, previous: nil, now: now ?? Date()) {
             case let .success(snapshot):
                 try validateHistoryResult(snapshot, matches: target.snapshot)
+                let revisionToValidate = appliedWorkspaceRevision ?? previous.workspaceRevision
+                if let revisionToValidate,
+                   await workspaceTransaction?.currentRevision() != revisionToValidate
+                {
+                    workspaceWasSuperseded = true
+                    throw MenuBarWorkspaceTransactionError.superseded
+                }
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
@@ -1101,32 +1149,88 @@ public actor MenuBarStateCoordinator {
             }
         } catch {
             let historyRestoreError = error
-            do {
-                if let workspace = previous.workspace, let workspaceTransaction {
-                    try await workspaceTransaction.apply(workspace)
+            if historyRestoreError is MenuBarWorkspaceTransactionError,
+               !didBeginWorkspaceMutation,
+               !didBeginLayoutMutation
+            {
+                activeProfileID = nil
+                lastKnownGoodProfileID = nil
+                throw historyRestoreError
+            }
+            var workspaceRollbackError: (any Error)?
+            var rollbackWorkspaceRevision = previous.workspaceRevision
+            if let targetWorkspace = target.workspace,
+               let previousWorkspace = previous.workspace,
+               let workspaceTransaction
+            {
+                do {
+                    if let appliedWorkspaceRevision {
+                        let restoredRevision = try await workspaceTransaction.apply(
+                            previousWorkspace,
+                            ifCurrentRevision: appliedWorkspaceRevision
+                        )
+                        if let restoredRevision {
+                            rollbackWorkspaceRevision = restoredRevision
+                        } else {
+                            workspaceWasSuperseded = true
+                            guard let mergedRevision = try await workspaceTransaction.rollbackSuperseded(
+                                from: targetWorkspace,
+                                to: previousWorkspace
+                            ) else {
+                                throw MenuBarWorkspaceTransactionError.superseded
+                            }
+                            rollbackWorkspaceRevision = mergedRevision
+                        }
+                    } else if didBeginWorkspaceMutation {
+                        try await workspaceTransaction.apply(previousWorkspace)
+                        rollbackWorkspaceRevision = await workspaceTransaction.currentRevision()
+                    }
+                } catch {
+                    workspaceRollbackError = error
                 }
-                _ = try await backend.restore(previous.snapshot)
-                let rollbackCandidate = try await normalizedBackendSnapshot()
-                let rollbackSnapshot: MenuBarSnapshot
-                switch validator.validate(rollbackCandidate, previous: nil, now: now ?? Date()) {
-                case let .success(snapshot):
-                    try validateHistoryResult(snapshot, matches: previous.snapshot)
-                    rollbackSnapshot = snapshot
-                case let .failure(reason):
-                    throw MenuBarBackendError.invalidSnapshot(reason)
+            }
+            var layoutRollbackError: (any Error)?
+            var rollbackSnapshot: MenuBarSnapshot?
+            do {
+                if didBeginLayoutMutation {
+                    _ = try await backend.restore(previous.snapshot)
+                    let rollbackCandidate = try await normalizedBackendSnapshot()
+                    switch validator.validate(rollbackCandidate, previous: nil, now: now ?? Date()) {
+                    case let .success(snapshot):
+                        try validateHistoryResult(snapshot, matches: previous.snapshot)
+                        rollbackSnapshot = snapshot
+                    case let .failure(reason):
+                        throw MenuBarBackendError.invalidSnapshot(reason)
+                    }
+                } else {
+                    rollbackSnapshot = previous.snapshot
+                }
+            } catch {
+                layoutRollbackError = error
+            }
+            if workspaceRollbackError == nil,
+               layoutRollbackError == nil,
+               let rollbackSnapshot
+            {
+                if let rollbackWorkspaceRevision,
+                   await workspaceTransaction?.currentRevision() != rollbackWorkspaceRevision
+                {
+                    workspaceWasSuperseded = true
                 }
                 currentSnapshot = rollbackSnapshot
                 lastKnownGoodSnapshot = rollbackSnapshot
-                activeProfileID = previous.activeProfileID
-                lastKnownGoodProfileID = previous.activeProfileID
-            } catch {
-                currentSnapshot = nil
-                activeProfileID = nil
-                throw MenuBarBackendError.operationFailed(
-                    "history restore failed: \(historyRestoreError); rollback failed: \(error)"
-                )
+                activeProfileID = workspaceWasSuperseded ? nil : previous.activeProfileID
+                lastKnownGoodProfileID = workspaceWasSuperseded ? nil : previous.activeProfileID
+                throw historyRestoreError
             }
-            throw historyRestoreError
+            currentSnapshot = nil
+            activeProfileID = nil
+            lastKnownGoodProfileID = nil
+            let workspaceDescription = workspaceRollbackError.map(String.init(describing:)) ?? "none"
+            let layoutDescription = layoutRollbackError.map(String.init(describing:)) ?? "none"
+            throw MenuBarBackendError.operationFailed(
+                "history restore failed: \(historyRestoreError); rollback failed: workspace \(workspaceDescription); layout \(layoutDescription)"
+            )
         }
     }
 
@@ -1191,7 +1295,8 @@ public actor MenuBarStateCoordinator {
             HistoryCheckpoint(
                 snapshot: snapshot,
                 activeProfileID: activeProfileID,
-                workspace: workspace
+                workspace: workspace,
+                workspaceRevision: nil
             )
         )
         trimHistory(&undoCheckpoints)
@@ -1231,6 +1336,7 @@ public actor MenuBarStateCoordinator {
 
     private func refreshedHistoryStartingCheckpoint(
         workspace: ProfileWorkspaceState?,
+        workspaceRevision: UInt64? = nil,
         now: Date?
     ) async throws -> HistoryCheckpoint {
         let cached = currentSnapshot
@@ -1241,8 +1347,33 @@ public actor MenuBarStateCoordinator {
         return HistoryCheckpoint(
             snapshot: live,
             activeProfileID: activeProfileID,
-            workspace: workspace
+            workspace: workspace,
+            workspaceRevision: workspaceRevision
         )
+    }
+
+    private func refreshedHistoryStartingCheckpoint(
+        workspaceTransaction: MenuBarWorkspaceTransaction?,
+        now: Date?
+    ) async throws -> HistoryCheckpoint {
+        let revision = await workspaceTransaction?.currentRevision()
+        let workspace = try await workspaceTransaction?.capture()
+        if let revision, await workspaceTransaction?.currentRevision() != revision {
+            activeProfileID = nil
+            lastKnownGoodProfileID = nil
+            throw MenuBarWorkspaceTransactionError.superseded
+        }
+        let checkpoint = try await refreshedHistoryStartingCheckpoint(
+            workspace: workspace,
+            workspaceRevision: revision,
+            now: now
+        )
+        if let revision, await workspaceTransaction?.currentRevision() != revision {
+            activeProfileID = nil
+            lastKnownGoodProfileID = nil
+            throw MenuBarWorkspaceTransactionError.superseded
+        }
+        return checkpoint
     }
 
     private func logicalLayout(of snapshot: MenuBarSnapshot) -> Set<LogicalLayoutItem> {

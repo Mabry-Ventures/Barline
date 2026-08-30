@@ -3,6 +3,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=script/lib/identity.sh
+source "$ROOT/script/lib/identity.sh"
+
+export BARLINE_BUILD_CONFIGURATION=Release
+BARLINE_APP_BUNDLE_IDENTIFIER="$(
+    barline_resolve_app_bundle_identifier "$ROOT" "$BARLINE_BUILD_CONFIGURATION"
+)"
+export BARLINE_APP_BUNDLE_IDENTIFIER
 
 cleanup() {
     /usr/bin/pkill -x Barline >/dev/null 2>&1 || true

@@ -191,9 +191,13 @@ public enum MenuBarServiceRequest: Codable, Equatable, Sendable {
     case start
     case capabilities
     case snapshot
-    case move(MenuBarMoveOperation)
-    case reveal(MenuBarItemID)
-    case activate(MenuBarItemID, MenuBarMouseButton)
+    case move(MenuBarMoveOperation, deadlineUptimeNanoseconds: UInt64)
+    case reveal(MenuBarItemID, deadlineUptimeNanoseconds: UInt64)
+    case activate(
+        MenuBarItemID,
+        MenuBarMouseButton,
+        deadlineUptimeNanoseconds: UInt64
+    )
     case capture([MenuBarItemID])
     case captureBackground(displayID: UInt32, sampleHeight: Double?)
     case environment
@@ -202,7 +206,7 @@ public enum MenuBarServiceRequest: Codable, Equatable, Sendable {
     case beginRevealObservation(MenuBarItemID)
     case revealObservationIsVisible(MenuBarRevealObservationToken)
     case endRevealObservation(MenuBarRevealObservationToken)
-    case restore(MenuBarSnapshot)
+    case restore(MenuBarSnapshot, deadlineUptimeNanoseconds: UInt64)
     case health
     case restart
 }

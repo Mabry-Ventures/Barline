@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=script/lib/identity.sh
+source "$ROOT/script/lib/identity.sh"
 MODE="${BARLINE_SOAK_MODE:-smoke}"
 ITERATIONS="${BARLINE_SOAK_ITERATIONS:-10}"
 DURATION_SECONDS="${BARLINE_SOAK_DURATION_SECONDS:-1800}"
@@ -93,7 +95,7 @@ CORE_LOG="$ARTIFACT_DIR/core-cycles.log"
 XPC_LOG="$ARTIFACT_DIR/xpc-cycles.log"
 PERFORMANCE_LOG="$ARTIFACT_DIR/performance-cycles.log"
 SUMMARY="$ARTIFACT_DIR/summary.json"
-PREFERENCE_DOMAIN="com.mabryventures.Barline"
+PREFERENCE_DOMAIN=""
 PREFERENCE_KEY="UseBarlineShelf"
 ORIGINAL_PREFERENCE="__missing__"
 CYCLES=0
@@ -105,6 +107,15 @@ XPC_RECOVERY_STRATEGY=same-process-apple-event-reopen
 BASELINE_APP_PID=""
 
 mkdir -p "$ARTIFACT_DIR"
+PREFERENCE_DOMAIN="$(barline_resolve_app_bundle_identifier "$ROOT" Release)"
+export BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN"
+export BARLINE_BUILD_CONFIGURATION=Release
+CACHE_ROOT="$(xcrun swift -e 'import Foundation; print(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].path)' 2>/dev/null)"
+[[ -n "$CACHE_ROOT" && "$CACHE_ROOT" == /* ]] || {
+    printf 'error: user cache root is unavailable or invalid\n' >&2
+    exit 1
+}
+APP_CACHE_DIR="$CACHE_ROOT/$PREFERENCE_DOMAIN"
 printf 'timestamp_utc,elapsed_seconds,cycle,app_pid,helper_pid,app_rss_kb,helper_rss_kb,total_rss_kb,app_cpu_percent,helper_cpu_percent,cache_kb\n' > "$CSV"
 : > "$CORE_LOG"
 : > "$XPC_LOG"
@@ -114,17 +125,12 @@ if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PR
     ORIGINAL_PREFERENCE="$ORIGINAL_PREFERENCE_VALUE"
 fi
 
-CACHE_ROOT="$(xcrun swift -e 'import Foundation; print(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].path)' 2>/dev/null)"
-
 cache_size_kb() {
-    local total=0 path size
-    for path in "$CACHE_ROOT/com.mabryventures.Barline" "$CACHE_ROOT/Barline"; do
-        if [[ -d "$path" ]]; then
-            size="$(/usr/bin/du -sk "$path" 2>/dev/null | /usr/bin/awk '{print $1}')"
-            total=$((total + ${size:-0}))
-        fi
-    done
-    printf '%d\n' "$total"
+    local size=0
+    if [[ -d "$APP_CACHE_DIR" ]]; then
+        size="$(/usr/bin/du -sk "$APP_CACHE_DIR" 2>/dev/null | /usr/bin/awk '{print $1}')"
+    fi
+    printf '%d\n' "${size:-0}"
 }
 
 process_value() {
@@ -186,6 +192,7 @@ write_summary() {
     RSS_LIMIT_VALUE="$RSS_GROWTH_LIMIT_KB" CACHE_LIMIT_VALUE="$CACHE_GROWTH_LIMIT_KB" CSV_VALUE="$CSV" \
     CORE_LOG_VALUE="$CORE_LOG" XPC_LOG_VALUE="$XPC_LOG" PERFORMANCE_LOG_VALUE="$PERFORMANCE_LOG" \
     SUMMARY_VALUE="$SUMMARY" ARTIFACT_VALUE="$ARTIFACT_DIR" \
+    BUNDLE_ID_VALUE="$PREFERENCE_DOMAIN" CACHE_SCOPE_VALUE="user-caches/$PREFERENCE_DOMAIN" \
     CONFIGURATION_VALUE="$BUILD_CONFIGURATION" PROBE_VALUE="$PRODUCTION_PROBE" XPC_STRATEGY_VALUE="$XPC_RECOVERY_STRATEGY" \
     ruby -rcsv -rjson -e '
       rows = CSV.read(ENV.fetch("CSV_VALUE"), headers: true)
@@ -246,6 +253,8 @@ write_summary() {
         build_configuration: ENV.fetch("CONFIGURATION_VALUE"),
         production_probe: ENV.fetch("PROBE_VALUE"),
         xpc_recovery_strategy: ENV.fetch("XPC_STRATEGY_VALUE"),
+        app_bundle_identifier: ENV.fetch("BUNDLE_ID_VALUE"),
+        sampled_cache_scope: ENV.fetch("CACHE_SCOPE_VALUE"),
         commit_sha: ENV.fetch("SHA_VALUE"),
         end_commit_sha: ENV.fetch("END_SHA_VALUE"),
         clean_at_end: ENV.fetch("DIRTY_VALUE") == "false",

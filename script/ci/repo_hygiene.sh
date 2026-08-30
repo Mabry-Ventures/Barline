@@ -13,6 +13,23 @@ require actionlint
 require ruby
 require shellcheck
 
+# shellcheck source=script/lib/identity.sh
+source "$ROOT/script/lib/identity.sh"
+barline_validate_bundle_identifier "com.example.ConfiguredBarline"
+for invalid_bundle_identifier in "" "\$(UNRESOLVED)" "invalid/path" "invalid..identifier" "single"; do
+    if barline_validate_bundle_identifier "$invalid_bundle_identifier"; then
+        printf 'error: invalid bundle identifier passed validation: %s\n' "$invalid_bundle_identifier" >&2
+        exit 1
+    fi
+done
+legacy_bundle_identifier="com.mabryventures.""Barline"
+if git grep -n -F "$legacy_bundle_identifier" -- \
+    'script/*.sh' 'script/**/*.sh' ':(exclude)script/ci/repo_hygiene.sh'
+then
+    printf 'error: scripts must derive the Barline bundle identifier from build settings\n' >&2
+    exit 1
+fi
+
 git diff --check
 
 shell_files=()
