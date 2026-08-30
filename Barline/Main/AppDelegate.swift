@@ -25,6 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Coalesces repeated requests to activate the settings window.
     private var settingsOpenTask: Task<Void, Never>?
 
+    /// Avoids rapid accessory/regular policy churn while still releasing focus
+    /// immediately when the final app window closes.
+    private var accessoryDeactivationTask: Task<Void, Never>?
+
     /// Prevents bursts of reopen events from starting overlapping XPC refreshes.
     private var reopenRecoveryTask: Task<Void, Never>?
 
@@ -182,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appState.navigationState.isAppFrontmost
         {
             Logger.default.debug("All windows closed - deactivating with accessory activation policy")
-            appState.deactivate(withPolicy: .accessory)
+            scheduleAccessoryDeactivation()
         }
         return false
     }
@@ -204,6 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // compatibility delay. A production reopen needs one short event-loop
         // settling interval before activation, but should not be held behind
         // the longer menu-command delay or unrelated recovery work.
+        accessoryDeactivationTask?.cancel()
+        accessoryDeactivationTask = nil
         settingsOpenTask?.cancel()
         settingsOpenTask = Task { [weak self] in
             do {
@@ -271,6 +277,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func scheduleAccessoryDeactivation() {
+        accessoryDeactivationTask?.cancel()
+        NSApp.deactivate()
+        accessoryDeactivationTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+            guard let self,
+                  !NSApp.isActive,
+                  !NSApp.windows.contains(where: {
+                      $0.isVisible && ($0.canBecomeKey || $0.canBecomeMain)
+                  })
+            else {
+                return
+            }
+            accessoryDeactivationTask = nil
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
     /// Establishes a hidden-window baseline for the explicit local reopen probe.
     /// The launch argument keeps this test-only control unavailable in normal use.
     @objc private func hideSettingsForReopenProbe() {
@@ -284,7 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {
             window.orderOut(nil)
         }
-        appState.deactivate(withPolicy: .accessory)
+        scheduleAccessoryDeactivation()
         let defaults = UserDefaults.standard
         defaults.set(
             defaults.integer(forKey: Self.reopenProbeBaselineGenerationKey) + 1,

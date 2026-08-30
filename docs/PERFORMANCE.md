@@ -28,7 +28,11 @@ success and latency remain separately reported and bounded by the request
 timeout. Presentation acknowledgement is monotonic-generation and PID bound,
 and requires the expected process to be frontmost with its Settings window
 visible, on the active space, and key or main. Release-soak summaries use schema
-version 3 with separately named presentation and recovery metrics. It repeatedly executes
+version 3 with separately named presentation and recovery metrics. Closing the
+last user window releases focus immediately while deferring accessory-policy
+demotion for one second; a reopen cancels that demotion, avoiding rapid AppKit
+policy churn without keeping focus or overriding another visible user window.
+It repeatedly executes
 snapshot/state/profile/search tests in SwiftPM's Release configuration,
 requires XPC helper replacement while preserving the app PID, and samples
 app/helper RSS and CPU plus Barline cache size. A changed app PID invalidates
