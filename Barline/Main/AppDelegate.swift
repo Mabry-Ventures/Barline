@@ -110,6 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // backend. This keeps the app process alive while replacing an
         // interrupted XPC helper before the user performs another action.
         pendingReopenRecoveryCount += 1
+        return true
+    }
+
+    private func startReopenRecoveryIfNeeded() {
         if reopenRecoveryTask == nil {
             reopenRecoveryTask = Task { [weak self] in
                 guard let self else {
@@ -122,7 +126,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        return true
     }
 
     private func completeReopenRecovery() async {
@@ -196,13 +199,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleSettingsOpen(acknowledgeReopenProbe: Bool) {
-        // Delay makes this more reliable for some reason. Cancel the prior
-        // delayed activation so a burst of reopen events cannot enqueue
-        // unbounded main-actor work.
+        // Cancel the prior activation so a burst of requests cannot enqueue
+        // unbounded main-actor work. Menu-driven settings requests retain the
+        // compatibility delay. A production reopen needs one short event-loop
+        // settling interval before activation, but should not be held behind
+        // the longer menu-command delay or unrelated recovery work.
         settingsOpenTask?.cancel()
         settingsOpenTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: .milliseconds(100))
+                try await Task.sleep(
+                    for: acknowledgeReopenProbe ? .milliseconds(25) : .milliseconds(100)
+                )
             } catch {
                 return
             }
@@ -212,14 +219,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsOpenTask = nil
             appState.activate(withPolicy: .regular)
             appState.openWindow(.settings)
-            guard acknowledgeReopenProbe,
-                  CommandLine.arguments.contains("--barline-reopen-probe")
-            else {
+            guard acknowledgeReopenProbe || pendingReopenRecoveryCount > 0 else {
                 return
             }
             let visibilityDeadline = ContinuousClock.now + .seconds(1)
             while ContinuousClock.now < visibilityDeadline,
-                  !isSettingsPresentedForReopenProbe()
+                  !isSettingsPresented()
             {
                 do {
                     try await Task.sleep(for: .milliseconds(10))
@@ -228,24 +233,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             guard !Task.isCancelled,
-                  isSettingsPresentedForReopenProbe()
+                  isSettingsPresented()
             else {
+                startReopenRecoveryIfNeeded()
                 return
             }
-            let defaults = UserDefaults.standard
-            defaults.set(
-                ProcessInfo.processInfo.processIdentifier,
-                forKey: Self.reopenProbePresentationProcessIdentifierKey
-            )
-            defaults.set(
-                defaults.integer(forKey: Self.reopenProbePresentationGenerationKey) + 1,
-                forKey: Self.reopenProbePresentationGenerationKey
-            )
-            defaults.synchronize()
+            if acknowledgeReopenProbe,
+               CommandLine.arguments.contains("--barline-reopen-probe")
+            {
+                let defaults = UserDefaults.standard
+                defaults.set(
+                    ProcessInfo.processInfo.processIdentifier,
+                    forKey: Self.reopenProbePresentationProcessIdentifierKey
+                )
+                defaults.set(
+                    defaults.integer(forKey: Self.reopenProbePresentationGenerationKey) + 1,
+                    forKey: Self.reopenProbePresentationGenerationKey
+                )
+                defaults.synchronize()
+            }
+            startReopenRecoveryIfNeeded()
         }
     }
 
-    private func isSettingsPresentedForReopenProbe() -> Bool {
+    private func isSettingsPresented() -> Bool {
         guard NSApp.isActive,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
         else {
