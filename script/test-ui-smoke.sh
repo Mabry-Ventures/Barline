@@ -20,4 +20,5 @@ mkdir -p "$MODULE_CACHE"
 xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     -framework AppKit -framework CoreGraphics \
     "$ROOT/script/test-ui-smoke.swift" -o "$BINARY"
-"$BINARY" "$APP" com.mabryventures.Barline
+APP_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
+"$BINARY" "$APP" "$APP_BUNDLE_ID"

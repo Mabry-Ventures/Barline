@@ -172,6 +172,7 @@ final class WindowServerClient: @unchecked Sendable {
         let maximumAttempts = 8
         var lastOrigin: CGPoint?
         for attempt in 0 ..< maximumAttempts {
+            try Task.checkCancellation()
             let windows = try currentWindows()
             let identified = identifiedWindows(windows)
             guard let sourceIndex = identified.firstIndex(where: { $0.id == operation.itemID }) else {
@@ -216,6 +217,7 @@ final class WindowServerClient: @unchecked Sendable {
             }
             let target = candidates[targetIndex]
             lastOrigin = item.bounds.origin
+            try Task.checkCancellation()
             try await synthesizeDrag(item: item, target: target)
             let delay = min(25 + (attempt * 20), 150)
             try await Task.sleep(for: .milliseconds(delay))
@@ -407,11 +409,20 @@ final class WindowServerClient: @unchecked Sendable {
     }
 
     func restore(_ priorSnapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
+        guard priorSnapshot.items.count <= 256 else {
+            throw MenuBarBackendError.operationFailed("restore plan exceeds the safe operation limit")
+        }
+        let operations = MenuBarMovePlanner().restoreOperations(for: priorSnapshot)
+        guard operations.count <= 256 else {
+            throw MenuBarBackendError.operationFailed("restore plan exceeds the safe operation limit")
+        }
         var changed = [MenuBarItemID]()
-        for operation in MenuBarMovePlanner().restoreOperations(for: priorSnapshot) {
+        for operation in operations {
+            try Task.checkCancellation()
             _ = try await move(operation)
             changed.append(operation.itemID)
         }
+        try Task.checkCancellation()
         let updated = try snapshot()
         return MenuBarMutationResult(generation: updated.generation, changedItemIDs: changed)
     }
@@ -598,6 +609,7 @@ final class WindowServerClient: @unchecked Sendable {
         pid: pid_t,
         button: MenuBarMouseButton
     ) async throws {
+        try Task.checkCancellation()
         let mouseButton: CGMouseButton = switch button {
         case .left: .left
         case .right: .right
@@ -626,11 +638,14 @@ final class WindowServerClient: @unchecked Sendable {
             event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
             event.setIntegerValueField(windowField, value: Int64(item.identifier))
             event.postToPid(pid)
-            try await Task.sleep(for: .milliseconds(15))
+            // Complete mouse-up even when cancellation arrives after mouse-down.
+            try? await Task.sleep(for: .milliseconds(15))
         }
+        try Task.checkCancellation()
     }
 
     private func synthesizeDrag(item: WindowRecord, target: WindowRecord) async throws {
+        try Task.checkCancellation()
         let start = CGPoint(x: item.bounds.midX, y: item.bounds.midY)
         let end = CGPoint(x: target.bounds.midX, y: target.bounds.midY)
         let pid = WindowInfo(windowID: item.identifier)
@@ -662,8 +677,12 @@ final class WindowServerClient: @unchecked Sendable {
             )
             event.setIntegerValueField(windowField, value: Int64(identifier))
             event.postToPid(pid)
-            try await Task.sleep(for: .milliseconds(15))
+            // Once mouse-down is posted, complete the short gesture even if
+            // cancellation arrives so the system cannot be left in a dragged
+            // state. Cancellation is observed immediately after mouse-up.
+            try? await Task.sleep(for: .milliseconds(15))
         }
+        try Task.checkCancellation()
     }
 
     private func windowLevel(for identifier: CGWindowID) -> CGWindowLevel? {

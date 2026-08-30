@@ -3,6 +3,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=script/lib/identity.sh
+source "$ROOT/script/lib/identity.sh"
 MODULE_CACHE="${TMPDIR:-/tmp}/barline-performance-module-cache"
 BINARY="${TMPDIR:-/tmp}/barline-shelf-responsiveness"
 PREFERENCE_DOMAIN=""
@@ -11,6 +13,7 @@ ORIGINAL_PREFERENCE="__missing__"
 REUSE_RUNNING=false
 OUTPUT_PATH=""
 PROBE="${BARLINE_PERFORMANCE_PROBE:-runtime-smoke}"
+BUILD_CONFIGURATION="${BARLINE_BUILD_CONFIGURATION:-Debug}"
 
 usage() {
     printf 'usage: %s [--reuse-running] [--probe runtime-smoke|apple-event-reopen] [--output PATH]\n' "$0" >&2
@@ -36,18 +39,20 @@ while (($#)); do
 done
 
 [[ "$PROBE" == runtime-smoke || "$PROBE" == apple-event-reopen ]] || { usage; exit 2; }
-
-BUILD_SETTINGS_JSON="$(mktemp "${TMPDIR:-/tmp}/barline-performance-settings.XXXXXX")"
-env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
-    -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Debug \
-    -showBuildSettings -json > "$BUILD_SETTINGS_JSON"
-PREFERENCE_DOMAIN="$(ruby -rjson -e 'puts JSON.parse(File.read(ARGV.fetch(0))).fetch(0).fetch("buildSettings").fetch("BARLINE_APP_BUNDLE_IDENTIFIER", "")' "$BUILD_SETTINGS_JSON")"
-/bin/rm -f "$BUILD_SETTINGS_JSON"
-UNRESOLVED_MARKER="\$("
-[[ -n "$PREFERENCE_DOMAIN" && "$PREFERENCE_DOMAIN" != *"$UNRESOLVED_MARKER"* ]] || {
-    printf 'error: BARLINE_APP_BUNDLE_IDENTIFIER is missing or unresolved\n' >&2
-    exit 1
+[[ "$BUILD_CONFIGURATION" == Debug || "$BUILD_CONFIGURATION" == Release ]] || {
+    printf 'error: BARLINE_BUILD_CONFIGURATION must be Debug or Release\n' >&2
+    exit 2
 }
+
+if [[ -n "${BARLINE_APP_BUNDLE_IDENTIFIER:-}" ]]; then
+    barline_validate_bundle_identifier "$BARLINE_APP_BUNDLE_IDENTIFIER" || {
+        printf 'error: inherited BARLINE_APP_BUNDLE_IDENTIFIER is invalid\n' >&2
+        exit 1
+    }
+    PREFERENCE_DOMAIN="$BARLINE_APP_BUNDLE_IDENTIFIER"
+else
+    PREFERENCE_DOMAIN="$(barline_resolve_app_bundle_identifier "$ROOT" "$BUILD_CONFIGURATION")"
+fi
 
 if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" 2>/dev/null)"; then
     ORIGINAL_PREFERENCE="$ORIGINAL_PREFERENCE_VALUE"
@@ -77,7 +82,13 @@ if "$REUSE_RUNNING"; then
     }
 else
     /usr/bin/defaults write "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" -bool true
-    BARLINE_RUNTIME_SMOKE=1 "$ROOT/script/build_and_run.sh" --verify
+    if [[ "$BUILD_CONFIGURATION" == Release ]]; then
+        BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_RUNTIME_SMOKE=1 \
+            "$ROOT/script/build_and_run.sh" --release --verify
+    else
+        BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_RUNTIME_SMOKE=1 \
+            "$ROOT/script/build_and_run.sh" --verify
+    fi
 fi
 APP_PID="$(/usr/bin/pgrep -x Barline | /usr/bin/head -1 || true)"
 [[ -n "$APP_PID" ]] || {

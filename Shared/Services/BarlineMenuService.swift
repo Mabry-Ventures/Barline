@@ -28,9 +28,13 @@ extension BarlineMenuService {
         case start
         case capabilities
         case snapshot
-        case move(MenuBarMoveOperation)
-        case reveal(MenuBarItemID)
-        case activate(item: MenuBarItemID, button: MenuBarMouseButton)
+        case move(MenuBarMoveOperation, deadlineUptimeNanoseconds: UInt64)
+        case reveal(MenuBarItemID, deadlineUptimeNanoseconds: UInt64)
+        case activate(
+            item: MenuBarItemID,
+            button: MenuBarMouseButton,
+            deadlineUptimeNanoseconds: UInt64
+        )
         case capture([MenuBarItemID])
         case captureBackground(displayID: UInt32, sampleHeight: Double?)
         case environment
@@ -39,7 +43,7 @@ extension BarlineMenuService {
         case beginRevealObservation(MenuBarItemID)
         case revealObservationIsVisible(MenuBarRevealObservationToken)
         case endRevealObservation(MenuBarRevealObservationToken)
-        case restore(MenuBarSnapshot)
+        case restore(MenuBarSnapshot, deadlineUptimeNanoseconds: UInt64)
         case health
         case restart
     }

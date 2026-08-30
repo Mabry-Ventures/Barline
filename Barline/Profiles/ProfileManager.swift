@@ -1498,22 +1498,19 @@ final class ProfileManager: ObservableObject {
                 )
                 return (restored: false, profileID: profileID, authorityToken: self.activeProfileAuthorityToken())
             }
-            let retainedProfileID = checkpoint.activeProfileID.flatMap { profileID in
-                self.profiles.first(where: { $0.id == profileID }).flatMap { profile in
-                    self.profileMatchesCheckpoint(profile, checkpoint: checkpoint) ? profileID : nil
-                }
-            }
-            if let checkpointProfileID = checkpoint.activeProfileID,
-               retainedProfileID == nil
-            {
-                _ = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
-                    ifMatches: checkpointProfileID
-                )
-            }
+            let retainedProfileID = try await self.synchronizeProfileAuthority(
+                clearsActivationRequests: false
+            )
             let priorAuthorityToken = self.processedDefaults
                 .string(forKey: Self.profileBeforeFocusAuthorityTokenKey)
                 .flatMap(UUID.init(uuidString:))
-            return (restored: true, profileID: retainedProfileID, authorityToken: priorAuthorityToken)
+            return (
+                restored: true,
+                profileID: retainedProfileID,
+                authorityToken: retainedProfileID == checkpoint.activeProfileID
+                    ? priorAuthorityToken
+                    : nil
+            )
         } completion: { [weak self] result in
             guard let self else { return }
             activeProfileID = result.profileID
@@ -1634,6 +1631,18 @@ final class ProfileManager: ObservableObject {
             workspaceTransaction: workspaceTransaction()
         )
         let profileID = checkpoint.activeProfileID
+        guard currentWorkspaceState() == checkpoint.workspace else {
+            if let profileID {
+                _ = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                    ifMatches: profileID
+                )
+            }
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            activePresentation = nil
+            setActiveProfileAuthorityToken(nil)
+            return nil
+        }
         guard let profileID,
               let profile = profiles.first(where: { $0.id == profileID })
         else {
