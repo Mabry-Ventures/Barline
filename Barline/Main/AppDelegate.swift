@@ -207,16 +207,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func scheduleSettingsOpen(acknowledgeReopenProbe: Bool) {
         // Cancel the prior activation so a burst of requests cannot enqueue
         // unbounded main-actor work. Menu-driven settings requests retain the
-        // compatibility delay. A production reopen needs one short event-loop
-        // settling interval before activation, but should not be held behind
-        // the longer menu-command delay or unrelated recovery work.
+        // compatibility delay. A production reopen is scheduled on the next
+        // cooperative turn so activation and window presentation are not held
+        // behind the longer menu-command delay or unrelated recovery work.
         accessoryDeactivationTask?.cancel()
         accessoryDeactivationTask = nil
         settingsOpenTask?.cancel()
         settingsOpenTask = Task { [weak self] in
             do {
                 try await Task.sleep(
-                    for: acknowledgeReopenProbe ? .milliseconds(25) : .milliseconds(100)
+                    for: acknowledgeReopenProbe ? .milliseconds(0) : .milliseconds(100)
                 )
             } catch {
                 return
