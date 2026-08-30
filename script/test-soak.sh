@@ -215,25 +215,33 @@ write_summary() {
       actual_duration = rows.empty? ? 0 : rows[-1]["elapsed_seconds"].to_i
       complete_duration = ENV.fetch("DURATION_VALUE").to_i == 1800 && actual_duration >= 1800
       performance_results = File.read(ENV.fetch("PERFORMANCE_LOG_VALUE")).scan(
-        /RESULT samples=(\d+) timeouts=(\d+) median_ms=([0-9.]+) p95_ms=([0-9.]+) max_ms=([0-9.]+).*verdict=(\w+)/
+        /RESULT samples=(\d+) timeouts=(\d+) median_ms=([0-9.]+) p95_ms=([0-9.]+) max_ms=([0-9.]+) recovery_p95_ms=([0-9.]+) recovery_max_ms=([0-9.]+) recovery_succeeded=(true|false).*verdict=(\w+)/
       )
-      performance_latencies = File.read(ENV.fetch("PERFORMANCE_LOG_VALUE")).scan(
-        /^cycle=\d+ status=OK latency_ms=([0-9.]+)/
-      ).flatten.map(&:to_f).sort
+      performance_samples = File.read(ENV.fetch("PERFORMANCE_LOG_VALUE")).scan(
+        /^cycle=\d+ status=OK latency_ms=([0-9.]+) recovery_ms=([0-9.]+)$/
+      )
+      presentation_latencies = performance_samples.map { |sample| sample[0].to_f }.sort
+      recovery_latencies = performance_samples.map { |sample| sample[1].to_f }.sort
       percentile = lambda do |values, fraction|
         next 0 if values.empty?
         rank = [(fraction * values.length).ceil, 1].max
         values[[rank - 1, values.length - 1].min]
       end
-      aggregate_p95 = percentile.call(performance_latencies, 0.95)
+      presentation_aggregate_p95 = percentile.call(presentation_latencies, 0.95)
+      recovery_aggregate_p95 = percentile.call(recovery_latencies, 0.95)
       expected_performance_samples = ENV.fetch("PERFORMANCE_VALUE").to_i *
         ENV.fetch("PERFORMANCE_SAMPLES_VALUE").to_i
       cycle_counts = ["CYCLES_VALUE", "XPC_VALUE", "PERFORMANCE_VALUE"].map { |name| ENV.fetch(name).to_i }
       shelf_workload_passed = performance_results.length == ENV.fetch("PERFORMANCE_VALUE").to_i &&
         performance_results.all? do |result|
           result[0].to_i == ENV.fetch("PERFORMANCE_SAMPLES_VALUE").to_i &&
-            result[1].to_i == 0
-        end && performance_latencies.length == expected_performance_samples && aggregate_p95 <= 250
+            result[1].to_i == 0 &&
+            result[7] == "true" &&
+            result[8] == "PASS"
+        end && presentation_latencies.length == expected_performance_samples &&
+        recovery_latencies.length == expected_performance_samples &&
+        presentation_aggregate_p95 <= 250 &&
+        recovery_latencies.all? { |latency| latency <= 5_000 }
       guards = {
         exact_candidate: exact,
         workload_cycles_completed: cycle_counts.all?(&:positive?) && cycle_counts.uniq.length == 1,
@@ -248,7 +256,7 @@ write_summary() {
       operational = ENV.fetch("EXIT_VALUE").to_i == 0 && guards.reject { |name, _| name == :exact_candidate }.values.all?
       candidate_pass = operational && guards[:exact_candidate] && complete_duration && !harness
       document = {
-        schema_version: 2,
+        schema_version: 3,
         mode: "release",
         build_configuration: ENV.fetch("CONFIGURATION_VALUE"),
         production_probe: ENV.fetch("PROBE_VALUE"),
@@ -286,9 +294,19 @@ write_summary() {
           runs: performance_results.length,
           samples: performance_results.sum { |result| result[0].to_i },
           timeouts: performance_results.sum { |result| result[1].to_i },
-          aggregate_p95_ms: aggregate_p95,
-          maximum_window_p95_ms: performance_results.map { |result| result[3].to_f }.max || 0,
-          maximum_latency_ms: performance_latencies.max || 0,
+          presentation: {
+            aggregate_p95_ms: presentation_aggregate_p95,
+            maximum_window_p95_ms: performance_results.map { |result| result[3].to_f }.max || 0,
+            maximum_latency_ms: presentation_latencies.max || 0,
+            feedback_budget_ms: 250
+          },
+          recovery: {
+            aggregate_p95_ms: recovery_aggregate_p95,
+            maximum_window_p95_ms: performance_results.map { |result| result[5].to_f }.max || 0,
+            maximum_latency_ms: recovery_latencies.max || 0,
+            timeout_ms: 5_000,
+            all_succeeded: performance_results.all? { |result| result[7] == "true" }
+          },
           all_passed: shelf_workload_passed
         },
         host: {

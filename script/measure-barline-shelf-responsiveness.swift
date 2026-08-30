@@ -44,8 +44,10 @@ private enum Configuration {
 }
 
 private struct WindowSnapshot {
+    let ownerProcessIdentifier: pid_t?
     let ownerName: String?
     let windowName: String?
+    let layer: Int?
     let bounds: CGRect
 }
 
@@ -91,8 +93,9 @@ private enum ProbeError: Error, CustomStringConvertible {
 private func establishHiddenSettingsBaseline(
     processIdentifier: pid_t,
     timeout: Duration = Configuration.closeTimeout
-) throws {
+) throws -> Int {
     let baselineGenerationKey = "ReopenProbeBaselineGeneration" as CFString
+    let presentationGenerationKey = "ReopenProbePresentationGeneration" as CFString
     let applicationID = Configuration.appBundleIdentifier as CFString
     CFPreferencesAppSynchronize(applicationID)
     let startingGeneration =
@@ -115,7 +118,7 @@ private func establishHiddenSettingsBaseline(
         let generation =
             (CFPreferencesCopyAppValue(baselineGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
         if generation > startingGeneration {
-            return
+            return (CFPreferencesCopyAppValue(presentationGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
         }
         usleep(Configuration.pollingIntervalMicroseconds)
     }
@@ -124,26 +127,15 @@ private func establishHiddenSettingsBaseline(
 
 private func requestProductionReopen(
     processIdentifier: pid_t,
+    startingPresentationGeneration: Int,
     timeout: Duration = Configuration.iconTimeout
 ) throws -> (presentationMilliseconds: Double, recoveryMilliseconds: Double) {
     let recoveryGenerationKey = "ReopenRecoveryGeneration" as CFString
     let recoveryFailureKey = "ReopenRecoveryFailure" as CFString
     let recoverySucceededKey = "ReopenRecoverySucceeded" as CFString
+    let presentationGenerationKey = "ReopenProbePresentationGeneration" as CFString
+    let presentationProcessIdentifierKey = "ReopenProbePresentationProcessIdentifier" as CFString
     let applicationID = Configuration.appBundleIdentifier as CFString
-    let observationLock = NSLock()
-    var presentationObserved = false
-    let presentationObserver = DistributedNotificationCenter.default().addObserver(
-        forName: Configuration.notificationName("reopen-probe.presentation"),
-        object: nil,
-        queue: nil
-    ) { _ in
-        observationLock.withLock {
-            presentationObserved = true
-        }
-    }
-    defer {
-        DistributedNotificationCenter.default().removeObserver(presentationObserver)
-    }
     CFPreferencesAppSynchronize(applicationID)
     let startingGeneration = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
     guard processIsRunning(processIdentifier) else {
@@ -170,7 +162,15 @@ private func requestProductionReopen(
     }
     var presentationMilliseconds: Double?
     while start.duration(to: .now) < timeout {
-        if observationLock.withLock({ presentationObserved }) {
+        CFPreferencesAppSynchronize(applicationID)
+        let presentationGeneration =
+            (CFPreferencesCopyAppValue(presentationGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
+        let acknowledgedProcessIdentifier =
+            (CFPreferencesCopyAppValue(presentationProcessIdentifierKey, applicationID) as? NSNumber)?.int32Value ?? 0
+        if presentationGeneration > startingPresentationGeneration,
+           acknowledgedProcessIdentifier == processIdentifier,
+           expectedApplicationIsPresented(processIdentifier: processIdentifier)
+        {
             presentationMilliseconds = milliseconds(start.duration(to: .now))
             break
         }
@@ -214,10 +214,24 @@ private func windowSnapshots() -> [WindowSnapshot] {
         }
 
         return WindowSnapshot(
+            ownerProcessIdentifier: (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
             ownerName: row[kCGWindowOwnerName as String] as? String,
             windowName: row[kCGWindowName as String] as? String,
+            layer: (row[kCGWindowLayer as String] as? NSNumber)?.intValue,
             bounds: CGRect(x: x, y: y, width: width, height: height)
         )
+    }
+}
+
+private func expectedApplicationIsPresented(processIdentifier: pid_t) -> Bool {
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier else {
+        return false
+    }
+    return windowSnapshots().contains {
+        $0.ownerProcessIdentifier == processIdentifier &&
+            $0.layer == 0 &&
+            $0.bounds.width > 0 &&
+            $0.bounds.height > 0
     }
 }
 
@@ -336,14 +350,21 @@ do {
             // completing setup and its initial XPC snapshot. Establish readiness
             // outside the measured window, then retain the strict timeout below.
             let timeout: Duration = warmup == 0 ? .seconds(30) : Configuration.iconTimeout
-            try establishHiddenSettingsBaseline(processIdentifier: processIdentifier)
-            _ = try requestProductionReopen(processIdentifier: processIdentifier, timeout: timeout)
+            let presentationGeneration = try establishHiddenSettingsBaseline(processIdentifier: processIdentifier)
+            _ = try requestProductionReopen(
+                processIdentifier: processIdentifier,
+                startingPresentationGeneration: presentationGeneration,
+                timeout: timeout
+            )
         }
         var latencies = [Double]()
         var recoveryLatencies = [Double]()
         for cycle in 1 ... Configuration.measuredCycles {
-            try establishHiddenSettingsBaseline(processIdentifier: processIdentifier)
-            let result = try requestProductionReopen(processIdentifier: processIdentifier)
+            let presentationGeneration = try establishHiddenSettingsBaseline(processIdentifier: processIdentifier)
+            let result = try requestProductionReopen(
+                processIdentifier: processIdentifier,
+                startingPresentationGeneration: presentationGeneration
+            )
             latencies.append(result.presentationMilliseconds)
             recoveryLatencies.append(result.recoveryMilliseconds)
             print(

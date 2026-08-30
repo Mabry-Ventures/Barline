@@ -13,12 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenRecoveryFailureKey = "ReopenRecoveryFailure"
     private static let reopenRecoverySucceededKey = "ReopenRecoverySucceeded"
     private static let reopenProbeBaselineGenerationKey = "ReopenProbeBaselineGeneration"
+    private static let reopenProbePresentationGenerationKey = "ReopenProbePresentationGeneration"
+    private static let reopenProbePresentationProcessIdentifierKey = "ReopenProbePresentationProcessIdentifier"
     private static let notificationPrefix = Bundle.main.bundleIdentifier ?? "Barline"
     private static let reopenProbeHideSettingsNotification = Notification.Name(
         "\(notificationPrefix).reopen-probe.hide-settings"
-    )
-    private static let reopenProbePresentationNotification = Notification.Name(
-        "\(notificationPrefix).reopen-probe.presentation"
     )
     /// The shared app state.
     let appState = AppState()
@@ -106,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Logger.default.debug("Handling reopen")
         // Keep every reopen responsive even if a prior compatibility recovery
         // is still in flight. The opener coalesces bursts independently.
-        openSettingsWindow()
+        scheduleSettingsOpen(acknowledgeReopenProbe: true)
         // A reopen is also a safe recovery opportunity for the compatibility
         // backend. This keeps the app process alive while replacing an
         // interrupted XPC helper before the user performs another action.
@@ -193,6 +192,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opens the settings window and activates the app.
     @objc func openSettingsWindow() {
+        scheduleSettingsOpen(acknowledgeReopenProbe: false)
+    }
+
+    private func scheduleSettingsOpen(acknowledgeReopenProbe: Bool) {
         // Delay makes this more reliable for some reason. Cancel the prior
         // delayed activation so a burst of reopen events cannot enqueue
         // unbounded main-actor work.
@@ -209,28 +212,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsOpenTask = nil
             appState.activate(withPolicy: .regular)
             appState.openWindow(.settings)
-            guard CommandLine.arguments.contains("--barline-reopen-probe") else {
+            guard acknowledgeReopenProbe,
+                  CommandLine.arguments.contains("--barline-reopen-probe")
+            else {
                 return
             }
             let visibilityDeadline = ContinuousClock.now + .seconds(1)
             while ContinuousClock.now < visibilityDeadline,
-                  !NSApp.windows.contains(where: {
-                      $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
-                  })
+                  !isSettingsPresentedForReopenProbe()
             {
-                try? await Task.sleep(for: .milliseconds(10))
+                do {
+                    try await Task.sleep(for: .milliseconds(10))
+                } catch {
+                    return
+                }
             }
-            guard NSApp.windows.contains(where: {
-                $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
-            }) else {
+            guard !Task.isCancelled,
+                  isSettingsPresentedForReopenProbe()
+            else {
                 return
             }
-            DistributedNotificationCenter.default().postNotificationName(
-                Self.reopenProbePresentationNotification,
-                object: nil,
-                userInfo: nil,
-                deliverImmediately: true
+            let defaults = UserDefaults.standard
+            defaults.set(
+                ProcessInfo.processInfo.processIdentifier,
+                forKey: Self.reopenProbePresentationProcessIdentifierKey
             )
+            defaults.set(
+                defaults.integer(forKey: Self.reopenProbePresentationGenerationKey) + 1,
+                forKey: Self.reopenProbePresentationGenerationKey
+            )
+            defaults.synchronize()
+        }
+    }
+
+    private func isSettingsPresentedForReopenProbe() -> Bool {
+        guard NSApp.isActive,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+        else {
+            return false
+        }
+        return NSApp.windows.contains { window in
+            window.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue &&
+                window.isVisible &&
+                window.isOnActiveSpace &&
+                window.occlusionState.contains(.visible) &&
+                (window.isKeyWindow || window.isMainWindow)
         }
     }
 

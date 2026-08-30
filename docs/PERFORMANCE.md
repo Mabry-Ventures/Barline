@@ -25,7 +25,10 @@ Apple `reopen` event and measures Settings presentation separately from the
 completion of compatibility recovery rather than invoking the Debug-only
 runtime bridge. The 250 ms budget applies only to visible feedback; recovery
 success and latency remain separately reported and bounded by the request
-timeout. It repeatedly executes
+timeout. Presentation acknowledgement is monotonic-generation and PID bound,
+and requires the expected process to be frontmost with its Settings window
+visible, on the active space, and key or main. Release-soak summaries use schema
+version 3 with separately named presentation and recovery metrics. It repeatedly executes
 snapshot/state/profile/search tests in SwiftPM's Release configuration,
 requires XPC helper replacement while preserving the app PID, and samples
 app/helper RSS and CPU plus Barline cache size. A changed app PID invalidates
