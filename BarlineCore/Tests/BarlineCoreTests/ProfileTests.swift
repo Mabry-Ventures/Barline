@@ -412,6 +412,91 @@ struct ProfileTests {
         ) == nil)
     }
 
+    @Test("Persisted presentations reconnect only through one exact display alias")
+    func persistedPresentationReconnectResolution() throws {
+        let oldDisplay = MenuBarDisplayID("old-display")
+        let liveDisplay = MenuBarDisplayID("live-display")
+        let duplicateDisplay = MenuBarDisplayID("duplicate-display")
+        let expectedFingerprint = fingerprint("c")
+        let layout = ProfileLayout(visible: [item(1)])
+        let profile = BarlineProfile(
+            name: "Durable reconnect",
+            displayOverrides: [
+                DisplayProfileOverride(
+                    displayID: oldDisplay,
+                    displayFingerprint: expectedFingerprint,
+                    layout: layout
+                ),
+            ]
+        )
+        let persisted = profile.resolvedPresentation(for: oldDisplay)
+        let resolver = DisplayProfileOverrideResolver()
+        let unique = displaySnapshot(identities: [
+            MenuBarDisplayIdentity(
+                runtimeID: liveDisplay,
+                hardwareFingerprint: expectedFingerprint
+            ),
+        ])
+
+        let reconnected = try #require(resolver.resolvePersistedPresentation(
+            profile: profile,
+            persisted: persisted,
+            snapshot: unique
+        ))
+        #expect(reconnected.source == .displayOverride(oldDisplay))
+        #expect(reconnected.destinationDisplayID == liveDisplay)
+        #expect(reconnected.layout == persisted.layout)
+
+        var reconciledProfile = profile
+        reconciledProfile.displayOverrides[0].displayID = liveDisplay
+        let crashRecovered = try #require(resolver.resolvePersistedPresentation(
+            profile: reconciledProfile,
+            persisted: persisted,
+            snapshot: unique
+        ))
+        #expect(crashRecovered.source == .displayOverride(liveDisplay))
+        #expect(crashRecovered.destinationDisplayID == liveDisplay)
+        #expect(crashRecovered.layout == persisted.layout)
+
+        var payloadAmbiguousProfile = reconciledProfile
+        payloadAmbiguousProfile.displayOverrides.append(
+            DisplayProfileOverride(
+                displayID: duplicateDisplay,
+                displayFingerprint: fingerprint("d"),
+                layout: layout
+            )
+        )
+        #expect(resolver.resolvePersistedPresentation(
+            profile: payloadAmbiguousProfile,
+            persisted: persisted,
+            snapshot: unique
+        ) == nil)
+
+        let ambiguous = displaySnapshot(identities: [
+            MenuBarDisplayIdentity(
+                runtimeID: liveDisplay,
+                hardwareFingerprint: expectedFingerprint
+            ),
+            MenuBarDisplayIdentity(
+                runtimeID: duplicateDisplay,
+                hardwareFingerprint: expectedFingerprint
+            ),
+        ])
+        #expect(resolver.resolvePersistedPresentation(
+            profile: profile,
+            persisted: persisted,
+            snapshot: ambiguous
+        ) == nil)
+
+        var tampered = persisted
+        tampered.layout = ProfileLayout(hidden: [item(1)])
+        #expect(resolver.resolvePersistedPresentation(
+            profile: profile,
+            persisted: tampered,
+            snapshot: unique
+        ) == nil)
+    }
+
     @Test("Resolved presentation projects groups and section-scoped spacers deterministically")
     func presentationProjection() {
         let first = item(1)

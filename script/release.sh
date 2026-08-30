@@ -194,7 +194,7 @@ for product in "${SIGNED_CODE[@]}"; do
     [[ -e "$product" ]] || { printf 'error: signed archive is missing nested code: %s\n' "$product" >&2; exit 1; }
     codesign --verify --strict --verbose=2 "$product"
     authority="$(codesign -dv --verbose=4 "$product" 2>&1)"
-    grep -q "TeamIdentifier=$TEAM_ID" <<<"$authority" || {
+    grep -Fxq "TeamIdentifier=$TEAM_ID" <<<"$authority" || {
         printf 'error: %s is not signed by the configured Developer ID team\n' "$product" >&2
         exit 1
     }
@@ -209,8 +209,22 @@ APP_ENTITLEMENTS="$RELEASE_ROOT/app-entitlements.plist"
 INTENTS_ENTITLEMENTS="$RELEASE_ROOT/intents-entitlements.plist"
 codesign -d --entitlements - --xml "$APP" > "$APP_ENTITLEMENTS"
 codesign -d --entitlements - --xml "$INTENTS" > "$INTENTS_ENTITLEMENTS"
+plist_array_is_exact_singleton() {
+    local plist="$1" key="$2" expected="$3"
+    plutil -extract "$key" json -o - "$plist" 2>/dev/null \
+        | ruby -rjson -e 'value = JSON.parse(STDIN.read); exit(value == [ARGV.fetch(0)] ? 0 : 1)' "$expected"
+}
+plist_array_contains_exact_value() {
+    local plist="$1" key="$2" expected="$3"
+    plutil -extract "$key" json -o - "$plist" 2>/dev/null \
+        | ruby -rjson -e 'value = JSON.parse(STDIN.read); exit(value.is_a?(Array) && value.include?(ARGV.fetch(0)) ? 0 : 1)' "$expected"
+}
 for entitlements in "$APP_ENTITLEMENTS" "$INTENTS_ENTITLEMENTS"; do
-    plutil -extract 'com\.apple\.security\.application-groups' xml1 -o - "$entitlements" | grep -Fq "$APP_GROUP_ID"
+    plist_array_is_exact_singleton \
+        "$entitlements" 'com\.apple\.security\.application-groups' "$APP_GROUP_ID" || {
+        printf 'error: release entitlement App Group does not exactly match configuration: %s\n' "$entitlements" >&2
+        exit 1
+    }
     if plutil -extract 'com\.apple\.security\.get-task-allow' raw -o - "$entitlements" 2>/dev/null | grep -q true; then
         printf 'error: release entitlement contains get-task-allow: %s\n' "$entitlements" >&2
         exit 1
@@ -228,7 +242,7 @@ validate_embedded_profile() {
     local product="$1" expected_application_identifier="$2" label="$3"
     local profile="$product/Contents/embedded.provisionprofile"
     local decoded="$SIGNING_SCRATCH/${label}-profile.plist"
-    local expiration expiration_epoch now_epoch profile_fingerprint groups
+    local expiration expiration_epoch now_epoch profile_fingerprint
 
     [[ -s "$profile" ]] || { printf 'error: %s release profile is not embedded\n' "$label" >&2; return 1; }
     security cms -D -i "$profile" > "$decoded"
@@ -238,8 +252,8 @@ validate_embedded_profile() {
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$decoded")" == "$expected_application_identifier" ]] || {
         printf 'error: %s profile has the wrong application identifier\n' "$label" >&2; return 1;
     }
-    groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$decoded")"
-    grep -Fq "$APP_GROUP_ID" <<<"$groups" || {
+    plist_array_contains_exact_value \
+        "$decoded" 'Entitlements.com\.apple\.security\.application-groups' "$APP_GROUP_ID" || {
         printf 'error: %s profile is missing the Barline App Group\n' "$label" >&2; return 1;
     }
     [[ "$(plutil -extract ProvisionsAllDevices raw -o - "$decoded")" == true ]] || {

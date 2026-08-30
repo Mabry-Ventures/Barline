@@ -15,6 +15,20 @@ private enum Configuration {
     static let pollingIntervalMicroseconds: useconds_t = 10000
     static let probe = ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_PROBE"] ?? "runtime-smoke"
     static let enforceBudget = ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_ENFORCE_BUDGET"] != "0"
+    static let appBundleIdentifier: String = {
+        guard let value = ProcessInfo.processInfo.environment["BARLINE_APP_BUNDLE_IDENTIFIER"],
+              !value.isEmpty,
+              !value.contains("$(")
+        else {
+            fputs("error: BARLINE_APP_BUNDLE_IDENTIFIER is required\n", stderr)
+            exit(2)
+        }
+        return value
+    }()
+
+    static func notificationName(_ suffix: String) -> Notification.Name {
+        Notification.Name("\(appBundleIdentifier).\(suffix)")
+    }
 
     private static func positiveEnvironmentInteger(_ name: String) -> Int? {
         guard
@@ -75,9 +89,8 @@ private func establishHiddenSettingsBaseline(
     processIdentifier: pid_t,
     timeout: Duration = Configuration.closeTimeout
 ) throws {
-    let bundleIdentifier = "com.mabryventures.Barline"
     let baselineGenerationKey = "ReopenProbeBaselineGeneration" as CFString
-    let applicationID = bundleIdentifier as CFString
+    let applicationID = Configuration.appBundleIdentifier as CFString
     CFPreferencesAppSynchronize(applicationID)
     let startingGeneration =
         (CFPreferencesCopyAppValue(baselineGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
@@ -85,7 +98,7 @@ private func establishHiddenSettingsBaseline(
         throw ProbeError.applicationNotRunning
     }
     DistributedNotificationCenter.default().postNotificationName(
-        Notification.Name("com.mabryventures.Barline.reopen-probe.hide-settings"),
+        Configuration.notificationName("reopen-probe.hide-settings"),
         object: nil,
         userInfo: nil,
         deliverImmediately: true
@@ -110,11 +123,10 @@ private func requestProductionReopen(
     processIdentifier: pid_t,
     timeout: Duration = Configuration.iconTimeout
 ) throws -> Double {
-    let bundleIdentifier = "com.mabryventures.Barline"
     let recoveryGenerationKey = "ReopenRecoveryGeneration" as CFString
     let recoveryFailureKey = "ReopenRecoveryFailure" as CFString
     let recoverySucceededKey = "ReopenRecoverySucceeded" as CFString
-    let applicationID = bundleIdentifier as CFString
+    let applicationID = Configuration.appBundleIdentifier as CFString
     CFPreferencesAppSynchronize(applicationID)
     let startingGeneration = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
     guard processIsRunning(processIdentifier) else {
@@ -203,7 +215,7 @@ private func click(at _: CGPoint) throws {
     switch Configuration.probe {
     case "runtime-smoke":
         DistributedNotificationCenter.default().postNotificationName(
-            Notification.Name("com.mabryventures.Barline.runtime-smoke.toggle-shelf"),
+            Configuration.notificationName("runtime-smoke.toggle-shelf"),
             object: nil,
             userInfo: nil,
             deliverImmediately: true

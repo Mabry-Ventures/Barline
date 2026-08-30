@@ -361,6 +361,114 @@ public struct ProfileWorkspaceState: Codable, Hashable, Sendable {
             presentation: profile.resolvedPresentation(for: displayID)
         )
     }
+
+    /// Reverts fields that still equal a failed activation's target while
+    /// preserving every field changed concurrently by the user.
+    public func rollingBackUnchangedFields(
+        applied target: ProfileWorkspaceState,
+        to original: ProfileWorkspaceState
+    ) -> ProfileWorkspaceState {
+        func reverted<Value: Equatable>(
+            _ current: Value,
+            _ applied: Value,
+            _ prior: Value
+        ) -> Value {
+            current == applied ? prior : current
+        }
+
+        var result = self
+        result.appearance.tintHex = reverted(
+            appearance.tintHex, target.appearance.tintHex, original.appearance.tintHex
+        )
+        result.appearance.gradientHex = reverted(
+            appearance.gradientHex, target.appearance.gradientHex, original.appearance.gradientHex
+        )
+        result.appearance.gradientStops = reverted(
+            appearance.gradientStops,
+            target.appearance.gradientStops,
+            original.appearance.gradientStops
+        )
+        result.appearance.showsBorder = reverted(
+            appearance.showsBorder,
+            target.appearance.showsBorder,
+            original.appearance.showsBorder
+        )
+        result.appearance.borderHex = reverted(
+            appearance.borderHex, target.appearance.borderHex, original.appearance.borderHex
+        )
+        result.appearance.borderWidth = reverted(
+            appearance.borderWidth,
+            target.appearance.borderWidth,
+            original.appearance.borderWidth
+        )
+        result.appearance.showsShadow = reverted(
+            appearance.showsShadow,
+            target.appearance.showsShadow,
+            original.appearance.showsShadow
+        )
+        result.appearance.shape = reverted(
+            appearance.shape, target.appearance.shape, original.appearance.shape
+        )
+        result.appearance.shapeDetails = reverted(
+            appearance.shapeDetails,
+            target.appearance.shapeDetails,
+            original.appearance.shapeDetails
+        )
+        result.appearance.itemSpacing = reverted(
+            appearance.itemSpacing,
+            target.appearance.itemSpacing,
+            original.appearance.itemSpacing
+        )
+        result.appearance.dynamicAppearance = reverted(
+            appearance.dynamicAppearance,
+            target.appearance.dynamicAppearance,
+            original.appearance.dynamicAppearance
+        )
+        result.appearance.isDynamic = reverted(
+            appearance.isDynamic,
+            target.appearance.isDynamic,
+            original.appearance.isDynamic
+        )
+        result.shelfBehavior.isEnabled = reverted(
+            shelfBehavior.isEnabled,
+            target.shelfBehavior.isEnabled,
+            original.shelfBehavior.isEnabled
+        )
+        result.shelfBehavior.followsActiveDisplay = reverted(
+            shelfBehavior.followsActiveDisplay,
+            target.shelfBehavior.followsActiveDisplay,
+            original.shelfBehavior.followsActiveDisplay
+        )
+        result.revealTriggers.click = reverted(
+            revealTriggers.click, target.revealTriggers.click, original.revealTriggers.click
+        )
+        result.revealTriggers.hover = reverted(
+            revealTriggers.hover, target.revealTriggers.hover, original.revealTriggers.hover
+        )
+        result.revealTriggers.scroll = reverted(
+            revealTriggers.scroll, target.revealTriggers.scroll, original.revealTriggers.scroll
+        )
+        result.autoRehide.isEnabled = reverted(
+            autoRehide.isEnabled, target.autoRehide.isEnabled, original.autoRehide.isEnabled
+        )
+        result.autoRehide.strategy = reverted(
+            autoRehide.strategy, target.autoRehide.strategy, original.autoRehide.strategy
+        )
+        result.autoRehide.delaySeconds = reverted(
+            autoRehide.delaySeconds,
+            target.autoRehide.delaySeconds,
+            original.autoRehide.delaySeconds
+        )
+        result.applicationMenuOverlapBehavior = reverted(
+            applicationMenuOverlapBehavior,
+            target.applicationMenuOverlapBehavior,
+            original.applicationMenuOverlapBehavior
+        )
+        result.presentation = reverted(
+            presentation, target.presentation, original.presentation
+        )
+        return result
+    }
 }
 
 public struct ResolvedProfilePresentation: Codable, Hashable, Sendable {
@@ -413,6 +521,54 @@ public struct ResolvedDisplayProfileOverride: Hashable, Sendable {
 
 public struct DisplayProfileOverrideResolver: Sendable {
     public init() {}
+
+    /// Reconnects a persisted presentation to a live display without trusting
+    /// its ephemeral destination identifier. Every durable presentation field
+    /// must still match the current profile; only the live destination may
+    /// change through a unique hardware-fingerprint match.
+    public func resolvePersistedPresentation(
+        profile: BarlineProfile,
+        persisted: ResolvedProfilePresentation,
+        snapshot: MenuBarSnapshot
+    ) -> ResolvedProfilePresentation? {
+        switch persisted.source {
+        case .base:
+            let current = profile.resolvedPresentation(for: nil)
+            return current == persisted ? current : nil
+        case let .displayOverride(storedID):
+            let storedOverrideStillExists = profile.displayOverrides.contains {
+                $0.displayID == storedID
+            }
+            let acceptedOverrideID: MenuBarDisplayID
+            if storedOverrideStillExists {
+                acceptedOverrideID = storedID
+            } else {
+                let payloadMatches = profile.displayOverrides.filter {
+                    $0.layout == persisted.layout
+                        && $0.groups == persisted.groups
+                        && $0.spacers == persisted.spacers
+                }
+                guard payloadMatches.count == 1 else { return nil }
+                acceptedOverrideID = payloadMatches[0].displayID
+            }
+            let matches = snapshot.displayIDs.compactMap { liveID in
+                resolve(
+                    profile: profile,
+                    requestedDisplayID: liveID,
+                    snapshot: snapshot
+                )
+            }.filter { $0.override.displayID == acceptedOverrideID }
+            guard matches.count == 1 else { return nil }
+            let resolved = profile.resolvedPresentation(using: matches[0])
+            var normalizedPersisted = persisted
+            if !storedOverrideStillExists {
+                normalizedPersisted.source = resolved.source
+            }
+            normalizedPersisted.destinationDisplayID = resolved.destinationDisplayID
+            guard normalizedPersisted == resolved else { return nil }
+            return resolved
+        }
+    }
 
     public func resolve(
         profile: BarlineProfile,

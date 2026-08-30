@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODULE_CACHE="${TMPDIR:-/tmp}/barline-performance-module-cache"
 BINARY="${TMPDIR:-/tmp}/barline-shelf-responsiveness"
-PREFERENCE_DOMAIN="com.mabryventures.Barline"
+PREFERENCE_DOMAIN=""
 PREFERENCE_KEY="UseBarlineShelf"
 ORIGINAL_PREFERENCE="__missing__"
 REUSE_RUNNING=false
@@ -36,6 +36,18 @@ while (($#)); do
 done
 
 [[ "$PROBE" == runtime-smoke || "$PROBE" == apple-event-reopen ]] || { usage; exit 2; }
+
+BUILD_SETTINGS_JSON="$(mktemp "${TMPDIR:-/tmp}/barline-performance-settings.XXXXXX")"
+env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
+    -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Debug \
+    -showBuildSettings -json > "$BUILD_SETTINGS_JSON"
+PREFERENCE_DOMAIN="$(ruby -rjson -e 'puts JSON.parse(File.read(ARGV.fetch(0))).fetch(0).fetch("buildSettings").fetch("BARLINE_APP_BUNDLE_IDENTIFIER", "")' "$BUILD_SETTINGS_JSON")"
+/bin/rm -f "$BUILD_SETTINGS_JSON"
+UNRESOLVED_MARKER="\$("
+[[ -n "$PREFERENCE_DOMAIN" && "$PREFERENCE_DOMAIN" != *"$UNRESOLVED_MARKER"* ]] || {
+    printf 'error: BARLINE_APP_BUNDLE_IDENTIFIER is missing or unresolved\n' >&2
+    exit 1
+}
 
 if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" 2>/dev/null)"; then
     ORIGINAL_PREFERENCE="$ORIGINAL_PREFERENCE_VALUE"
@@ -78,7 +90,10 @@ xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     "$ROOT/script/measure-barline-shelf-responsiveness.swift" -o "$BINARY"
 if [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
-    BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" "$BINARY" | tee -a "$OUTPUT_PATH"
+    BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \
+        BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" \
+        "$BINARY" | tee -a "$OUTPUT_PATH"
 else
-    BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" "$BINARY"
+    BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \
+        BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" "$BINARY"
 fi

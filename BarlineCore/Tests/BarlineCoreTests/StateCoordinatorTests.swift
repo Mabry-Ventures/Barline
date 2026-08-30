@@ -659,6 +659,106 @@ struct StateCoordinatorTests {
         #expect(await coordinator.activeProfileID == nil)
     }
 
+    @Test("Concurrent workspace edits supersede activation without being overwritten")
+    func preservesConcurrentWorkspaceEditDuringActivation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let freshBefore = makeSnapshot(generation: 2, count: 2)
+        let after = makeSnapshot(generation: 3, count: 2)
+        let verifiedRollback = makeSnapshot(generation: 4, count: 2)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let profile = BarlineProfile(
+            id: UUID(126),
+            name: "Target",
+            layout: ProfileLayout(visible: before.items.map(\.id)),
+            appearance: ProfileAppearance(itemSpacing: 4)
+        )
+        var expectedWorkspace = original
+        expectedWorkspace.shelfBehavior.isEnabled.toggle()
+        let recorder = RevisionedWorkspaceRecorder(initial: original)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { await recorder.apply($0) },
+            currentRevision: { await recorder.currentRevision() },
+            applyIfCurrent: { workspace, revision in
+                await recorder.apply(workspace, ifCurrentRevision: revision)
+            },
+            rollbackSuperseded: { target, original in
+                await recorder.rollbackSuperseded(from: target, to: original)
+            }
+        )
+        let backend = FakeBackend(
+            snapshots: [before, freshBefore, after, verifiedRollback]
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(throws: MenuBarWorkspaceTransactionError.self) {
+            try await coordinator.activate(
+                profile: profile,
+                now: after.capturedAt,
+                workspaceTransaction: transaction
+            )
+        }
+
+        #expect(await recorder.capture() == expectedWorkspace)
+        #expect(await backend.restoredSnapshots == [freshBefore])
+        #expect(await coordinator.currentSnapshot == verifiedRollback)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Workspace transaction aborts revoke prior authority")
+    func workspaceTransactionAbortsRevokeAuthority() async throws {
+        for transactionError in [
+            MenuBarWorkspaceTransactionError.superseded,
+            .sideEffectRecoveryFailed,
+        ] {
+            let before = makeSnapshot(generation: 1, count: 2)
+            let activated = makeSnapshot(generation: 2, count: 2)
+            let live = makeSnapshot(generation: 3, count: 2)
+            let prior = BarlineProfile(
+                id: UUID(127),
+                name: "Prior",
+                layout: ProfileLayout(visible: before.items.map(\.id))
+            )
+            let replacement = BarlineProfile(
+                id: UUID(128),
+                name: "Replacement",
+                layout: ProfileLayout(visible: before.items.map(\.id))
+            )
+            let original = ProfileWorkspaceState(profile: prior)
+            let transaction = MenuBarWorkspaceTransaction(
+                capture: { original },
+                apply: { _ in },
+                currentRevision: { 0 },
+                applyIfCurrent: { _, _ in throw transactionError },
+                rollbackSuperseded: { _, _ in nil }
+            )
+            let backend = FakeBackend(snapshots: [before, activated, live])
+            let coordinator = MenuBarStateCoordinator(
+                backend: backend,
+                retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+            )
+            _ = try await coordinator.refresh(now: before.capturedAt)
+            _ = try await coordinator.activate(profile: prior, now: activated.capturedAt)
+            #expect(await coordinator.activeProfileID == prior.id)
+
+            await #expect(throws: MenuBarWorkspaceTransactionError.self) {
+                try await coordinator.activate(
+                    profile: replacement,
+                    now: live.capturedAt,
+                    workspaceTransaction: transaction
+                )
+            }
+
+            #expect(await coordinator.activeProfileID == nil)
+            #expect(await coordinator.currentSnapshot == live)
+            #expect(await backend.restoredSnapshots.isEmpty)
+        }
+    }
+
     @Test("Unverified activation rollback clears current authority")
     func clearsAuthorityWhenActivationRollbackFails() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
@@ -906,12 +1006,12 @@ struct StateCoordinatorTests {
 
         let retained = try await coordinator.rehydrateActiveProfileAuthority(
             profile: profile,
-            activeDisplayID: nil,
+            persistedPresentation: profile.resolvedPresentation(for: nil),
             workspaceTransaction: transaction,
             now: live.capturedAt
         )
 
-        #expect(retained)
+        #expect(retained != nil)
         #expect(await coordinator.activeProfileID == profile.id)
 
         let drifted = WorkspaceRecorder(initial: ProfileWorkspaceState(profile: BarlineProfile(name: "Other")))
@@ -925,11 +1025,11 @@ struct StateCoordinatorTests {
         )
         let mismatched = try await mismatchCoordinator.rehydrateActiveProfileAuthority(
             profile: profile,
-            activeDisplayID: nil,
+            persistedPresentation: profile.resolvedPresentation(for: nil),
             workspaceTransaction: driftedTransaction,
             now: live.capturedAt
         )
-        #expect(!mismatched)
+        #expect(mismatched == nil)
         #expect(await mismatchCoordinator.activeProfileID == nil)
     }
 
@@ -2162,6 +2262,55 @@ private actor WorkspaceRecorder {
         if partialFailApplyNumbers.contains(applyCount) {
             throw MenuBarBackendError.operationFailed("injected partial workspace failure")
         }
+    }
+}
+
+private actor RevisionedWorkspaceRecorder {
+    private var current: ProfileWorkspaceState
+    private var revision: UInt64 = 0
+    private var targetWasApplied = false
+    private var editWasInjected = false
+
+    init(initial: ProfileWorkspaceState) {
+        current = initial
+    }
+
+    func capture() -> ProfileWorkspaceState {
+        current
+    }
+
+    func currentRevision() -> UInt64 {
+        if targetWasApplied, !editWasInjected {
+            current.shelfBehavior.isEnabled.toggle()
+            revision &+= 1
+            editWasInjected = true
+        }
+        return revision
+    }
+
+    func rollbackSuperseded(
+        from target: ProfileWorkspaceState,
+        to original: ProfileWorkspaceState
+    ) -> UInt64? {
+        let expectedRevision = revision
+        let merged = current.rollingBackUnchangedFields(applied: target, to: original)
+        return apply(merged, ifCurrentRevision: expectedRevision)
+    }
+
+    func apply(_ value: ProfileWorkspaceState) {
+        current = value
+        revision &+= 1
+    }
+
+    func apply(
+        _ value: ProfileWorkspaceState,
+        ifCurrentRevision expectedRevision: UInt64
+    ) -> UInt64? {
+        guard revision == expectedRevision else { return nil }
+        current = value
+        revision &+= 1
+        targetWasApplied = true
+        return revision
     }
 }
 

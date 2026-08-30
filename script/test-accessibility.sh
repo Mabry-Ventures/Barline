@@ -41,9 +41,22 @@ env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
 /usr/bin/xattr -cr "$APP"
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
 /usr/bin/pkill -x BarlineFixture >/dev/null 2>&1 || true
+for ((attempt = 0; attempt < 20; attempt++)); do
+    /usr/bin/pgrep -x BarlineFixture >/dev/null 2>&1 || break
+    /bin/sleep 0.1
+done
+if /usr/bin/pgrep -x BarlineFixture >/dev/null 2>&1; then
+    printf 'error: stale BarlineFixture did not terminate\n' >&2
+    exit 1
+fi
 /usr/bin/open -g -n "$APP" --args --barline-fixture-accessibility-audit
 
-pid="$(/usr/bin/pgrep -x BarlineFixture | head -1)"
+pid=""
+for ((attempt = 0; attempt < 50; attempt++)); do
+    pid="$(/usr/bin/pgrep -x BarlineFixture | /usr/bin/head -1 || true)"
+    [[ -z "$pid" ]] || break
+    /bin/sleep 0.1
+done
 [[ -n "$pid" ]] || { printf 'error: BarlineFixture is not running\n' >&2; exit 1; }
 
 mkdir -p "$MODULE_CACHE"
