@@ -44,6 +44,7 @@ enum ScreenCapture {
         displayID: CGDirectDisplayID,
         sampleHeight: CGFloat? = nil
     ) async -> MenuBarBackground? {
+        guard checkPermissions() else { return nil }
         guard let capture = try? await BarlineMenuService.Connection.shared.captureBackground(
             displayID: displayID,
             sampleHeight: sampleHeight

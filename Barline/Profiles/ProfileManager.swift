@@ -11,10 +11,11 @@ import OSLog
 
 @MainActor
 final class ProfileManager: ObservableObject {
-    private struct PersistedActiveAuthority: Codable {
-        let profileID: UUID
-        let token: UUID
-        let presentation: ResolvedProfilePresentation
+    private enum PendingFocusRecoveryOutcome {
+        case none
+        case promoted
+        case restored
+        case failed
     }
 
     private struct WorkspaceLayoutItem: Hashable {
@@ -50,6 +51,10 @@ final class ProfileManager: ObservableObject {
     private let commandInbox: IntentCommandInbox?
     private let bridgeDefaults: UserDefaults?
     private let processedDefaults = UserDefaults.standard
+    private lazy var authorityStore = ProfileAuthorityEnvelopeStore(
+        defaults: processedDefaults,
+        key: Self.activeProfileAuthorityKey
+    )
     private weak var appState: AppState?
     private var cancellables = Set<AnyCancellable>()
     private var profileBeforeFocusID: UUID?
@@ -176,7 +181,9 @@ final class ProfileManager: ObservableObject {
         source: ProfileActivationSource = .manual,
         expectedGeneration: UInt64? = nil,
         authorityToken: UUID? = nil,
-        prepareCheckpoint: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = nil
+        prepareCheckpoint: (
+            @Sendable (MenuBarWorkspaceCheckpoint, ResolvedProfilePresentation) async throws -> Void
+        )? = nil
     ) async -> Bool {
         guard let appState else { return false }
         let resolvedAuthorityToken = authorityToken ?? UUID()
@@ -199,7 +206,6 @@ final class ProfileManager: ObservableObject {
                 throw MenuBarBackendError.operationFailed("requested profile is unavailable")
             }
             let priorAuthorityToken = self.activeProfileAuthorityToken()
-            self.setActiveProfileAuthorityToken(resolvedAuthorityToken)
             do {
                 let snapshot = try await appState.compatibilityCoordinator.activate(
                     profile: resolvedProfile,
@@ -247,7 +253,14 @@ final class ProfileManager: ObservableObject {
                 } else {
                     self.activationRequests.removeValue(forKey: source)
                 }
-                if await appState.compatibilityCoordinator.activeProfileID == nil {
+                if self.pendingFocusAuthority(matching: resolvedAuthorityToken) != nil {
+                    self.activeProfileID = nil
+                    self.activeProfileActivatedAt = nil
+                    self.activePresentation = nil
+                    self.processedDefaults.removeObject(
+                        forKey: Self.activeProfileAuthorityTokenKey
+                    )
+                } else if await appState.compatibilityCoordinator.activeProfileID == nil {
                     self.activeProfileID = nil
                     self.activeProfileActivatedAt = nil
                     self.activePresentation = nil
@@ -1390,6 +1403,20 @@ final class ProfileManager: ObservableObject {
     }
 
     private func applyPresentationMode(_ isEnabled: Bool) async -> Bool {
+        switch await recoverPendingFocusAuthority() {
+        case .promoted:
+            if isEnabled {
+                return true
+            }
+        case .restored:
+            if !isEnabled {
+                return true
+            }
+        case .failed:
+            return false
+        case .none:
+            break
+        }
         if isEnabled {
             guard let presentation = resolvedPresentationProfile() else {
                 statusMessage = "Create a Presentation profile before enabling the Focus filter."
@@ -1399,42 +1426,65 @@ final class ProfileManager: ObservableObject {
             // written before activation so a crash at any later point cannot cause
             // a retry to overwrite the user's original pre-Presentation workspace.
             let existingJournal = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey)
-            if let existingJournal, decodeFocusCheckpoint(existingJournal) == nil {
-                statusMessage = "The pre-Presentation workspace checkpoint is invalid."
-                return false
+            if let existingJournal {
+                guard let checkpoint = decodeFocusCheckpoint(existingJournal) else {
+                    statusMessage = "The pre-Presentation workspace checkpoint is invalid."
+                    return false
+                }
+                if activeProfileID == presentation.id,
+                   persistedProfileAuthority()?.activeAuthority?.profileID == presentation.id
+                {
+                    processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+                    return true
+                }
+                guard await currentWorkspaceMatches(checkpoint) else {
+                    statusMessage = "Presentation recovery evidence is incomplete."
+                    return false
+                }
+                clearProfileBeforeFocus()
             }
-            let hasJournal = existingJournal != nil
             let priorAuthorityToken = activeProfileAuthorityToken()
+            let priorPersistedAuthority = persistedProfileAuthority()?.activeAuthority.flatMap {
+                $0.token == priorAuthorityToken ? $0 : nil
+            }
             let focusAuthorityToken = processedDefaults.string(forKey: Self.focusAuthorityTokenKey)
                 .flatMap(UUID.init(uuidString:)) ?? UUID()
-            let journal: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = hasJournal
-                ? nil
-                : { @MainActor [weak self] checkpoint in
-                    guard let self else {
-                        throw MenuBarBackendError.operationFailed("profile manager unavailable")
-                    }
-                    let data = try JSONEncoder().encode(checkpoint)
-                    guard data.count <= ProfileCodec.maximumArchiveByteCount else {
-                        throw ProfileValidationError.archiveTooLarge(data.count)
-                    }
-                    processedDefaults.set(data, forKey: Self.workspaceBeforeFocusKey)
-                    guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) == data else {
-                        throw MenuBarBackendError.operationFailed("workspace journal persistence failed")
-                    }
-                    profileBeforeFocusID = checkpoint.activeProfileID
-                    processedDefaults.set(
-                        checkpoint.activeProfileID?.uuidString,
-                        forKey: Self.profileBeforeFocusIDKey
-                    )
-                    processedDefaults.set(
-                        focusAuthorityToken.uuidString,
-                        forKey: Self.focusAuthorityTokenKey
-                    )
-                    processedDefaults.set(
-                        priorAuthorityToken?.uuidString,
-                        forKey: Self.profileBeforeFocusAuthorityTokenKey
-                    )
+            let journal: @Sendable (
+                MenuBarWorkspaceCheckpoint,
+                ResolvedProfilePresentation
+            ) async throws -> Void = { @MainActor [weak self] checkpoint, resolvedPresentation in
+                guard let self else {
+                    throw MenuBarBackendError.operationFailed("profile manager unavailable")
                 }
+                let data = try JSONEncoder().encode(checkpoint)
+                guard data.count <= ProfileCodec.maximumArchiveByteCount else {
+                    throw ProfileValidationError.archiveTooLarge(data.count)
+                }
+                try persistPendingFocusAuthority(
+                    profile: presentation,
+                    token: focusAuthorityToken,
+                    presentation: resolvedPresentation,
+                    checkpoint: checkpoint,
+                    priorAuthority: priorPersistedAuthority
+                )
+                processedDefaults.set(data, forKey: Self.workspaceBeforeFocusKey)
+                guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) == data else {
+                    throw MenuBarBackendError.operationFailed("workspace journal persistence failed")
+                }
+                profileBeforeFocusID = checkpoint.activeProfileID
+                processedDefaults.set(
+                    checkpoint.activeProfileID?.uuidString,
+                    forKey: Self.profileBeforeFocusIDKey
+                )
+                processedDefaults.set(
+                    focusAuthorityToken.uuidString,
+                    forKey: Self.focusAuthorityTokenKey
+                )
+                processedDefaults.set(
+                    priorAuthorityToken?.uuidString,
+                    forKey: Self.profileBeforeFocusAuthorityTokenKey
+                )
+            }
             guard await activate(
                 presentation,
                 source: .focus,
@@ -1442,11 +1492,11 @@ final class ProfileManager: ObservableObject {
                 prepareCheckpoint: journal
             ) else {
                 activationRequests.removeValue(forKey: .focus)
-                if !hasJournal,
-                   let data = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey),
+                if let data = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey),
                    let checkpoint = decodeFocusCheckpoint(data),
                    await currentWorkspaceMatches(checkpoint)
                 {
+                    restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
                     clearProfileBeforeFocus()
                 }
                 return false
@@ -1695,26 +1745,175 @@ final class ProfileManager: ObservableObject {
         }
     }
 
+    private func persistedProfileAuthority() -> ProfileAuthorityEnvelope? {
+        authorityStore.load()
+    }
+
+    private func persistProfileAuthority(_ authority: ProfileAuthorityEnvelope) throws {
+        try authorityStore.save(authority)
+    }
+
+    private func pendingFocusAuthority(matching token: UUID? = nil) -> ProfileAuthorityEnvelope? {
+        guard let authority = persistedProfileAuthority(), authority.phase == .pendingFocus else {
+            return nil
+        }
+        guard token == nil || authority.token == token else { return nil }
+        return authority
+    }
+
+    private func persistPendingFocusAuthority(
+        profile: BarlineProfile,
+        token: UUID,
+        presentation: ResolvedProfilePresentation,
+        checkpoint: MenuBarWorkspaceCheckpoint,
+        priorAuthority: ProfileActiveAuthority?
+    ) throws {
+        try persistProfileAuthority(ProfileAuthorityEnvelope(
+            pendingFocusProfile: profile,
+            token: token,
+            presentation: presentation,
+            checkpoint: checkpoint,
+            priorAuthority: priorAuthority
+        ))
+    }
+
     private func persistActiveProfileAuthority(profileID: UUID, token: UUID) {
-        guard let activePresentation,
-              let data = try? JSONEncoder().encode(PersistedActiveAuthority(
-                  profileID: profileID,
-                  token: token,
-                  presentation: activePresentation
-              ))
+        guard let activePresentation else {
+            setActiveProfileAuthorityToken(nil)
+            return
+        }
+        do {
+            try persistProfileAuthority(ProfileAuthorityEnvelope(active: ProfileActiveAuthority(
+                profileID: profileID,
+                token: token,
+                presentation: activePresentation
+            )))
+        } catch {
+            setActiveProfileAuthorityToken(nil)
+        }
+    }
+
+    private func restorePriorAuthorityAfterVerifiedRollback(
+        checkpoint: MenuBarWorkspaceCheckpoint
+    ) {
+        let priorAuthority = pendingFocusAuthority()?.priorAuthority
+        activeProfileID = checkpoint.activeProfileID
+        activeProfileActivatedAt = checkpoint.activeProfileID == nil ? nil : Date()
+        activePresentation = checkpoint.workspace.presentation
+        guard let priorAuthority,
+              priorAuthority.profileID == checkpoint.activeProfileID,
+              priorAuthority.presentation == checkpoint.workspace.presentation
         else {
             setActiveProfileAuthorityToken(nil)
             return
         }
-        processedDefaults.set(data, forKey: Self.activeProfileAuthorityKey)
+        setActiveProfileAuthorityToken(priorAuthority.token)
+        do {
+            try persistProfileAuthority(ProfileAuthorityEnvelope(active: priorAuthority))
+        } catch {
+            setActiveProfileAuthorityToken(nil)
+        }
+    }
+
+    private func recoverPendingFocusAuthority() async -> PendingFocusRecoveryOutcome {
+        guard let appState, let pending = pendingFocusAuthority() else { return .none }
+        guard let checkpoint = pending.checkpoint,
+              let encodedCheckpoint = try? JSONEncoder().encode(checkpoint),
+              decodeFocusCheckpoint(encodedCheckpoint) != nil,
+              let profile = pending.pendingProfile,
+              profile.id == pending.profileID,
+              pending.priorAuthority?.profileID == checkpoint.activeProfileID
+              || pending.priorAuthority == nil
+        else {
+            processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
+            statusMessage = "Presentation recovery evidence is inconsistent."
+            return .failed
+        }
+        if let currentToken = activeProfileAuthorityToken(),
+           currentToken != pending.token,
+           currentToken != pending.priorAuthority?.token
+        {
+            processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
+            statusMessage = "Presentation recovery authority is inconsistent."
+            return .failed
+        }
+        do {
+            let result = try await appState.compatibilityCoordinator
+                .recoverPendingProfileActivation(
+                    profile: profile,
+                    persistedPresentation: pending.presentation,
+                    checkpoint: checkpoint,
+                    workspaceTransaction: workspaceTransaction()
+                )
+            switch result {
+            case let .promoted(presentation):
+                let journalData = try JSONEncoder().encode(checkpoint)
+                guard journalData.count <= ProfileCodec.maximumArchiveByteCount else {
+                    throw ProfileValidationError.archiveTooLarge(journalData.count)
+                }
+                processedDefaults.set(journalData, forKey: Self.workspaceBeforeFocusKey)
+                guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) == journalData else {
+                    throw MenuBarBackendError.operationFailed("workspace journal persistence failed")
+                }
+                profileBeforeFocusID = checkpoint.activeProfileID
+                processedDefaults.set(
+                    checkpoint.activeProfileID?.uuidString,
+                    forKey: Self.profileBeforeFocusIDKey
+                )
+                processedDefaults.set(
+                    pending.token.uuidString,
+                    forKey: Self.focusAuthorityTokenKey
+                )
+                processedDefaults.set(
+                    pending.priorAuthority?.token.uuidString,
+                    forKey: Self.profileBeforeFocusAuthorityTokenKey
+                )
+                activePresentation = presentation
+                activeProfileID = profile.id
+                activeProfileActivatedAt = Date()
+                setActiveProfileAuthorityToken(pending.token)
+                try persistProfileAuthority(ProfileAuthorityEnvelope(active: ProfileActiveAuthority(
+                    profileID: profile.id,
+                    token: pending.token,
+                    presentation: presentation
+                )))
+                processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+                return .promoted
+            case .restored:
+                restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
+                clearProfileBeforeFocus()
+                return .restored
+            case .unchanged:
+                restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
+                clearProfileBeforeFocus()
+                return .restored
+            case .inconclusive:
+                activeProfileID = nil
+                activeProfileActivatedAt = nil
+                activePresentation = nil
+                processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
+                statusMessage = "Barline preserved an interrupted Presentation recovery for review."
+                return .failed
+            }
+        } catch {
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            activePresentation = nil
+            processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
+            statusMessage = "Barline could not recover an interrupted Presentation activation."
+            return .failed
+        }
     }
 
     private func rehydrateActiveProfileAuthority() async {
         await profileOperationSemaphore.wait()
         defer { profileOperationSemaphore.signal() }
+        if pendingFocusAuthority() != nil {
+            _ = await recoverPendingFocusAuthority()
+            return
+        }
         guard let appState,
-              let data = processedDefaults.data(forKey: Self.activeProfileAuthorityKey),
-              let authority = try? JSONDecoder().decode(PersistedActiveAuthority.self, from: data),
+              let authority = persistedProfileAuthority()?.activeAuthority,
               activeProfileAuthorityToken() == authority.token,
               let profile = profiles.first(where: { $0.id == authority.profileID })
         else {
