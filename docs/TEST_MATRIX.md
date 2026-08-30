@@ -5,20 +5,20 @@ under ignored `.artifacts/ci/<sha>/` directories.
 
 | Area | Current automated evidence | Status |
 | --- | --- | --- |
-| Pure domain | Swift Testing for snapshots, state coordination, profile presentation, display reconnect resolution, persistence/import, search, Spotlight records, and command/service validation | 174 tests pass on the latest clean candidate with 96.16% line coverage |
+| Pure domain | Swift Testing for snapshots, state coordination, profile presentation, display reconnect resolution, persistence/import, search, Spotlight records, and command/service validation | 180 tests pass on the exact-head full gate with 96.26% line coverage |
 | Recovery policy | Standalone Swift script | Implemented |
 | Notch overflow resolver | Standalone Swift script | Implemented |
-| Debug/Release/analyze | Local Xcode steps in `script/ci.sh full` | Passed on the preceding source SHA; current-head full rerun required |
+| Debug/Release/analyze | Local Xcode steps in `script/ci.sh full` | Exact-head full gate passes on macOS 26.6.2 arm64 |
 | Architecture firewall | Static boundary script | Implemented and passing |
-| Fixture regression | Script runs snapshot/state/profile/command cases and launches a configurable three-status-item app | 128 regressions passed on the preceding source SHA; current-head full rerun required |
+| Fixture regression | Script runs snapshot/state/profile/command cases and launches a configurable three-status-item app | 134 regressions pass on the exact-head full gate |
 | Fixture app | Environment-configurable status items plus deterministic accessibility surface | Implemented as `BarlineFixture` |
-| XPC interruption | Local kill/relaunch probe | 100 production reopen requests and eight helper replacements passed on a prior candidate; current foreground rerun required |
-| UI smoke | Exact-build visible-status-item probe plus compiled XCUITest target | Latest fixture XCUITest did not activate the background fixture; production status-item smoke requires a focus-approved session |
-| Accessibility | Source assertions and fixture runtime AX label audit | Latest semantic fixture audit is blocked because the invoking process lacks Accessibility trust; manual VoiceOver and Full Keyboard Access remain required |
-| Support-bundle privacy | Encoder content probes plus static logging/credential checks | Passes on the latest clean candidate |
-| Performance smoke | Shelf responsiveness and app-owned production reopen probes | Presentation and compatibility-recovery metrics are separated; foreground exact-head measurement requires a focus-approved session |
+| XPC interruption | Local kill/relaunch probe | Exact-head full gate passes the replacement-helper probe and eight helper-interruption/reopen cycles |
+| UI smoke | Exact-build visible-status-item probe plus compiled XCUITest target | Exact-head fixture XCUITest and production visible-window smoke pass in the unlocked interactive session |
+| Accessibility | Source assertions and fixture runtime AX label audit | Exact-head semantic fixture audit passes; manual VoiceOver and Full Keyboard Access remain required |
+| Support-bundle privacy | Encoder content probes plus static logging/credential checks | Passes on the exact-head full gate |
+| Performance smoke | Shelf responsiveness and app-owned production reopen probes | Exact-head 20-cycle performance and 100-cycle reopen-burst presentation budgets pass in the unlocked interactive session |
 | Soak | Repeated Core cycles plus XPC interruption and responsiveness | Prior 10-cycle integration pass; exact-candidate release-duration soak remains required |
-| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Exact-head unsigned topology/privacy preflight passes; signed packaging/notarization passed only on a prior SHA and must be regenerated after restoring the notary profile; integrated full/release summary plus clean install/update validation remain required |
+| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Exact-head unsigned topology/privacy preflight passes; signed packaging/notarization still requires the external `barline-notary` profile; clean install/update validation remains required |
 
 The fail-closed full gate runs these scripts and reports unavailable permissions
 or missing product behavior instead of silently treating them as passed.
