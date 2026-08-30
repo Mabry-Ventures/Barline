@@ -12,9 +12,9 @@ This list describes the active development tree. It is not a release claim.
   transactional authority and render in the Barline shelf. Physical reconnect
   and ambiguous identical-display behavior still require candidate-bound
   runtime validation.
-- Real Focus and Shortcuts execution is not proven without a provisioned signed
-  build. Local signing identities exist, but App Group-compatible provisioning
-  profiles are unavailable.
+- A Developer ID candidate with matching Barline App Group provisioning profiles
+  has been produced and notarized. Real Focus and Shortcuts activation remains
+  unproven because it has not been exercised in a candidate-bound system pass.
 - Deterministic search, bounded Spotlight indexing, and typed on-device model
   interpretation are connected. macOS 27 `SpotlightSearchTool` remains blocked
   on the unavailable Xcode/macOS 27 lane.
@@ -24,8 +24,9 @@ This list describes the active development tree. It is not a release claim.
 - The strict XPC compatibility firewall is complete and passing; private
   symbols remain isolated inside the helper.
 - Fixture, unit, integration and UI targets plus an explicit test plan exist.
-  UI execution is administrator-blocked because Developer Tools automation mode
-  is disabled on this host.
+  Developer Tools automation is enabled and fixture XCUITest passes. Production
+  UI/reopen execution remains pending because it activates Barline on the
+  operator's desktop.
 - Status-item smoke, bounded shelf responsiveness, and resource-sampled soak
   automation exist. Full XCUITest, AX/VoiceOver, display, sleep/wake,
   permission-revocation, representative-hardware, and release-duration soak
@@ -36,13 +37,14 @@ This list describes the active development tree. It is not a release claim.
 
 - The release pipeline implements Developer ID, entitlement/profile,
   notarization, stapling, Gatekeeper, Sparkle, checksum, SBOM, and source-archive
-  gates. A notarytool Keychain profile is available, but the pipeline cannot
-  create its signed submission without App Group-compatible profiles.
+  gates. A clean candidate has passed the credentialed pipeline with matching
+  App Group profiles and an accepted notarization submission; source changes
+  require complete regeneration.
 - Sparkle is enabled only in Release with Barline's public key and canonical
   GitHub appcast URL. No previous public Barline version exists for update proof.
 - The canonical public repository exists. Protected rules are active and the
-  exact-head local status is published red while required interactive runtime
-  gates remain unavailable on this host.
+  exact-head local status remains pending while required foreground runtime,
+  physical-scenario, soak, and installation gates are incomplete.
 
 Track candidate-specific results in [the test matrix](TEST_MATRIX.md), release
 requirements in [RELEASING.md](RELEASING.md), and architecture progress in

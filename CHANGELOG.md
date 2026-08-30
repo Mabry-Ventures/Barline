@@ -45,5 +45,9 @@ development line and are not release certification.
 
 - Real Focus/Shortcuts, VoiceOver, display/sleep-wake, signed installation, and
   update-from-previous execution require candidate-bound system testing.
-- App Group provisioning, notarization credentials, Developer Tools automation,
-  host Accessibility trust, and macOS 27 runtime validation remain external.
+- Developer ID signing, Barline App Group provisioning, notarization, stapling,
+  Gatekeeper, Sparkle signing, and Developer Tools automation have passed on a
+  clean candidate and must be repeated after source changes.
+- Foreground production runtime validation requires a dedicated interactive
+  session where Barline focus changes are acceptable. Xcode 27 and a macOS 27
+  runtime host remain unavailable, so no macOS 27 runtime claim is made.

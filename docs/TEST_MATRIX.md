@@ -5,20 +5,20 @@ under ignored `.artifacts/ci/<sha>/` directories.
 
 | Area | Current automated evidence | Status |
 | --- | --- | --- |
-| Pure domain | Swift Testing for snapshots, state coordination, profile presentation, display reconnect resolution, persistence/import, search, Spotlight records, and command/service validation | 174 tests pass in integration; clean exact-head rerun required |
+| Pure domain | Swift Testing for snapshots, state coordination, profile presentation, display reconnect resolution, persistence/import, search, Spotlight records, and command/service validation | 174 tests pass on the latest clean candidate with 96.16% line coverage |
 | Recovery policy | Standalone Swift script | Implemented |
 | Notch overflow resolver | Standalone Swift script | Implemented |
 | Debug/Release/analyze | Local Xcode steps in `script/ci.sh full` | Exact-head headless build/analyze and test-plan compilation pass |
 | Architecture firewall | Static boundary script | Implemented and passing |
-| Fixture regression | Script runs 20+ snapshot/state/profile/command cases and launches a configurable three-status-item app | Implemented |
+| Fixture regression | Script runs snapshot/state/profile/command cases and launches a configurable three-status-item app | 128 regressions pass on the latest clean candidate |
 | Fixture app | Environment-configurable status items plus deterministic accessibility surface | Implemented as `BarlineFixture` |
-| XPC interruption | Local kill/relaunch probe | 100 production reopen requests and eight helper replacements pass in integration; clean exact-head rerun required |
+| XPC interruption | Local kill/relaunch probe | 100 production reopen requests and eight helper replacements passed on a prior candidate; current foreground rerun required |
 | UI smoke | Exact-build visible-status-item probe plus compiled XCUITest target | Fixture XCUITest passes in integration without production activation; production status-item smoke requires a focus-approved session |
-| Accessibility | Source assertions and fixture runtime AX label audit | Semantic fixture runtime audit passes in integration; clean exact-head rerun required |
-| Support-bundle privacy | Encoder content probes plus static logging/credential checks | Implemented and previously passing; exact-head rerun required |
+| Accessibility | Source assertions and fixture runtime AX label audit | Semantic fixture runtime audit passes on the latest clean candidate; manual VoiceOver and Full Keyboard Access remain required |
+| Support-bundle privacy | Encoder content probes plus static logging/credential checks | Passes on the latest clean candidate |
 | Performance smoke | Shelf responsiveness and app-owned production reopen probes | Presentation and compatibility-recovery metrics are separated; foreground exact-head measurement requires a focus-approved session |
-| Soak | Repeated Core cycles plus XPC interruption and responsiveness | Integration 10-cycle pass; clean exact-head rerun required |
-| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Prior candidate passed signed notarization; clean exact-head regeneration and install/update validation remain required |
+| Soak | Repeated Core cycles plus XPC interruption and responsiveness | Prior 10-cycle integration pass; exact-candidate release-duration soak remains required |
+| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Latest clean candidate passes signed packaging and notarization; integrated full/release summary plus clean install/update validation remain required |
 
 The fail-closed full gate runs these scripts and reports unavailable permissions
 or missing product behavior instead of silently treating them as passed.
