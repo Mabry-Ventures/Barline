@@ -145,6 +145,7 @@ public actor MenuBarStateCoordinator {
     private var undoCheckpoints = [HistoryCheckpoint]()
     private var redoCheckpoints = [HistoryCheckpoint]()
     private var backendGenerationOffset: UInt64 = 0
+    private var lastKnownGoodProfileID: UUID?
 
     public init(
         backend: any MenuBarBackend,
@@ -195,6 +196,7 @@ public actor MenuBarStateCoordinator {
                     }
                     currentSnapshot = snapshot
                     lastKnownGoodSnapshot = snapshot
+                    lastKnownGoodProfileID = activeProfileID
                     lastRejection = nil
                     backendHealth = await backend.health()
                     return snapshot
@@ -257,22 +259,29 @@ public actor MenuBarStateCoordinator {
         if let expectedGeneration {
             try requireCurrentGeneration(expectedGeneration)
         }
-        let before = try await validatedStartingSnapshot(now: now)
-        guard !before.menuTrackingIsActive else {
-            throw MenuBarBackendError.unsafeMenuTracking
-        }
-        try validateReferences(for: mutation, in: before)
         let restoreTarget: MenuBarSnapshot? = if case .restoreLastKnownGood = mutation {
             lastKnownGoodSnapshot
         } else {
             nil
         }
-
+        let restoreProfileID: UUID? = if case .restoreLastKnownGood = mutation {
+            lastKnownGoodProfileID
+        } else {
+            nil
+        }
+        if case .restoreLastKnownGood = mutation, restoreTarget == nil {
+            throw MenuBarBackendError.operationFailed("no last-known-good snapshot")
+        }
+        let before = try await validatedStartingSnapshot(now: now)
+        guard !before.menuTrackingIsActive else {
+            throw MenuBarBackendError.unsafeMenuTracking
+        }
+        try validateReferences(for: mutation, in: before)
         mutationGeneration &+= 1
         let generation = mutationGeneration
 
         do {
-            try await apply(mutation)
+            try await apply(mutation, restoreTarget: restoreTarget)
             try Task.checkCancellation()
             let candidate = try await normalizedBackendSnapshot()
             switch validator.validate(candidate, previous: before, now: now ?? Date()) {
@@ -307,8 +316,9 @@ public actor MenuBarStateCoordinator {
                 lastRejection = nil
                 if mutation.recordsLayoutHistory {
                     recordUndoCheckpoint(before, activeProfileID: activeProfileID)
-                    activeProfileID = nil
+                    activeProfileID = restoreTarget == nil ? nil : restoreProfileID
                 }
+                lastKnownGoodProfileID = activeProfileID
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
@@ -334,6 +344,7 @@ public actor MenuBarStateCoordinator {
                 }
                 currentSnapshot = rollbackSnapshot
                 lastKnownGoodSnapshot = rollbackSnapshot
+                lastKnownGoodProfileID = activeProfileID
             } catch {
                 let rollbackError = error
                 currentSnapshot = nil
@@ -527,6 +538,7 @@ public actor MenuBarStateCoordinator {
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
                 activeProfileID = profile.id
+                lastKnownGoodProfileID = profile.id
                 recordUndoCheckpoint(
                     before,
                     activeProfileID: priorProfileID,
@@ -577,6 +589,7 @@ public actor MenuBarStateCoordinator {
                 currentSnapshot = verifiedRollbackSnapshot
                 lastKnownGoodSnapshot = verifiedRollbackSnapshot
                 activeProfileID = priorProfileID
+                lastKnownGoodProfileID = priorProfileID
                 throw activationError
             }
             currentSnapshot = nil
@@ -614,6 +627,7 @@ public actor MenuBarStateCoordinator {
 
         let preservedCurrent = currentSnapshot
         let preservedLastKnownGood = lastKnownGoodSnapshot
+        let preservedLastKnownGoodProfileID = lastKnownGoodProfileID
         mutationGeneration &+= 1
         backendHealth = MenuBarBackendHealth(backendName: "XPC", state: .restarting)
         await backend.restart()
@@ -654,6 +668,9 @@ public actor MenuBarStateCoordinator {
                 }
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
+                lastKnownGoodProfileID = restoredLastKnownGood
+                    ? preservedLastKnownGoodProfileID
+                    : activeProfileID
                 lastRejection = nil
                 backendHealth = await backend.health()
                 return snapshot
@@ -664,6 +681,7 @@ public actor MenuBarStateCoordinator {
         } catch {
             currentSnapshot = nil
             lastKnownGoodSnapshot = preservedLastKnownGood
+            lastKnownGoodProfileID = preservedLastKnownGoodProfileID
             activeProfileID = nil
             backendGenerationOffset = 0
             throw error
@@ -684,6 +702,7 @@ public actor MenuBarStateCoordinator {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
         activeProfileID = nil
+        lastKnownGoodProfileID = nil
     }
 
     @discardableResult
@@ -692,6 +711,38 @@ public actor MenuBarStateCoordinator {
         defer { releaseMutationTurn() }
         guard activeProfileID == profileID else { return false }
         activeProfileID = nil
+        if lastKnownGoodProfileID == profileID {
+            lastKnownGoodProfileID = nil
+        }
+        return true
+    }
+
+    /// Re-establishes durable profile ownership after process relaunch only
+    /// when the live layout and modeled workspace still exactly match.
+    @discardableResult
+    public func rehydrateActiveProfileAuthority(
+        profile: BarlineProfile,
+        activeDisplayID: MenuBarDisplayID?,
+        workspaceTransaction: MenuBarWorkspaceTransaction,
+        now: Date? = nil
+    ) async throws -> Bool {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try ProfileValidator().validate(profile)
+        let snapshot = try await refreshAssumingMutationTurn(now: now)
+        let workspace = try await workspaceTransaction.capture()
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: snapshot,
+            activeProfileID: profile.id,
+            activeDisplayID: activeDisplayID,
+            workspace: workspace
+        )
+        guard ProfileAuthorityMatcher.matches(profile: profile, checkpoint: checkpoint) else {
+            activeProfileID = nil
+            return false
+        }
+        activeProfileID = profile.id
+        lastKnownGoodProfileID = profile.id
         return true
     }
 
@@ -914,6 +965,7 @@ public actor MenuBarStateCoordinator {
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
                 activeProfileID = target.activeProfileID
+                lastKnownGoodProfileID = target.activeProfileID
                 return snapshot
             case let .failure(reason):
                 lastRejection = reason
@@ -938,6 +990,7 @@ public actor MenuBarStateCoordinator {
                 currentSnapshot = rollbackSnapshot
                 lastKnownGoodSnapshot = rollbackSnapshot
                 activeProfileID = previous.activeProfileID
+                lastKnownGoodProfileID = previous.activeProfileID
             } catch {
                 currentSnapshot = nil
                 activeProfileID = nil
@@ -1107,7 +1160,10 @@ public actor MenuBarStateCoordinator {
         }
     }
 
-    private func apply(_ mutation: MenuBarMutation) async throws {
+    private func apply(
+        _ mutation: MenuBarMutation,
+        restoreTarget: MenuBarSnapshot? = nil
+    ) async throws {
         switch mutation {
         case let .move(operation), let .transientMove(operation):
             _ = try await backend.move(operation)
@@ -1116,10 +1172,10 @@ public actor MenuBarStateCoordinator {
         case let .activate(itemID, button):
             try await backend.activate(itemID, button: button)
         case .restoreLastKnownGood:
-            guard let lastKnownGoodSnapshot else {
+            guard let restoreTarget else {
                 throw MenuBarBackendError.operationFailed("no last-known-good snapshot")
             }
-            _ = try await backend.restore(lastKnownGoodSnapshot)
+            _ = try await backend.restore(restoreTarget)
         }
     }
 }

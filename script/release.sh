@@ -70,6 +70,33 @@ done
 
 mkdir -p "$RELEASE_ROOT"
 /bin/rm -rf "$ARCHIVE" "$RELEASE_DERIVED_DATA" "$RELEASE_ROOT/distribution-boundaries.json"
+BUILD_SETTINGS_JSON="$RELEASE_ROOT/build-settings.json"
+env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
+    -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release \
+    -showBuildSettings -json > "$BUILD_SETTINGS_JSON"
+setting() {
+    /usr/bin/ruby -rjson -e 'puts JSON.parse(File.read(ARGV.fetch(0))).fetch(0).fetch("buildSettings").fetch(ARGV.fetch(1), "")' \
+        "$BUILD_SETTINGS_JSON" "$1"
+}
+require_setting() {
+    local name="$1" value
+    value="$(setting "$name")"
+    [[ -n "$value" && "$value" != *\$\(* ]] || {
+        printf 'error: required Release build setting is missing or unresolved: %s\n' "$name" >&2
+        exit 1
+    }
+    printf '%s' "$value"
+}
+APP_BUNDLE_ID="$(require_setting BARLINE_APP_BUNDLE_IDENTIFIER)"
+HELPER_BUNDLE_ID="$(require_setting BARLINE_MENU_SERVICE_BUNDLE_IDENTIFIER)"
+INTENTS_BUNDLE_ID="$(require_setting BARLINE_INTENTS_BUNDLE_IDENTIFIER)"
+APP_GROUP_ID="$(require_setting BARLINE_APP_GROUP_IDENTIFIER)"
+if ! "$UNSIGNED"; then
+    TEAM_ID="$(require_setting BARLINE_DEVELOPMENT_TEAM)"
+    APP_PROFILE="$(require_setting BARLINE_APP_PROVISIONING_PROFILE_SPECIFIER)"
+    INTENTS_PROFILE="$(require_setting BARLINE_INTENTS_PROVISIONING_PROFILE_SPECIFIER)"
+    CERTIFICATE_SHA1="$(require_setting BARLINE_DEVELOPER_ID_CERTIFICATE_SHA1)"
+fi
 archive_arguments=(
     -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release
     -destination 'generic/platform=macOS' -archivePath "$ARCHIVE"
@@ -97,14 +124,14 @@ else
     plutil -insert method -string developer-id "$EXPORT_OPTIONS"
     plutil -insert destination -string export "$EXPORT_OPTIONS"
     plutil -insert signingStyle -string manual "$EXPORT_OPTIONS"
-    plutil -insert teamID -string A886EMZZW6 "$EXPORT_OPTIONS"
-    plutil -insert signingCertificate -string D3F13221A5E8B4D1E6FE0888B063B62344101B87 "$EXPORT_OPTIONS"
+    plutil -insert teamID -string "$TEAM_ID" "$EXPORT_OPTIONS"
+    plutil -insert signingCertificate -string "$CERTIFICATE_SHA1" "$EXPORT_OPTIONS"
     plutil -insert provisioningProfiles -dictionary "$EXPORT_OPTIONS"
     /usr/libexec/PlistBuddy -c \
-        "Add :provisioningProfiles:com.mabryventures.Barline string 'Barline Developer ID D3F13221'" \
+        "Add :provisioningProfiles:$APP_BUNDLE_ID string '$APP_PROFILE'" \
         "$EXPORT_OPTIONS"
     /usr/libexec/PlistBuddy -c \
-        "Add :provisioningProfiles:com.mabryventures.Barline.Intents string 'Barline Intents Developer ID D3F13221'" \
+        "Add :provisioningProfiles:$INTENTS_BUNDLE_ID string '$INTENTS_PROFILE'" \
         "$EXPORT_OPTIONS"
     env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -exportArchive -archivePath "$ARCHIVE" -exportPath "$EXPORT_PATH" \
@@ -116,6 +143,9 @@ INTENTS="$APP/Contents/PlugIns/BarlineIntents.appex"
 for product in "$APP" "$HELPER" "$INTENTS"; do
     [[ -e "$product" ]] || { printf 'error: archive is missing embedded product: %s\n' "$product" >&2; exit 1; }
 done
+[[ "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" == "$APP_BUNDLE_ID" ]]
+[[ "$(plutil -extract CFBundleIdentifier raw -o - "$HELPER/Contents/Info.plist")" == "$HELPER_BUNDLE_ID" ]]
+[[ "$(plutil -extract CFBundleIdentifier raw -o - "$INTENTS/Contents/Info.plist")" == "$INTENTS_BUNDLE_ID" ]]
 [[ "$(/usr/bin/lipo -archs "$APP/Contents/MacOS/Barline")" == arm64 ]] || { printf 'error: release application is not thin arm64\n' >&2; exit 1; }
 /usr/bin/plutil -lint "$APP/Contents/Info.plist" "$HELPER/Contents/Info.plist" "$INTENTS/Contents/Info.plist"
 
@@ -164,8 +194,8 @@ for product in "${SIGNED_CODE[@]}"; do
     [[ -e "$product" ]] || { printf 'error: signed archive is missing nested code: %s\n' "$product" >&2; exit 1; }
     codesign --verify --strict --verbose=2 "$product"
     authority="$(codesign -dv --verbose=4 "$product" 2>&1)"
-    grep -q 'Authority=Developer ID Application: Mabry Ventures LLC (A886EMZZW6)' <<<"$authority" || {
-        printf 'error: %s is not signed by the required Developer ID identity\n' "$product" >&2
+    grep -q "TeamIdentifier=$TEAM_ID" <<<"$authority" || {
+        printf 'error: %s is not signed by the configured Developer ID team\n' "$product" >&2
         exit 1
     }
     grep -Eq '^CodeDirectory .*flags=.*\(.*runtime.*\)' <<<"$authority" || {
@@ -180,7 +210,7 @@ INTENTS_ENTITLEMENTS="$RELEASE_ROOT/intents-entitlements.plist"
 codesign -d --entitlements - --xml "$APP" > "$APP_ENTITLEMENTS"
 codesign -d --entitlements - --xml "$INTENTS" > "$INTENTS_ENTITLEMENTS"
 for entitlements in "$APP_ENTITLEMENTS" "$INTENTS_ENTITLEMENTS"; do
-    plutil -extract 'com\.apple\.security\.application-groups' xml1 -o - "$entitlements" | grep -q 'group.com.mabryventures.Barline'
+    plutil -extract 'com\.apple\.security\.application-groups' xml1 -o - "$entitlements" | grep -Fq "$APP_GROUP_ID"
     if plutil -extract 'com\.apple\.security\.get-task-allow' raw -o - "$entitlements" 2>/dev/null | grep -q true; then
         printf 'error: release entitlement contains get-task-allow: %s\n' "$entitlements" >&2
         exit 1
@@ -188,7 +218,11 @@ for entitlements in "$APP_ENTITLEMENTS" "$INTENTS_ENTITLEMENTS"; do
 done
 SIGNING_CERT_PREFIX="$SIGNING_SCRATCH/barline-signing-cert"
 codesign -d "--extract-certificates=$SIGNING_CERT_PREFIX" "$APP"
-SIGNING_CERT_FINGERPRINT="$(openssl x509 -inform DER -in "${SIGNING_CERT_PREFIX}0" -noout -fingerprint -sha1 | cut -d= -f2)"
+SIGNING_CERT_FINGERPRINT="$(openssl x509 -inform DER -in "${SIGNING_CERT_PREFIX}0" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
+[[ "$SIGNING_CERT_FINGERPRINT" == "$CERTIFICATE_SHA1" ]] || {
+    printf 'error: archive leaf certificate does not match the configured certificate\n' >&2
+    exit 1
+}
 
 validate_embedded_profile() {
     local product="$1" expected_application_identifier="$2" label="$3"
@@ -198,14 +232,14 @@ validate_embedded_profile() {
 
     [[ -s "$profile" ]] || { printf 'error: %s release profile is not embedded\n' "$label" >&2; return 1; }
     security cms -D -i "$profile" > "$decoded"
-    [[ "$(plutil -extract TeamIdentifier.0 raw -o - "$decoded")" == A886EMZZW6 ]] || {
+    [[ "$(plutil -extract TeamIdentifier.0 raw -o - "$decoded")" == "$TEAM_ID" ]] || {
         printf 'error: %s profile has the wrong team\n' "$label" >&2; return 1;
     }
     [[ "$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$decoded")" == "$expected_application_identifier" ]] || {
         printf 'error: %s profile has the wrong application identifier\n' "$label" >&2; return 1;
     }
     groups="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.security.application-groups' "$decoded")"
-    grep -Fxq '    group.com.mabryventures.Barline' <<<"$groups" || {
+    grep -Fq "$APP_GROUP_ID" <<<"$groups" || {
         printf 'error: %s profile is missing the Barline App Group\n' "$label" >&2; return 1;
     }
     [[ "$(plutil -extract ProvisionsAllDevices raw -o - "$decoded")" == true ]] || {
@@ -215,14 +249,14 @@ validate_embedded_profile() {
     expiration_epoch="$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$expiration" '+%s')"
     now_epoch="$(date -u '+%s')"
     ((expiration_epoch > now_epoch)) || { printf 'error: %s profile is expired\n' "$label" >&2; return 1; }
-    profile_fingerprint="$(plutil -extract DeveloperCertificates.0 raw -o - "$decoded" | base64 -D | openssl x509 -inform DER -noout -fingerprint -sha1 | cut -d= -f2)"
+    profile_fingerprint="$(plutil -extract DeveloperCertificates.0 raw -o - "$decoded" | base64 -D | openssl x509 -inform DER -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
     [[ "$profile_fingerprint" == "$SIGNING_CERT_FINGERPRINT" ]] || {
         printf 'error: %s profile does not contain the archive signing certificate\n' "$label" >&2; return 1;
     }
 }
 
-validate_embedded_profile "$APP" 'A886EMZZW6.com.mabryventures.Barline' app
-validate_embedded_profile "$INTENTS" 'A886EMZZW6.com.mabryventures.Barline.Intents' intents
+validate_embedded_profile "$APP" "$TEAM_ID.$APP_BUNDLE_ID" app
+validate_embedded_profile "$INTENTS" "$TEAM_ID.$INTENTS_BUNDLE_ID" intents
 
 DIST="$RELEASE_ROOT/dist"
 /bin/rm -rf "$DIST"

@@ -469,7 +469,7 @@ private struct MenuBarSearchContentView: View {
                     .filter { $0.searchableItemIDs.contains(item.stableID) }
                     .map(\.name)
                 let document = SearchDocument(
-                    id: SearchDocumentID("menu item \(item.stableID.description)"),
+                    id: item.stableID.searchDocumentID,
                     kind: .menuBarItem,
                     entity: .menuBarItem(item.stableID),
                     title: item.displayName,

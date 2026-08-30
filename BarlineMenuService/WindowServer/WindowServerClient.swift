@@ -692,13 +692,18 @@ final class WindowServerClient: @unchecked Sendable {
     }
 
     private func displayID(containing bounds: CGRect) -> MenuBarDisplayID? {
-        guard let screen = NSScreen.screens.first(where: { $0.frame.intersects(bounds) }) else {
-            return nil
-        }
-        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
-            return nil
-        }
-        return stableDisplayID(CGDirectDisplayID(number.uint32Value))
+        let match = NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, CGFloat)? in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                return nil
+            }
+            let displayID = CGDirectDisplayID(number.uint32Value)
+            let intersection = CGDisplayBounds(displayID).intersection(bounds)
+            guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else {
+                return nil
+            }
+            return (displayID, intersection.width * intersection.height)
+        }.max { $0.1 < $1.1 }
+        return match.map { stableDisplayID($0.0) }
     }
 
     private func stableDisplayID(_ displayID: CGDirectDisplayID) -> MenuBarDisplayID {

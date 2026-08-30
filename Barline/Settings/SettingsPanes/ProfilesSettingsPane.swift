@@ -221,7 +221,7 @@ struct ProfilesSettingsPane: View {
             isPresented: $showsArchiveExporter,
             document: exportDocument,
             contentType: .barlineProfileArchive,
-            defaultFilename: "Barline Profiles"
+            defaultFilename: "Barline Profiles.json"
         ) { result in
             exportDocument = nil
             switch result {

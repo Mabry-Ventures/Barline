@@ -8,12 +8,16 @@ import Foundation
 
 enum BarlineMenuService {
     static var name: String {
-        guard
-            let value = Bundle.main.object(forInfoDictionaryKey: "BarlineMenuServiceName") as? String,
-            !value.isEmpty,
-            !value.contains("$(")
-        else {
-            return "com.mabryventures.Barline.MenuBarService"
+        requiredIdentity(forInfoKey: "BarlineMenuServiceName")
+    }
+
+    static func requiredIdentity(forInfoKey key: String) -> String {
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
+            preconditionFailure("Required product identity is missing")
+        }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains("$(") else {
+            preconditionFailure("Required product identity is unresolved")
         }
         return value
     }

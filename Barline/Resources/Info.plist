@@ -4,6 +4,8 @@
 <dict>
 	<key>BarlineAppGroupIdentifier</key>
 	<string>$(BARLINE_APP_GROUP_IDENTIFIER)</string>
+	<key>BarlineMenuServiceSigningIdentifier</key>
+	<string>$(BARLINE_MENU_SERVICE_BUNDLE_IDENTIFIER)</string>
 	<key>BarlineLoggingSubsystem</key>
 	<string>$(BARLINE_LOGGING_SUBSYSTEM)</string>
 	<key>BarlineMenuServiceName</key>

@@ -4,6 +4,8 @@
 <dict>
 	<key>BarlineLoggingSubsystem</key>
 	<string>$(BARLINE_LOGGING_SUBSYSTEM)</string>
+	<key>BarlineAppSigningIdentifier</key>
+	<string>$(BARLINE_APP_BUNDLE_IDENTIFIER)</string>
 	<key>BarlineMenuServiceName</key>
 	<string>$(BARLINE_MENU_SERVICE_BUNDLE_IDENTIFIER)</string>
 	<key>XPCService</key>

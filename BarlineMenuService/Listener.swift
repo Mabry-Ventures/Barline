@@ -29,7 +29,9 @@ final class Listener: @unchecked Sendable {
     /// signing identifier and the local/ad-hoc validation category.
     @available(macOS 26.0, *)
     private static func appPeerRequirement() -> XPCPeerRequirement {
-        let signingIdentifier = "com.mabryventures.Barline"
+        let signingIdentifier = BarlineMenuService.requiredIdentity(
+            forInfoKey: "BarlineAppSigningIdentifier"
+        )
         if currentProcessHasTeamIdentifier() {
             return .isFromSameTeam(andMatchesSigningIdentifier: signingIdentifier)
         }
