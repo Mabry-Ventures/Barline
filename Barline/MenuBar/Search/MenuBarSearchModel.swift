@@ -41,6 +41,7 @@ final class MenuBarSearchModel: ObservableObject {
     private var commandInterpretationTask: Task<Void, Never>?
     private var commandInterpretationSequence: UInt64 = 0
     private var spotlightDocuments = [SearchDocument]()
+    private var spotlightSynchronizationTask: Task<Void, Never>?
 
     init(commandInterpreter: any MenuBarCommandInterpreting = FoundationModelCommandInterpreter()) {
         self.commandInterpreter = commandInterpreter
@@ -178,9 +179,12 @@ final class MenuBarSearchModel: ObservableObject {
     func synchronizeSpotlightIfNeeded(with documents: [SearchDocument]) {
         guard documents != spotlightDocuments else { return }
         spotlightDocuments = documents
-        Task {
+        spotlightSynchronizationTask?.cancel()
+        spotlightSynchronizationTask = Task {
             do {
                 try await CoreSpotlightIndexer.shared.replaceAll(with: documents)
+            } catch is CancellationError {
+                return
             } catch CoreSpotlightIndexingError.unavailable {
                 // Search remains fully available through the in-process index.
             } catch {

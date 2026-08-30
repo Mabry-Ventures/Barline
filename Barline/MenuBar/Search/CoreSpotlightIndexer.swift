@@ -20,6 +20,7 @@ actor CoreSpotlightIndexer {
     static let shared = CoreSpotlightIndexer()
 
     private let index: CSSearchableIndex
+    private let replacementSemaphore = AsyncSemaphore(value: 1)
 
     init(indexName: String = "BarlineSearch") {
         index = CSSearchableIndex(name: indexName)
@@ -32,10 +33,15 @@ actor CoreSpotlightIndexer {
     /// Replaces Barline's search domain so removed documents cannot remain
     /// discoverable after a profile, group, alias, or item is deleted.
     func replaceAll(with documents: [SearchDocument]) async throws {
+        try await replacementSemaphore.waitUnlessCancelled()
+        defer { replacementSemaphore.signal() }
+
+        try Task.checkCancellation()
         guard isAvailable else { throw CoreSpotlightIndexingError.unavailable }
         let records = try documents.map(makeRecord)
 
         try await deleteDomain()
+        try Task.checkCancellation()
         guard !records.isEmpty else { return }
         try await indexRecords(records)
     }
