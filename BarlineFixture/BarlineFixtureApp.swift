@@ -1,8 +1,14 @@
+//
+//  BarlineFixtureApp.swift
+//  Barline
+//
+
 import AppKit
 import SwiftUI
 
 @main
 struct BarlineFixtureApp: App {
+    @NSApplicationDelegateAdaptor(BarlineFixtureAppDelegate.self) private var appDelegate
     private let mode = ProcessInfo.processInfo.environment["BARLINE_FIXTURE_MODE"] ?? "default"
     @StateObject private var statusItems = FixtureStatusItemController()
 
@@ -11,6 +17,35 @@ struct BarlineFixtureApp: App {
             FixtureView(mode: mode)
                 .environmentObject(statusItems)
         }
+    }
+}
+
+@MainActor
+private final class BarlineFixtureAppDelegate: NSObject, NSApplicationDelegate {
+    private var auditPanel: NSPanel?
+    private var auditStatusItems: FixtureStatusItemController?
+
+    func applicationDidFinishLaunching(_: Notification) {
+        guard CommandLine.arguments.contains("--barline-fixture-accessibility-audit") else {
+            return
+        }
+        let statusItems = FixtureStatusItemController()
+        let panel = NSPanel(
+            contentRect: NSRect(x: 80, y: 80, width: 480, height: 220),
+            styleMask: [.titled, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Barline Fixture Accessibility Audit"
+        panel.isReleasedWhenClosed = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.contentView = NSHostingView(
+            rootView: FixtureView(mode: "accessibility-audit")
+                .environmentObject(statusItems)
+        )
+        panel.orderFrontRegardless()
+        auditStatusItems = statusItems
+        auditPanel = panel
     }
 }
 

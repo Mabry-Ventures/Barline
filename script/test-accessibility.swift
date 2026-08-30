@@ -48,7 +48,16 @@ do {
     guard AXIsProcessTrusted() else { throw AuditFailure.permissionUnavailable }
 
     let application = AXUIElementCreateApplication(pid)
-    guard let windows = value(application, kAXWindowsAttribute) as? [AXUIElement], !windows.isEmpty else {
+    let deadline = ContinuousClock.now + .seconds(5)
+    var windows = [AXUIElement]()
+    while ContinuousClock.now < deadline {
+        windows = value(application, kAXWindowsAttribute) as? [AXUIElement] ?? []
+        if !windows.isEmpty {
+            break
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    guard !windows.isEmpty else {
         throw AuditFailure.noWindows
     }
     let windowRoles = windows.map { text($0, kAXRoleAttribute) }
