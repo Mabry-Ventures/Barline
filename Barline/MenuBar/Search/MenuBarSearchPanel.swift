@@ -151,6 +151,7 @@ final class MenuBarSearchPanel: NSPanel {
 
     /// Dismisses the search panel.
     override func close() {
+        model.resetCommandInterpretation()
         super.close()
         contentView = nil
         mouseDownMonitor.stop()

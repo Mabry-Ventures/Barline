@@ -13,8 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenRecoveryFailureKey = "ReopenRecoveryFailure"
     private static let reopenRecoverySucceededKey = "ReopenRecoverySucceeded"
     private static let reopenProbeBaselineGenerationKey = "ReopenProbeBaselineGeneration"
+    private static let notificationPrefix = Bundle.main.bundleIdentifier ?? "Barline"
     private static let reopenProbeHideSettingsNotification = Notification.Name(
-        "com.mabryventures.Barline.reopen-probe.hide-settings"
+        "\(notificationPrefix).reopen-probe.hide-settings"
     )
     /// The shared app state.
     let appState = AppState()
@@ -31,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     #if DEBUG
         private static let runtimeSmokeToggleNotification = Notification.Name(
-            "com.mabryventures.Barline.runtime-smoke.toggle-shelf"
+            "\(notificationPrefix).runtime-smoke.toggle-shelf"
         )
     #endif
 

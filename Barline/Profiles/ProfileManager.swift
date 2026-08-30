@@ -60,6 +60,7 @@ final class ProfileManager: ObservableObject {
     private nonisolated let profileOperationSemaphore = AsyncSemaphore(value: 1)
     private var isProcessingBridgeCommands = false
     private var needsBridgeCommandRescan = false
+    private var workspaceRevision: UInt64 = 0
 
     init(
         fileManager: FileManager = .default,
@@ -87,11 +88,11 @@ final class ProfileManager: ObservableObject {
 
     func performSetup(with appState: AppState) async {
         self.appState = appState
-        configureBridgeObservers()
         await reload()
         await rehydrateActiveProfileAuthority()
         await reconcileDisplayConnections()
         configureWorkspaceAuthorityObservers()
+        configureBridgeObservers()
         await processBridgeCommands()
     }
 
@@ -126,8 +127,14 @@ final class ProfileManager: ObservableObject {
     func createPresentationProfile() async {
         guard let appState else { return }
         await performOperation(successMessage: "Presentation profile saved.") {
+            guard self.processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) == nil else {
+                throw MenuBarBackendError.operationFailed(
+                    "disable or recover Presentation mode before changing its profile"
+                )
+            }
             let presentationID = self.resolvedPresentationProfile()?.id
                 ?? PresentationProfileTemplateBuilder.profileID
+            try self.validateProfileDefinitionMutation(profileID: presentationID)
             let snapshot = try await appState.compatibilityCoordinator.refresh()
             let profile = PresentationProfileTemplateBuilder().makeTemplate(
                 from: snapshot,
@@ -217,6 +224,18 @@ final class ProfileManager: ObservableObject {
                         Logger(category: "Profiles").error("Display alias persistence failed")
                     }
                 }
+                let coordinatorProfileID = await appState.compatibilityCoordinator.activeProfileID
+                var expectedWorkspace = ProfileWorkspaceState(profile: resolvedProfile)
+                expectedWorkspace.presentation = self.activePresentation
+                guard coordinatorProfileID == resolvedProfile.id,
+                      self.currentWorkspaceState() == expectedWorkspace
+                else {
+                    _ = await appState.compatibilityCoordinator.clearActiveProfileAuthority(
+                        ifMatches: resolvedProfile.id
+                    )
+                    self.setActiveProfileAuthorityToken(nil)
+                    throw MenuBarWorkspaceTransactionError.superseded
+                }
                 return (
                     profileID: resolvedProfile.id,
                     authorityToken: resolvedAuthorityToken,
@@ -228,11 +247,13 @@ final class ProfileManager: ObservableObject {
                 } else {
                     self.activationRequests.removeValue(forKey: source)
                 }
-                self.setActiveProfileAuthorityToken(priorAuthorityToken)
                 if await appState.compatibilityCoordinator.activeProfileID == nil {
                     self.activeProfileID = nil
                     self.activeProfileActivatedAt = nil
                     self.activePresentation = nil
+                    self.setActiveProfileAuthorityToken(nil)
+                } else {
+                    self.setActiveProfileAuthorityToken(priorAuthorityToken)
                 }
                 throw error
             }
@@ -263,6 +284,9 @@ final class ProfileManager: ObservableObject {
                 throw MenuBarBackendError.operationFailed("profile is unavailable")
             }
             let current = self.profiles[index]
+            if current.groups != groups || current.spacers != spacers {
+                try self.validateProfileDefinitionMutation(profileID: current.id)
+            }
             let updatedProfile = BarlineProfile(
                 id: current.id,
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -327,6 +351,7 @@ final class ProfileManager: ObservableObject {
                 throw MenuBarBackendError.operationFailed("profile is unavailable")
             }
             let current = self.profiles[index]
+            try self.validateProfileDefinitionMutation(profileID: current.id)
             let snapshot = try await appState.compatibilityCoordinator.refresh()
             let reset = self.profileFromCurrentWorkspace(
                 id: current.id,
@@ -452,6 +477,11 @@ final class ProfileManager: ObservableObject {
         guard let preview = pendingArchiveImport else { return }
         await performOperation(successMessage: "Profile archive imported.") {
             let importedIDs = Set(preview.profiles.map(\.id))
+            if replacingExisting {
+                for profileID in importedIDs where self.profiles.contains(where: { $0.id == profileID }) {
+                    try self.validateProfileDefinitionMutation(profileID: profileID)
+                }
+            }
             let importedProfiles = replacingExisting
                 ? preview.profiles
                 : preview.profiles.filter { imported in
@@ -488,6 +518,7 @@ final class ProfileManager: ObservableObject {
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
                 self?.activePresentation = nil
+                self?.setActiveProfileAuthorityToken(nil)
             }
             self?.profiles = result.profiles
             self?.pendingArchiveImport = nil
@@ -523,6 +554,11 @@ final class ProfileManager: ObservableObject {
 
     func commitIceImport(_ preview: IceImportPreview, replacingExisting: Bool) async {
         await performOperation(successMessage: "Ice settings imported as a Barline profile.") {
+            if replacingExisting,
+               self.profiles.contains(where: { $0.id == preview.profile.id })
+            {
+                try self.validateProfileDefinitionMutation(profileID: preview.profile.id)
+            }
             let updated = try await self.store.commit(
                 preview,
                 confirmed: true,
@@ -543,6 +579,7 @@ final class ProfileManager: ObservableObject {
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
                 self?.activePresentation = nil
+                self?.setActiveProfileAuthorityToken(nil)
             }
             self?.profiles = result.profiles
             self?.pendingIceImports.removeAll { $0.source == preview.source }
@@ -552,13 +589,7 @@ final class ProfileManager: ObservableObject {
 
     func delete(_ profile: BarlineProfile) async {
         await performOperation(successMessage: "Profile deleted.") {
-            if profile.id == self.resolvedPresentationProfile()?.id,
-               self.processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil
-            {
-                throw MenuBarBackendError.operationFailed(
-                    "disable or recover Presentation mode before deleting its profile"
-                )
-            }
+            try self.validateProfileDefinitionMutation(profileID: profile.id)
             let remaining = self.profiles.filter { $0.id != profile.id }
             guard !remaining.isEmpty else {
                 throw MenuBarBackendError.operationFailed("at least one profile is required")
@@ -574,6 +605,7 @@ final class ProfileManager: ObservableObject {
                 self?.activeProfileID = nil
                 self?.activeProfileActivatedAt = nil
                 self?.activePresentation = nil
+                self?.setActiveProfileAuthorityToken(nil)
             }
             self?.publishCatalog()
         }
@@ -698,22 +730,76 @@ final class ProfileManager: ObservableObject {
         )
     }
 
-    private func applyWorkspaceState(_ workspace: ProfileWorkspaceState) async throws {
+    @discardableResult
+    private func applyWorkspaceState(
+        _ workspace: ProfileWorkspaceState,
+        expectedRevision: UInt64? = nil
+    ) async throws -> UInt64 {
         guard let appState else {
             throw MenuBarBackendError.operationFailed("app state unavailable")
         }
         try ProfileValidator().validate(workspace)
+        let revision = expectedRevision ?? workspaceRevision
+        guard workspaceRevision == revision else {
+            throw MenuBarWorkspaceTransactionError.superseded
+        }
+        let workspaceBeforeSpacing = currentWorkspaceState()
         let spacing = Int(workspace.appearance.itemSpacing)
         if Double(spacing) != appState.settings.general.itemSpacingOffset {
             appState.spacingManager.offset = spacing
-            try await appState.spacingManager.applyOffset()
+            do {
+                try await appState.spacingManager.applyOffset()
+            } catch {
+                do {
+                    try await restoreCurrentModeledSpacing()
+                } catch {
+                    throw MenuBarWorkspaceTransactionError.sideEffectRecoveryFailed
+                }
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+        }
+        guard workspaceRevision == revision,
+              currentWorkspaceState() == workspaceBeforeSpacing
+        else {
+            do {
+                try await restoreCurrentModeledSpacing()
+            } catch {
+                throw MenuBarWorkspaceTransactionError.sideEffectRecoveryFailed
+            }
+            throw MenuBarWorkspaceTransactionError.superseded
         }
         appState.appearanceManager.configuration = try appearanceConfiguration(
             applying: workspace.appearance,
             to: appState.appearanceManager.configuration
         )
         applyWorkspaceSettings(workspace)
+        let presentationChanged = activePresentation != workspace.presentation
         activePresentation = workspace.presentation
+        if presentationChanged {
+            workspaceRevision &+= 1
+        }
+        return workspaceRevision
+    }
+
+    /// A spacing write reaches macOS before the rest of the modeled workspace
+    /// is committed. If an edit supersedes the transaction while that write is
+    /// awaiting completion, put the physical default back in sync with the
+    /// newest authoritative setting before reporting a side-effect-free abort.
+    private func restoreCurrentModeledSpacing() async throws {
+        guard let appState else {
+            throw MenuBarBackendError.operationFailed("app state unavailable")
+        }
+        for _ in 0 ..< 3 {
+            let expectedSpacing = appState.settings.general.itemSpacingOffset
+            appState.spacingManager.offset = Int(expectedSpacing)
+            try await appState.spacingManager.applyOffset()
+            if appState.settings.general.itemSpacingOffset == expectedSpacing {
+                return
+            }
+        }
+        throw MenuBarBackendError.operationFailed(
+            "item spacing changed repeatedly during profile rollback"
+        )
     }
 
     private func profileRehideStrategy(from strategy: RehideStrategy) -> ProfileAutoRehideStrategy {
@@ -942,6 +1028,34 @@ final class ProfileManager: ObservableObject {
                     throw MenuBarBackendError.operationFailed("profile manager unavailable")
                 }
                 try await applyWorkspaceState(workspace)
+            },
+            currentRevision: { @MainActor [weak self] in
+                self?.workspaceRevision ?? 0
+            },
+            applyIfCurrent: { @MainActor [weak self] workspace, expectedRevision in
+                guard let self, workspaceRevision == expectedRevision else { return nil }
+                return try await applyWorkspaceState(
+                    workspace,
+                    expectedRevision: expectedRevision
+                )
+            },
+            rollbackSuperseded: { @MainActor [weak self] target, original in
+                guard let self else { return nil }
+                let revision = workspaceRevision
+                let current = currentWorkspaceState()
+                guard workspaceRevision == revision else { return nil }
+                let merged = current.rollingBackUnchangedFields(
+                    applied: target,
+                    to: original
+                )
+                do {
+                    return try await applyWorkspaceState(
+                        merged,
+                        expectedRevision: revision
+                    )
+                } catch MenuBarWorkspaceTransactionError.superseded {
+                    return nil
+                }
             }
         )
     }
@@ -976,6 +1090,12 @@ final class ProfileManager: ObservableObject {
             general.$rehideInterval.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
             advanced.$hideApplicationMenus.removeDuplicates().dropFirst().map { _ in () }.eraseToAnyPublisher(),
         ]
+
+        Publishers.MergeMany(changes)
+            .sink { [weak self] in
+                self?.workspaceRevision &+= 1
+            }
+            .store(in: &cancellables)
 
         Publishers.MergeMany(changes)
             .debounce(for: .milliseconds(100), scheduler: DispatchQueue.main)
@@ -1581,6 +1701,8 @@ final class ProfileManager: ObservableObject {
     }
 
     private func rehydrateActiveProfileAuthority() async {
+        await profileOperationSemaphore.wait()
+        defer { profileOperationSemaphore.signal() }
         guard let appState,
               let data = processedDefaults.data(forKey: Self.activeProfileAuthorityKey),
               let authority = try? JSONDecoder().decode(PersistedActiveAuthority.self, from: data),
@@ -1590,20 +1712,23 @@ final class ProfileManager: ObservableObject {
             setActiveProfileAuthorityToken(nil)
             return
         }
-        activePresentation = authority.presentation
         do {
-            let retained = try await appState.compatibilityCoordinator.rehydrateActiveProfileAuthority(
-                profile: profile,
-                activeDisplayID: authority.presentation.destinationDisplayID,
-                workspaceTransaction: workspaceTransaction()
-            )
-            guard retained else {
+            activePresentation = authority.presentation
+            guard let normalizedPresentation = try await appState.compatibilityCoordinator
+                .rehydrateActiveProfileAuthority(
+                    profile: profile,
+                    persistedPresentation: authority.presentation,
+                    workspaceTransaction: workspaceTransaction()
+                )
+            else {
                 activePresentation = nil
                 setActiveProfileAuthorityToken(nil)
                 return
             }
+            activePresentation = normalizedPresentation
             activeProfileID = profile.id
             activeProfileActivatedAt = Date()
+            persistActiveProfileAuthority(profileID: profile.id, token: authority.token)
         } catch {
             activeProfileID = nil
             activeProfileActivatedAt = nil
@@ -1657,6 +1782,21 @@ final class ProfileManager: ObservableObject {
             return legacy
         }
         return nil
+    }
+
+    private func validateProfileDefinitionMutation(profileID: UUID) throws {
+        guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil else {
+            return
+        }
+        let protectedProfileID = processedDefaults.string(forKey: Self.presentationProfileIDKey)
+            .flatMap(UUID.init(uuidString:))
+            ?? resolvedPresentationProfile()?.id
+            ?? PresentationProfileTemplateBuilder.profileID
+        if profileID == protectedProfileID {
+            throw MenuBarBackendError.operationFailed(
+                "disable or recover Presentation mode before changing its profile"
+            )
+        }
     }
 
     private func hasProcessed(_ commandID: UUID) -> Bool {

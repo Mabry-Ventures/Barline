@@ -60,9 +60,21 @@ public enum MenuBarConditionalRestoreResult: Sendable, Equatable {
     case superseded
 }
 
+public enum MenuBarWorkspaceTransactionError: Error, Equatable, Sendable {
+    case superseded
+    case sideEffectRecoveryFailed
+}
+
 public struct MenuBarWorkspaceTransaction: Sendable {
     fileprivate let captureClosure: @Sendable () async throws -> ProfileWorkspaceState
     fileprivate let applyClosure: @Sendable (ProfileWorkspaceState) async throws -> Void
+    fileprivate let currentRevisionClosure: (@Sendable () async -> UInt64)?
+    fileprivate let applyIfCurrentClosure: (
+        @Sendable (ProfileWorkspaceState, UInt64) async throws -> UInt64?
+    )?
+    fileprivate let rollbackSupersededClosure: (
+        @Sendable (ProfileWorkspaceState, ProfileWorkspaceState) async throws -> UInt64?
+    )?
 
     public init(
         capture: @escaping @Sendable () async throws -> ProfileWorkspaceState,
@@ -70,6 +82,29 @@ public struct MenuBarWorkspaceTransaction: Sendable {
     ) {
         captureClosure = capture
         applyClosure = apply
+        currentRevisionClosure = nil
+        applyIfCurrentClosure = nil
+        rollbackSupersededClosure = nil
+    }
+
+    public init(
+        capture: @escaping @Sendable () async throws -> ProfileWorkspaceState,
+        apply: @escaping @Sendable (ProfileWorkspaceState) async throws -> Void,
+        currentRevision: @escaping @Sendable () async -> UInt64,
+        applyIfCurrent: @escaping @Sendable (
+            ProfileWorkspaceState,
+            UInt64
+        ) async throws -> UInt64?,
+        rollbackSuperseded: @escaping @Sendable (
+            ProfileWorkspaceState,
+            ProfileWorkspaceState
+        ) async throws -> UInt64?
+    ) {
+        captureClosure = capture
+        applyClosure = apply
+        currentRevisionClosure = currentRevision
+        applyIfCurrentClosure = applyIfCurrent
+        rollbackSupersededClosure = rollbackSuperseded
     }
 
     fileprivate func capture() async throws -> ProfileWorkspaceState {
@@ -78,6 +113,28 @@ public struct MenuBarWorkspaceTransaction: Sendable {
 
     fileprivate func apply(_ workspace: ProfileWorkspaceState) async throws {
         try await applyClosure(workspace)
+    }
+
+    fileprivate func currentRevision() async -> UInt64? {
+        await currentRevisionClosure?()
+    }
+
+    fileprivate func apply(
+        _ workspace: ProfileWorkspaceState,
+        ifCurrentRevision revision: UInt64
+    ) async throws -> UInt64? {
+        guard let applyIfCurrentClosure else {
+            try await applyClosure(workspace)
+            return nil
+        }
+        return try await applyIfCurrentClosure(workspace, revision)
+    }
+
+    fileprivate func rollbackSuperseded(
+        from applied: ProfileWorkspaceState,
+        to original: ProfileWorkspaceState
+    ) async throws -> UInt64? {
+        try await rollbackSupersededClosure?(applied, original)
     }
 }
 
@@ -400,7 +457,15 @@ public actor MenuBarStateCoordinator {
             try requireCurrentGeneration(expectedGeneration)
         }
         try ProfileValidator().validate(profile)
+        let startingWorkspaceRevision = await workspaceTransaction?.currentRevision()
         let workspaceBefore = try await workspaceTransaction?.capture()
+        if let startingWorkspaceRevision,
+           await workspaceTransaction?.currentRevision() != startingWorkspaceRevision
+        {
+            throw MenuBarBackendError.operationFailed(
+                "workspace changed while profile activation was starting"
+            )
+        }
         let startingCheckpoint: HistoryCheckpoint
         if workspaceTransaction != nil {
             startingCheckpoint = try await refreshedHistoryStartingCheckpoint(
@@ -473,11 +538,30 @@ public actor MenuBarStateCoordinator {
         let generation = mutationGeneration
         var didBeginLayoutMutation = false
         var didBeginWorkspaceMutation = false
+        var appliedWorkspaceRevision: UInt64?
 
         do {
             if let workspaceTransaction {
-                didBeginWorkspaceMutation = true
-                try await workspaceTransaction.apply(targetWorkspace)
+                if let startingWorkspaceRevision {
+                    do {
+                        guard let revision = try await workspaceTransaction.apply(
+                            targetWorkspace,
+                            ifCurrentRevision: startingWorkspaceRevision
+                        ) else {
+                            throw MenuBarWorkspaceTransactionError.superseded
+                        }
+                        appliedWorkspaceRevision = revision
+                        didBeginWorkspaceMutation = true
+                    } catch let transactionError as MenuBarWorkspaceTransactionError {
+                        throw transactionError
+                    } catch {
+                        didBeginWorkspaceMutation = true
+                        throw error
+                    }
+                } else {
+                    didBeginWorkspaceMutation = true
+                    try await workspaceTransaction.apply(targetWorkspace)
+                }
             }
             for (section, itemIDs) in [
                 (MenuBarSection.visible, layout.visible),
@@ -534,6 +618,11 @@ public actor MenuBarStateCoordinator {
                     }
                 }
                 try validateProfileResult(layout, in: snapshot, displayID: profileDisplayID)
+                if let appliedWorkspaceRevision,
+                   await workspaceTransaction?.currentRevision() != appliedWorkspaceRevision
+                {
+                    throw MenuBarWorkspaceTransactionError.superseded
+                }
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil
@@ -551,12 +640,35 @@ public actor MenuBarStateCoordinator {
             }
         } catch {
             let activationError = error
+            if activationError is MenuBarWorkspaceTransactionError,
+               !didBeginWorkspaceMutation,
+               !didBeginLayoutMutation
+            {
+                activeProfileID = nil
+                lastKnownGoodProfileID = nil
+                throw activationError
+            }
             var workspaceRollbackError: (any Error)?
             var layoutRollbackError: (any Error)?
             var verifiedRollbackSnapshot: MenuBarSnapshot?
+            var workspaceWasSuperseded = false
             if let workspaceBefore, let workspaceTransaction {
                 do {
-                    try await workspaceTransaction.apply(workspaceBefore)
+                    if let appliedWorkspaceRevision {
+                        let restoredRevision = try await workspaceTransaction.apply(
+                            workspaceBefore,
+                            ifCurrentRevision: appliedWorkspaceRevision
+                        )
+                        if restoredRevision == nil {
+                            workspaceWasSuperseded = true
+                            _ = try await workspaceTransaction.rollbackSuperseded(
+                                from: targetWorkspace,
+                                to: workspaceBefore
+                            )
+                        }
+                    } else {
+                        try await workspaceTransaction.apply(workspaceBefore)
+                    }
                 } catch {
                     workspaceRollbackError = error
                 }
@@ -588,8 +700,8 @@ public actor MenuBarStateCoordinator {
             {
                 currentSnapshot = verifiedRollbackSnapshot
                 lastKnownGoodSnapshot = verifiedRollbackSnapshot
-                activeProfileID = priorProfileID
-                lastKnownGoodProfileID = priorProfileID
+                activeProfileID = workspaceWasSuperseded ? nil : priorProfileID
+                lastKnownGoodProfileID = workspaceWasSuperseded ? nil : priorProfileID
                 throw activationError
             }
             currentSnapshot = nil
@@ -718,32 +830,48 @@ public actor MenuBarStateCoordinator {
     }
 
     /// Re-establishes durable profile ownership after process relaunch only
-    /// when the live layout and modeled workspace still exactly match.
+    /// when one validated snapshot can both reconnect the persisted display
+    /// presentation and exactly match the live layout and modeled workspace.
     @discardableResult
     public func rehydrateActiveProfileAuthority(
         profile: BarlineProfile,
-        activeDisplayID: MenuBarDisplayID?,
+        persistedPresentation: ResolvedProfilePresentation,
         workspaceTransaction: MenuBarWorkspaceTransaction,
         now: Date? = nil
-    ) async throws -> Bool {
+    ) async throws -> ResolvedProfilePresentation? {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
         try ProfileValidator().validate(profile)
         let snapshot = try await refreshAssumingMutationTurn(now: now)
-        let workspace = try await workspaceTransaction.capture()
+        guard let resolvedPresentation = DisplayProfileOverrideResolver()
+            .resolvePersistedPresentation(
+                profile: profile,
+                persisted: persistedPresentation,
+                snapshot: snapshot
+            )
+        else {
+            activeProfileID = nil
+            return nil
+        }
+        var workspace = try await workspaceTransaction.capture()
+        guard workspace.presentation == persistedPresentation else {
+            activeProfileID = nil
+            return nil
+        }
+        workspace.presentation = resolvedPresentation
         let checkpoint = MenuBarWorkspaceCheckpoint(
             snapshot: snapshot,
             activeProfileID: profile.id,
-            activeDisplayID: activeDisplayID,
+            activeDisplayID: resolvedPresentation.destinationDisplayID,
             workspace: workspace
         )
         guard ProfileAuthorityMatcher.matches(profile: profile, checkpoint: checkpoint) else {
             activeProfileID = nil
-            return false
+            return nil
         }
         activeProfileID = profile.id
         lastKnownGoodProfileID = profile.id
-        return true
+        return resolvedPresentation
     }
 
     public func captureWorkspaceCheckpoint(
