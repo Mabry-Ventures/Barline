@@ -885,6 +885,54 @@ struct StateCoordinatorTests {
         #expect(await coordinator.activeProfileID == nil)
     }
 
+    @Test("Relaunch authority rehydrates only for an exact live workspace")
+    func rehydratesExactLiveAuthority() async throws {
+        let base = makeSnapshot(generation: 1, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(135),
+            name: "Durable",
+            layout: ProfileLayout(visible: base.items.map(\.id))
+        )
+        let live = makeProfileSnapshot(generation: 2, layout: profile.layout)
+        let recorder = WorkspaceRecorder(initial: ProfileWorkspaceState(profile: profile))
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { try await recorder.apply($0) }
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: FakeBackend(snapshots: [live]),
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let retained = try await coordinator.rehydrateActiveProfileAuthority(
+            profile: profile,
+            activeDisplayID: nil,
+            workspaceTransaction: transaction,
+            now: live.capturedAt
+        )
+
+        #expect(retained)
+        #expect(await coordinator.activeProfileID == profile.id)
+
+        let drifted = WorkspaceRecorder(initial: ProfileWorkspaceState(profile: BarlineProfile(name: "Other")))
+        let driftedTransaction = MenuBarWorkspaceTransaction(
+            capture: { await drifted.capture() },
+            apply: { try await drifted.apply($0) }
+        )
+        let mismatchCoordinator = MenuBarStateCoordinator(
+            backend: FakeBackend(snapshots: [live]),
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        let mismatched = try await mismatchCoordinator.rehydrateActiveProfileAuthority(
+            profile: profile,
+            activeDisplayID: nil,
+            workspaceTransaction: driftedTransaction,
+            now: live.capturedAt
+        )
+        #expect(!mismatched)
+        #expect(await mismatchCoordinator.activeProfileID == nil)
+    }
+
     @Test("Redo captures a live externally changed inverse layout")
     func redoUsesLiveExternalInverse() async throws {
         let before = makeSnapshot(generation: 1, count: 2)

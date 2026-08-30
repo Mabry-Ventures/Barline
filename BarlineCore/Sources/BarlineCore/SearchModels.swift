@@ -9,7 +9,7 @@ public struct SearchDocumentID: Codable, Hashable, Sendable, CustomStringConvert
     public let value: String
 
     public init(_ value: String) {
-        self.value = SearchText.normalize(value)
+        self.value = value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public var description: String {

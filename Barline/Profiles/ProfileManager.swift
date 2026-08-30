@@ -11,6 +11,12 @@ import OSLog
 
 @MainActor
 final class ProfileManager: ObservableObject {
+    private struct PersistedActiveAuthority: Codable {
+        let profileID: UUID
+        let token: UUID
+        let presentation: ResolvedProfilePresentation
+    }
+
     private struct WorkspaceLayoutItem: Hashable {
         let id: MenuBarItemID
         let displayID: MenuBarDisplayID?
@@ -28,7 +34,6 @@ final class ProfileManager: ObservableObject {
     @Published private(set) var isBusy = false
     @Published var statusMessage: String?
 
-    private static let appGroupIdentifier = "group.com.mabryventures.Barline"
     private static let profileCatalogKey = "intent.profileCatalog"
     private static let processedCommandIDsKey = "intent.processedCommandIDs"
     private static let profileBeforeFocusIDKey = "focus.profileBeforeFocusID"
@@ -36,13 +41,14 @@ final class ProfileManager: ObservableObject {
     private static let presentationFocusActiveKey = "focus.presentationModeIsActive"
     private static let workspaceBeforeFocusKey = "focus.workspaceBeforeFocus"
     private static let activeProfileAuthorityTokenKey = "profiles.activeAuthorityToken"
+    private static let activeProfileAuthorityKey = "profiles.activeAuthority"
     private static let focusAuthorityTokenKey = "focus.presentationAuthorityToken"
     private static let profileBeforeFocusAuthorityTokenKey = "focus.profileBeforeFocusAuthorityToken"
     private static let maximumProcessedCommandCount = 256
 
     private let store: ProfileFileStore
     private let commandInbox: IntentCommandInbox?
-    private let bridgeDefaults = UserDefaults(suiteName: appGroupIdentifier)
+    private let bridgeDefaults: UserDefaults?
     private let processedDefaults = UserDefaults.standard
     private weak var appState: AppState?
     private var cancellables = Set<AnyCancellable>()
@@ -55,10 +61,22 @@ final class ProfileManager: ObservableObject {
     private var isProcessingBridgeCommands = false
     private var needsBridgeCommandRescan = false
 
-    init(fileManager: FileManager = .default) {
-        let containerURL = fileManager.containerURL(
-            forSecurityApplicationGroupIdentifier: Self.appGroupIdentifier
+    init(
+        fileManager: FileManager = .default,
+        appGroupIdentifier: String? = Bundle.main.object(
+            forInfoDictionaryKey: "BarlineAppGroupIdentifier"
+        ) as? String
+    ) {
+        let resolvedAppGroupIdentifier = appGroupIdentifier?.trimmingCharacters(
+            in: .whitespacesAndNewlines
         )
+        let validAppGroupIdentifier = resolvedAppGroupIdentifier.flatMap {
+            !$0.isEmpty && !$0.contains("$(") ? $0 : nil
+        }
+        bridgeDefaults = validAppGroupIdentifier.flatMap(UserDefaults.init(suiteName:))
+        let containerURL = validAppGroupIdentifier.flatMap {
+            fileManager.containerURL(forSecurityApplicationGroupIdentifier: $0)
+        }
         let baseURL = containerURL ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Barline", isDirectory: true)
         store = ProfileFileStore(directoryURL: baseURL.appendingPathComponent("Profiles", isDirectory: true))
@@ -71,6 +89,7 @@ final class ProfileManager: ObservableObject {
         self.appState = appState
         configureBridgeObservers()
         await reload()
+        await rehydrateActiveProfileAuthority()
         await reconcileDisplayConnections()
         configureWorkspaceAuthorityObservers()
         await processBridgeCommands()
@@ -218,10 +237,15 @@ final class ProfileManager: ObservableObject {
                 throw error
             }
         } completion: { [weak self] result in
-            self?.profiles = result.profiles
-            self?.activeProfileID = result.profileID
-            self?.activeProfileActivatedAt = Date()
-            self?.setActiveProfileAuthorityToken(result.authorityToken)
+            guard let self else { return }
+            profiles = result.profiles
+            activeProfileID = result.profileID
+            activeProfileActivatedAt = Date()
+            setActiveProfileAuthorityToken(result.authorityToken)
+            persistActiveProfileAuthority(
+                profileID: result.profileID,
+                token: result.authorityToken
+            )
             didActivate = true
         }
         return didActivate
@@ -346,10 +370,13 @@ final class ProfileManager: ObservableObject {
             _ = try await appState.compatibilityCoordinator.perform(.restoreLastKnownGood)
             return await appState.compatibilityCoordinator.activeProfileID
         } completion: { [weak self] profileID in
-            self?.activeProfileID = profileID
-            self?.activeProfileActivatedAt = profileID == nil ? nil : Date()
+            guard let self else { return }
+            activeProfileID = profileID
+            activeProfileActivatedAt = profileID == nil ? nil : Date()
             if profileID == nil {
-                self?.activePresentation = nil
+                activePresentation = nil
+                activationRequests.removeAll()
+                setActiveProfileAuthorityToken(nil)
             }
         }
     }
@@ -394,7 +421,13 @@ final class ProfileManager: ObservableObject {
                         url.stopAccessingSecurityScopedResource()
                     }
                 }
-                let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                let limit = ProfileCodec.maximumArchiveByteCount
+                let data = try handle.read(upToCount: limit + 1) ?? Data()
+                guard data.count <= limit else {
+                    throw ProfileValidationError.archiveTooLarge(data.count)
+                }
                 return try ProfileCodec().importArchive(data)
             }.value
             let existingIDs = Set(profiles.map(\.id))
@@ -519,6 +552,13 @@ final class ProfileManager: ObservableObject {
 
     func delete(_ profile: BarlineProfile) async {
         await performOperation(successMessage: "Profile deleted.") {
+            if profile.id == self.resolvedPresentationProfile()?.id,
+               self.processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil
+            {
+                throw MenuBarBackendError.operationFailed(
+                    "disable or recover Presentation mode before deleting its profile"
+                )
+            }
             let remaining = self.profiles.filter { $0.id != profile.id }
             guard !remaining.isEmpty else {
                 throw MenuBarBackendError.operationFailed("at least one profile is required")
@@ -663,8 +703,11 @@ final class ProfileManager: ObservableObject {
             throw MenuBarBackendError.operationFailed("app state unavailable")
         }
         try ProfileValidator().validate(workspace)
-        appState.spacingManager.offset = Int(workspace.appearance.itemSpacing)
-        try await appState.spacingManager.applyOffset()
+        let spacing = Int(workspace.appearance.itemSpacing)
+        if Double(spacing) != appState.settings.general.itemSpacingOffset {
+            appState.spacingManager.offset = spacing
+            try await appState.spacingManager.applyOffset()
+        }
         appState.appearanceManager.configuration = try appearanceConfiguration(
             applying: workspace.appearance,
             to: appState.appearanceManager.configuration
@@ -876,13 +919,14 @@ final class ProfileManager: ObservableObject {
 
     private func hexString(from color: CGColor) -> String? {
         guard let converted = NSColor(cgColor: color)?.usingColorSpace(.sRGB) else { return nil }
-        return String(
-            format: "#%02X%02X%02X%02X",
-            Int((converted.redComponent * 255).rounded()),
-            Int((converted.greenComponent * 255).rounded()),
-            Int((converted.blueComponent * 255).rounded()),
-            Int((converted.alphaComponent * 255).rounded())
-        )
+        let red = Int((converted.redComponent * 255).rounded())
+        let green = Int((converted.greenComponent * 255).rounded())
+        let blue = Int((converted.blueComponent * 255).rounded())
+        let alpha = Int((converted.alphaComponent * 255).rounded())
+        if alpha == 255 {
+            return String(format: "#%02X%02X%02X", red, green, blue)
+        }
+        return String(format: "#%02X%02X%02X%02X", red, green, blue, alpha)
     }
 
     private func workspaceTransaction() -> MenuBarWorkspaceTransaction {
@@ -1012,13 +1056,18 @@ final class ProfileManager: ObservableObject {
         else {
             return nil
         }
+        guard !snapshot.displayIDs.contains(storedID) else { return nil }
         let matches = snapshot.displayIDs.compactMap { liveID in
             DisplayProfileOverrideResolver().resolve(
                 profile: profile,
                 requestedDisplayID: liveID,
                 snapshot: snapshot
             )
-        }.filter { $0.override.displayID == storedID }
+        }.filter {
+            $0.override.displayID == storedID
+                && $0.liveDisplayID != storedID
+                && $0.method == .uniqueHardwareFingerprint
+        }
         guard matches.count == 1 else { return nil }
         return matches[0].liveDisplayID
     }
@@ -1147,7 +1196,8 @@ final class ProfileManager: ObservableObject {
                    !appState.permissions.accessibility.hasPermission
                 {
                     statusMessage = "Accessibility is required before applying this pending command."
-                    return
+                    scheduleBridgeRetry()
+                    continue
                 }
                 guard await handle(command) else {
                     if command.kind == .setPresentationMode,
@@ -1349,6 +1399,9 @@ final class ProfileManager: ObservableObject {
             activeProfileID = result.profileID
             activeProfileActivatedAt = result.profileID == nil ? nil : Date()
             setActiveProfileAuthorityToken(result.profileID == nil ? nil : result.authorityToken)
+            if let profileID = result.profileID, let token = result.authorityToken {
+                persistActiveProfileAuthority(profileID: profileID, token: token)
+            }
             didFinish = true
         }
         guard didFinish else {
@@ -1467,6 +1520,7 @@ final class ProfileManager: ObservableObject {
             activeProfileID = nil
             activeProfileActivatedAt = nil
             activePresentation = nil
+            setActiveProfileAuthorityToken(nil)
             return nil
         }
         guard profileMatchesCheckpoint(profile, checkpoint: checkpoint) else {
@@ -1476,7 +1530,11 @@ final class ProfileManager: ObservableObject {
             activeProfileID = nil
             activeProfileActivatedAt = nil
             activePresentation = nil
+            setActiveProfileAuthorityToken(nil)
             return nil
+        }
+        if let token = activeProfileAuthorityToken() {
+            persistActiveProfileAuthority(profileID: profileID, token: token)
         }
         return profileID
     }
@@ -1504,6 +1562,53 @@ final class ProfileManager: ObservableObject {
             processedDefaults.set(token.uuidString, forKey: Self.activeProfileAuthorityTokenKey)
         } else {
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
+            processedDefaults.removeObject(forKey: Self.activeProfileAuthorityKey)
+        }
+    }
+
+    private func persistActiveProfileAuthority(profileID: UUID, token: UUID) {
+        guard let activePresentation,
+              let data = try? JSONEncoder().encode(PersistedActiveAuthority(
+                  profileID: profileID,
+                  token: token,
+                  presentation: activePresentation
+              ))
+        else {
+            setActiveProfileAuthorityToken(nil)
+            return
+        }
+        processedDefaults.set(data, forKey: Self.activeProfileAuthorityKey)
+    }
+
+    private func rehydrateActiveProfileAuthority() async {
+        guard let appState,
+              let data = processedDefaults.data(forKey: Self.activeProfileAuthorityKey),
+              let authority = try? JSONDecoder().decode(PersistedActiveAuthority.self, from: data),
+              activeProfileAuthorityToken() == authority.token,
+              let profile = profiles.first(where: { $0.id == authority.profileID })
+        else {
+            setActiveProfileAuthorityToken(nil)
+            return
+        }
+        activePresentation = authority.presentation
+        do {
+            let retained = try await appState.compatibilityCoordinator.rehydrateActiveProfileAuthority(
+                profile: profile,
+                activeDisplayID: authority.presentation.destinationDisplayID,
+                workspaceTransaction: workspaceTransaction()
+            )
+            guard retained else {
+                activePresentation = nil
+                setActiveProfileAuthorityToken(nil)
+                return
+            }
+            activeProfileID = profile.id
+            activeProfileActivatedAt = Date()
+        } catch {
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            activePresentation = nil
+            setActiveProfileAuthorityToken(nil)
         }
     }
 

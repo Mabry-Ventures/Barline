@@ -663,11 +663,14 @@ struct ProfileTests {
         #expect(ProfileActivationResolver().resolve([]) == nil)
     }
 
-    @Test("Presentation template keeps system and Barline controls visible")
+    @Test("Presentation template preserves control sections and conceals visible utilities")
     func presentationTemplate() {
         let system = item(1)
         let control = item(2)
         let utility = item(3)
+        let hiddenControl = item(4)
+        let alwaysHiddenControl = item(5)
+        let alwaysHiddenUtility = item(6)
         let snapshot = MenuBarSnapshot(
             generation: 42,
             capturedAt: Date(timeIntervalSince1970: 100),
@@ -675,6 +678,9 @@ struct ProfileTests {
                 descriptor(utility, order: 2),
                 descriptor(system, order: 0, isSystem: true),
                 descriptor(control, order: 1, isControl: true),
+                descriptor(hiddenControl, section: .hidden, order: 3, isControl: true),
+                descriptor(alwaysHiddenControl, section: .alwaysHidden, order: 4, isControl: true),
+                descriptor(alwaysHiddenUtility, section: .alwaysHidden, order: 5),
             ],
             displayIDs: [primaryDisplay],
             activeSpaceIsValid: true
@@ -687,12 +693,32 @@ struct ProfileTests {
         )
 
         #expect(template.profile.layout.visible == [system, control])
-        #expect(template.profile.layout.hidden == [utility])
+        #expect(template.profile.layout.hidden == [utility, hiddenControl])
+        #expect(template.profile.layout.alwaysHidden == [alwaysHiddenControl, alwaysHiddenUtility])
         #expect(template.profile.revealTriggers.hover == false)
         #expect(template.requiresConfirmation)
         #expect(template.restoresPreviousLayoutOnDeactivation)
         #expect(template.sourceGeneration == 42)
         #expect(template.profile.id == PresentationProfileTemplateBuilder.profileID)
+    }
+
+    @Test("Opaque profile colors canonicalize without losing translucent alpha")
+    func canonicalColors() throws {
+        #expect(ProfileColorHex.canonical("#aabbccff") == "#AABBCC")
+        #expect(ProfileColorHex.canonical("#aabbcc80") == "#AABBCC80")
+        let appearance = ProfileAppearance(
+            tintHex: "#112233FF",
+            gradientHex: ["#abcdefFF", "#01020380"],
+            borderHex: "#000000FF"
+        )
+        #expect(appearance.tintHex == "#112233")
+        #expect(appearance.gradientHex == ["#ABCDEF", "#01020380"])
+        #expect(appearance.borderHex == "#000000")
+        let decoded = try JSONDecoder().decode(
+            ProfileAppearance.self,
+            from: JSONEncoder().encode(appearance)
+        )
+        #expect(decoded == appearance)
     }
 
     @Test("Version 1 migrates flat layout fields through every schema step")
@@ -1116,13 +1142,14 @@ struct ProfileTests {
 
     private func descriptor(
         _ id: MenuBarItemID,
+        section: MenuBarSection = .visible,
         order: Int,
         isSystem: Bool = false,
         isControl: Bool = false
     ) -> MenuBarItemDescriptor {
         MenuBarItemDescriptor(
             id: id,
-            section: .visible,
+            section: section,
             order: order,
             displayID: primaryDisplay,
             isSystemItem: isSystem,

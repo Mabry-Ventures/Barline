@@ -28,7 +28,9 @@ extension BarlineMenuService {
         /// service's exact signing identifier and the local/ad-hoc validation
         /// category instead of disabling peer validation.
         fileprivate static func servicePeerRequirement() -> XPCPeerRequirement {
-            let signingIdentifier = "com.mabryventures.Barline.MenuBarService"
+            let signingIdentifier = BarlineMenuService.requiredIdentity(
+                forInfoKey: "BarlineMenuServiceSigningIdentifier"
+            )
             if currentProcessHasTeamIdentifier() {
                 return .isFromSameTeam(andMatchesSigningIdentifier: signingIdentifier)
             }
@@ -211,7 +213,7 @@ extension BarlineMenuService {
                     return
                 }
                 guard attempt < 5 else { break }
-                let delay = min(100 * (1 << attempt), 1_600)
+                let delay = min(100 * (1 << attempt), 1600)
                 try? await Task.sleep(for: .milliseconds(delay))
             }
             logger.error("Explicit compatibility restart did not reach a ready handshake")

@@ -27,6 +27,24 @@ public struct MenuBarItemID: Codable, Hashable, Sendable, CustomStringConvertibl
             .joined(separator: "|")
     }
 
+    /// A collision-free opaque search identity. Field labels, explicit nil
+    /// markers, and byte counts preserve which stable-ID component supplied a
+    /// value without exposing this representation as a user-facing label.
+    public var searchDocumentID: SearchDocumentID {
+        let fields: [(String, String?)] = [
+            ("bundle", bundleIdentifier),
+            ("accessibility", accessibilityIdentifier),
+            ("title", title),
+            ("alias", alias),
+            ("fingerprint", fallbackFingerprint),
+        ]
+        let encoded = fields.map { label, value in
+            guard let value else { return "\(label):nil" }
+            return "\(label):\(value.utf8.count):\(value)"
+        }.joined(separator: "|")
+        return SearchDocumentID("menu-item|\(encoded)")
+    }
+
     public var isPlausiblyStable: Bool {
         !bundleIdentifier.isEmpty && (
             accessibilityIdentifier != nil || title != nil || alias != nil || fallbackFingerprint != nil

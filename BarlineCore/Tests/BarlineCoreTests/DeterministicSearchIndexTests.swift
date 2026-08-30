@@ -9,6 +9,22 @@ import Testing
 
 @Suite("Deterministic local search")
 struct DeterministicSearchIndexTests {
+    @Test("Opaque search identities preserve punctuation and stable-ID field boundaries")
+    func opaqueDocumentIdentity() {
+        #expect(SearchDocumentID("a-b") != SearchDocumentID("a b"))
+        let accessibility = MenuBarItemID(
+            bundleIdentifier: "com.example.clock",
+            accessibilityIdentifier: "clock"
+        )
+        let title = MenuBarItemID(
+            bundleIdentifier: "com.example.clock",
+            title: "clock"
+        )
+        #expect(accessibility.description == title.description)
+        #expect(accessibility.searchDocumentID != title.searchDocumentID)
+        #expect(accessibility.searchDocumentID.value.contains("accessibility:5:clock"))
+    }
+
     @Test("Ranks exact aliases, titles, prefixes, and fuzzy matches")
     func textRanking() throws {
         let index = try makeIndex()

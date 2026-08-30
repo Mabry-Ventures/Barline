@@ -5,6 +5,21 @@
 
 import Foundation
 
+public enum ProfileColorHex {
+    public static func canonical(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digits = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
+        guard digits.count == 6 || digits.count == 8,
+              digits.allSatisfy(\.isHexDigit)
+        else { return trimmed }
+        let uppercased = digits.uppercased()
+        if uppercased.count == 8, uppercased.hasSuffix("FF") {
+            return "#\(uppercased.dropLast(2))"
+        }
+        return "#\(uppercased)"
+    }
+}
+
 public enum ProfileSchema {
     public static let currentVersion = 7
     public static let archiveFormatVersion = 1
@@ -116,16 +131,20 @@ public struct ProfileAppearance: Codable, Hashable, Sendable {
         dynamicAppearance: ProfileDynamicAppearance? = nil,
         isDynamic: Bool = false
     ) {
-        self.tintHex = tintHex
+        self.tintHex = tintHex.map(ProfileColorHex.canonical)
         let resolvedStops = if let gradientStops, !gradientStops.isEmpty || gradientHex.isEmpty {
             gradientStops
         } else {
             ProfileGradientStop.evenlySpaced(colors: gradientHex)
         }
-        self.gradientHex = resolvedStops.isEmpty ? gradientHex : resolvedStops.map(\.colorHex)
-        self.gradientStops = resolvedStops
+        self.gradientStops = resolvedStops.map {
+            ProfileGradientStop(colorHex: $0.colorHex, location: $0.location)
+        }
+        self.gradientHex = self.gradientStops.isEmpty
+            ? gradientHex.map(ProfileColorHex.canonical)
+            : self.gradientStops.map(\.colorHex)
         self.showsBorder = showsBorder
-        self.borderHex = borderHex
+        self.borderHex = ProfileColorHex.canonical(borderHex)
         self.borderWidth = borderWidth
         self.showsShadow = showsShadow
         self.shape = shape
@@ -193,7 +212,7 @@ public struct ProfileGradientStop: Codable, Hashable, Sendable {
     public var location: Double
 
     public init(colorHex: String, location: Double) {
-        self.colorHex = colorHex
+        self.colorHex = ProfileColorHex.canonical(colorHex)
         self.location = location
     }
 
@@ -519,16 +538,20 @@ public struct ProfileAppearanceMode: Codable, Hashable, Sendable {
         borderWidth: Double = 1,
         showsShadow: Bool = false
     ) {
-        self.tintHex = tintHex
+        self.tintHex = tintHex.map(ProfileColorHex.canonical)
         let resolvedStops = if let gradientStops, !gradientStops.isEmpty || gradientHex.isEmpty {
             gradientStops
         } else {
             ProfileGradientStop.evenlySpaced(colors: gradientHex)
         }
-        self.gradientHex = resolvedStops.isEmpty ? gradientHex : resolvedStops.map(\.colorHex)
-        self.gradientStops = resolvedStops
+        self.gradientStops = resolvedStops.map {
+            ProfileGradientStop(colorHex: $0.colorHex, location: $0.location)
+        }
+        self.gradientHex = self.gradientStops.isEmpty
+            ? gradientHex.map(ProfileColorHex.canonical)
+            : self.gradientStops.map(\.colorHex)
         self.showsBorder = showsBorder
-        self.borderHex = borderHex
+        self.borderHex = ProfileColorHex.canonical(borderHex)
         self.borderWidth = borderWidth
         self.showsShadow = showsShadow
     }
@@ -829,19 +852,20 @@ public struct PresentationProfileTemplateBuilder: Sendable {
         now: Date = Date(),
         id: UUID = Self.profileID
     ) -> PresentationProfileTemplate {
-        let ordered = snapshot.items.sorted { lhs, rhs in
-            if lhs.section != rhs.section {
-                return lhs.section.rawValue < rhs.section.rawValue
-            }
-            return lhs.order < rhs.order
+        let ordered = snapshot.items.sorted { $0.order < $1.order }
+        let isEssential: (MenuBarItemDescriptor) -> Bool = {
+            $0.isSystemItem || $0.isBarlineControlItem
         }
-        let essential = ordered.filter { $0.isSystemItem || $0.isBarlineControlItem }.map(\.id)
-        let utilities = ordered.filter { !$0.isSystemItem && !$0.isBarlineControlItem }.map(\.id)
+        let visible = ordered.filter { isEssential($0) && $0.section == .visible }.map(\.id)
+        let hidden = ordered.filter {
+            $0.section == .hidden || (!isEssential($0) && $0.section == .visible)
+        }.map(\.id)
+        let alwaysHidden = ordered.filter { $0.section == .alwaysHidden }.map(\.id)
         let profile = BarlineProfile(
             id: id,
             name: "Presentation",
             symbol: "rectangle.on.rectangle",
-            layout: ProfileLayout(visible: essential, hidden: utilities),
+            layout: ProfileLayout(visible: visible, hidden: hidden, alwaysHidden: alwaysHidden),
             revealTriggers: ProfileRevealTriggers(click: true, hover: false, scroll: false),
             autoRehide: ProfileAutoRehide(isEnabled: true, delaySeconds: 5),
             applicationMenuOverlapBehavior: .hideWhenNeeded,
