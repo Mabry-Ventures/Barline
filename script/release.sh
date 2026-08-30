@@ -108,27 +108,10 @@ if ! "$UNSIGNED"; then
     INTENTS_PROFILE="$(require_setting BARLINE_INTENTS_PROVISIONING_PROFILE_SPECIFIER)"
     CERTIFICATE_SHA1="$(require_setting BARLINE_DEVELOPER_ID_CERTIFICATE_SHA1)"
 fi
-SHA_VALUE="$SHA" \
-UNSIGNED_VALUE="$UNSIGNED" \
-APP_BUNDLE_ID_VALUE="$APP_BUNDLE_ID" \
-HELPER_BUNDLE_ID_VALUE="$HELPER_BUNDLE_ID" \
-INTENTS_BUNDLE_ID_VALUE="$INTENTS_BUNDLE_ID" \
-APP_GROUP_ID_VALUE="$APP_GROUP_ID" \
-/usr/bin/ruby -rjson -e '
-  document = {
-    commit_sha: ENV.fetch("SHA_VALUE"),
-    configuration: "Release",
-    architecture: "arm64",
-    distribution: ENV.fetch("UNSIGNED_VALUE") == "true" ? "unsigned" : "developer-id",
-    identifiers: {
-      application: ENV.fetch("APP_BUNDLE_ID_VALUE"),
-      menu_service: ENV.fetch("HELPER_BUNDLE_ID_VALUE"),
-      intents_extension: ENV.fetch("INTENTS_BUNDLE_ID_VALUE"),
-      app_group: ENV.fetch("APP_GROUP_ID_VALUE")
-    }
-  }
-  File.write(ARGV.fetch(0), JSON.pretty_generate(document) + "\n")
-' "$RELEASE_ROOT/build-metadata.json"
+DISTRIBUTION="developer-id"
+"$UNSIGNED" && DISTRIBUTION="unsigned"
+/usr/bin/ruby "$ROOT/script/generate-release-build-metadata.rb" \
+    "$RAW_BUILD_SETTINGS_JSON" "$RELEASE_ROOT/build-metadata.json" "$SHA" "$DISTRIBUTION"
 archive_arguments=(
     -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release
     -destination 'generic/platform=macOS' -archivePath "$ARCHIVE"
