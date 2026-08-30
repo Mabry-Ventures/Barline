@@ -1,3 +1,8 @@
+//
+//  BarlineUITests.swift
+//  Barline
+//
+
 import XCTest
 
 final class BarlineUITests: XCTestCase {
@@ -5,6 +10,7 @@ final class BarlineUITests: XCTestCase {
     func testFixtureExposesDeterministicAccessibilitySurface() {
         let app = XCUIApplication()
         app.launchEnvironment["BARLINE_FIXTURE_MODE"] = "ui-test"
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["fixture-title"].waitForExistence(timeout: 5))

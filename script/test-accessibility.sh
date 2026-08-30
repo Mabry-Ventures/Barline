@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/barline-accessibility.XXXXXX")"
 APP="$DERIVED_DATA/Build/Products/Debug/BarlineFixture.app"
 MODULE_CACHE="${TMPDIR:-/tmp}/barline-accessibility-module-cache"
-AUDIT_APP="$ROOT/.artifacts/tools/BarlineAccessibilityAudit.app"
+AUDIT_APP="${BARLINE_ACCESSIBILITY_AUDIT_APP:-${HOME}/Library/Application Support/Barline/Testing/BarlineAccessibilityAudit.app}"
 BINARY="$AUDIT_APP/Contents/MacOS/BarlineAccessibilityAudit"
 
 cleanup() {
