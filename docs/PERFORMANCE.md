@@ -21,8 +21,11 @@ implementation SHA is committed and clean.
 The default `./script/ci.sh soak` remains a short development smoke. Release
 preparation uses `./script/ci.sh soak --release`, which defaults to a bounded
 1,800-second run against an actual Release build. It sends a standard production
-Apple `reopen` event and measures the synchronous application response rather
-than invoking the Debug-only runtime bridge. It repeatedly executes
+Apple `reopen` event and measures Settings presentation separately from the
+completion of compatibility recovery rather than invoking the Debug-only
+runtime bridge. The 250 ms budget applies only to visible feedback; recovery
+success and latency remain separately reported and bounded by the request
+timeout. It repeatedly executes
 snapshot/state/profile/search tests in SwiftPM's Release configuration,
 requires XPC helper replacement while preserving the app PID, and samples
 app/helper RSS and CPU plus Barline cache size. A changed app PID invalidates

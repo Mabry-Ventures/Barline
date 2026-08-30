@@ -16,10 +16,15 @@ hooks. Bootstrap never uses `sudo` or changes the global Xcode selection.
 - `./script/ci.sh fast` resolves dependencies, checks changed Swift formatting,
   runs strict SwiftLint, builds/tests BarlineCore with coverage, validates the
   Xcode project, and runs the same repository hygiene used on Linux.
-- `./script/ci.sh full` adds the architecture firewall, unsigned Debug/Release
-  builds, analysis, explicit test-plan build plus unit/integration execution,
-  regression fixtures, XPC interruption, UI smoke, XCUITest, accessibility,
-  support-bundle privacy, and performance smoke.
+- `./script/ci.sh nonfocus` adds the architecture firewall, unsigned
+  Debug/Release builds, analysis, explicit test-plan build plus unit/integration
+  execution, regression fixtures, XCUITest against `BarlineFixture`,
+  accessibility, and support-bundle privacy without activating production
+  Barline.
+- `./script/ci.sh full` adds production XPC interruption, UI smoke, performance,
+  and reopen-burst gates. These gates can present or activate production
+  Barline and require an interactive validation session where focus changes are
+  acceptable.
 - `./script/ci.sh release` runs full and then the clean-candidate unsigned
   archive/topology release dry run. Credentialed signing and publication remain
   separate external gates.
@@ -45,11 +50,13 @@ the product exporter and source/logging boundary.
 
 ## Commit status publishing
 
-`./script/ci.sh full --publish-status` requires a clean worktree and existing
-GitHub CLI authentication. It publishes `local/macos-arm64` through the commit
-status API for the captured SHA, verifies HEAD is unchanged, and cannot publish
-success if any required gate was missing or failed. Xcode 27 uses the optional
-`local/macos27-beta` context until final runtime validation supports renaming it.
+`./script/ci.sh full --publish-status` and the corresponding `xcode27` mode
+require a clean worktree and existing GitHub CLI authentication. Full publishes
+`local/macos-arm64` through the commit status API for the captured SHA, verifies
+HEAD is unchanged, and cannot publish success if any required gate was missing
+or failed. The non-focus lane cannot publish this protected success context.
+Xcode 27 uses the optional `local/macos27-beta` context until final runtime
+validation supports renaming it.
 
 Hook bypass is possible with Git's documented `--no-verify` flag for an
 emergency, but the reason and replacement evidence must be recorded in the PR.
