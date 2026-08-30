@@ -40,6 +40,8 @@ development line and are not release certification.
 - Menu-bar restoration now uses global cross-display planning, section-relative
   postconditions, explicit stable destination-display targeting,
   already-correct no-op handling, and monotonic helper generation rebasing.
+- Release evidence now preserves a strict build-metadata whitelist instead of
+  raw Xcode settings containing machine paths or signing configuration.
 
 ### Release boundaries
 

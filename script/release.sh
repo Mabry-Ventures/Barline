@@ -11,6 +11,7 @@ RELEASE_DERIVED_DATA="$RELEASE_ROOT/DerivedData"
 SIGNING_SCRATCH=""
 EXPORT_PATH=""
 EXPORT_OPTIONS=""
+RAW_BUILD_SETTINGS_JSON=""
 UNSIGNED=false
 NOTARY_PROFILE="${BARLINE_NOTARY_PROFILE:-}"
 SPARKLE_ACCOUNT="${BARLINE_SPARKLE_ACCOUNT:-mabry-ventures-barline}"
@@ -51,6 +52,12 @@ validate_exact_candidate() {
 
 validate_exact_candidate
 
+cleanup() {
+    [[ -z "$RAW_BUILD_SETTINGS_JSON" ]] || /bin/rm -f -- "$RAW_BUILD_SETTINGS_JSON"
+    [[ -z "$SIGNING_SCRATCH" ]] || /bin/rm -rf -- "$SIGNING_SCRATCH"
+}
+trap cleanup EXIT
+
 if ! "$UNSIGNED"; then
     [[ -n "$NOTARY_PROFILE" ]] || { printf 'error: signed release requires --notary-profile or BARLINE_NOTARY_PROFILE\n' >&2; exit 2; }
     SIGNING_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/barline-release.${SHA}.XXXXXX")"
@@ -58,7 +65,6 @@ if ! "$UNSIGNED"; then
     RELEASE_DERIVED_DATA="$SIGNING_SCRATCH/DerivedData"
     EXPORT_PATH="$SIGNING_SCRATCH/Export"
     EXPORT_OPTIONS="$SIGNING_SCRATCH/ExportOptions.plist"
-    trap '[[ -z "$SIGNING_SCRATCH" ]] || /bin/rm -rf -- "$SIGNING_SCRATCH"' EXIT
 fi
 
 for command in xcodebuild codesign ditto plutil ruby shasum security openssl base64 date; do
@@ -69,14 +75,19 @@ for required in LICENSE NOTICE.md THIRD_PARTY_NOTICES.md PRIVACY.md SECURITY.md 
 done
 
 mkdir -p "$RELEASE_ROOT"
-/bin/rm -rf "$ARCHIVE" "$RELEASE_DERIVED_DATA" "$RELEASE_ROOT/distribution-boundaries.json"
-BUILD_SETTINGS_JSON="$RELEASE_ROOT/build-settings.json"
+/bin/rm -rf \
+    "$ARCHIVE" \
+    "$RELEASE_DERIVED_DATA" \
+    "$RELEASE_ROOT/build-settings.json" \
+    "$RELEASE_ROOT/build-metadata.json" \
+    "$RELEASE_ROOT/distribution-boundaries.json"
+RAW_BUILD_SETTINGS_JSON="$(mktemp "${TMPDIR:-/tmp}/barline-build-settings.${SHA}.XXXXXX")"
 env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
     -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release \
-    -showBuildSettings -json > "$BUILD_SETTINGS_JSON"
+    -showBuildSettings -json > "$RAW_BUILD_SETTINGS_JSON"
 setting() {
     /usr/bin/ruby -rjson -e 'puts JSON.parse(File.read(ARGV.fetch(0))).fetch(0).fetch("buildSettings").fetch(ARGV.fetch(1), "")' \
-        "$BUILD_SETTINGS_JSON" "$1"
+        "$RAW_BUILD_SETTINGS_JSON" "$1"
 }
 require_setting() {
     local name="$1" value
@@ -97,6 +108,27 @@ if ! "$UNSIGNED"; then
     INTENTS_PROFILE="$(require_setting BARLINE_INTENTS_PROVISIONING_PROFILE_SPECIFIER)"
     CERTIFICATE_SHA1="$(require_setting BARLINE_DEVELOPER_ID_CERTIFICATE_SHA1)"
 fi
+SHA_VALUE="$SHA" \
+UNSIGNED_VALUE="$UNSIGNED" \
+APP_BUNDLE_ID_VALUE="$APP_BUNDLE_ID" \
+HELPER_BUNDLE_ID_VALUE="$HELPER_BUNDLE_ID" \
+INTENTS_BUNDLE_ID_VALUE="$INTENTS_BUNDLE_ID" \
+APP_GROUP_ID_VALUE="$APP_GROUP_ID" \
+/usr/bin/ruby -rjson -e '
+  document = {
+    commit_sha: ENV.fetch("SHA_VALUE"),
+    configuration: "Release",
+    architecture: "arm64",
+    distribution: ENV.fetch("UNSIGNED_VALUE") == "true" ? "unsigned" : "developer-id",
+    identifiers: {
+      application: ENV.fetch("APP_BUNDLE_ID_VALUE"),
+      menu_service: ENV.fetch("HELPER_BUNDLE_ID_VALUE"),
+      intents_extension: ENV.fetch("INTENTS_BUNDLE_ID_VALUE"),
+      app_group: ENV.fetch("APP_GROUP_ID_VALUE")
+    }
+  }
+  File.write(ARGV.fetch(0), JSON.pretty_generate(document) + "\n")
+' "$RELEASE_ROOT/build-metadata.json"
 archive_arguments=(
     -project "$ROOT/Barline.xcodeproj" -scheme Barline -configuration Release
     -destination 'generic/platform=macOS' -archivePath "$ARCHIVE"
