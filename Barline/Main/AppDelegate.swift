@@ -12,6 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenRecoveryGenerationKey = "ReopenRecoveryGeneration"
     private static let reopenRecoveryFailureKey = "ReopenRecoveryFailure"
     private static let reopenRecoverySucceededKey = "ReopenRecoverySucceeded"
+    private static let reopenProbeBaselineGenerationKey = "ReopenProbeBaselineGeneration"
+    private static let reopenProbeHideSettingsNotification = Notification.Name(
+        "com.mabryventures.Barline.reopen-probe.hide-settings"
+    )
     /// The shared app state.
     let appState = AppState()
 
@@ -44,6 +48,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // menu bar when we are the focused app.
         for item in NSApp.mainMenu?.items ?? [] {
             item.isHidden = true
+        }
+
+        if CommandLine.arguments.contains("--barline-reopen-probe") {
+            DistributedNotificationCenter.default().addObserver(
+                self,
+                selector: #selector(hideSettingsForReopenProbe),
+                name: Self.reopenProbeHideSettingsNotification,
+                object: nil
+            )
         }
 
         // Allow hiding the mouse while the app is in the background
@@ -130,8 +143,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await appState.profileManager.reconcileActiveProfileAuthority()
         } catch {
             succeeded = false
-            failureDescription = String(describing: error)
-            Logger.default.error("Compatibility refresh on reopen failed: \(error)")
+            failureDescription = recoveryFailureCategory(for: error)
+            Logger.default.error(
+                "Compatibility refresh on reopen failed: \(failureDescription ?? "unknown", privacy: .public)"
+            )
         }
         let visibilityDeadline = ContinuousClock.now + .seconds(1)
         while ContinuousClock.now < visibilityDeadline,
@@ -190,6 +205,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsOpenTask = nil
             appState.activate(withPolicy: .regular)
             appState.openWindow(.settings)
+        }
+    }
+
+    /// Establishes a hidden-window baseline for the explicit local reopen probe.
+    /// The launch argument keeps this test-only control unavailable in normal use.
+    @objc private func hideSettingsForReopenProbe() {
+        guard CommandLine.arguments.contains("--barline-reopen-probe") else {
+            return
+        }
+        settingsOpenTask?.cancel()
+        settingsOpenTask = nil
+        for window in NSApp.windows where
+            window.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue
+        {
+            window.orderOut(nil)
+        }
+        appState.deactivate(withPolicy: .accessory)
+        let defaults = UserDefaults.standard
+        defaults.set(
+            defaults.integer(forKey: Self.reopenProbeBaselineGenerationKey) + 1,
+            forKey: Self.reopenProbeBaselineGenerationKey
+        )
+        defaults.synchronize()
+    }
+
+    private func recoveryFailureCategory(for error: Error) -> String {
+        guard let backendError = error as? MenuBarBackendError else {
+            return "unexpected-error"
+        }
+        return switch backendError {
+        case .unavailableCapability:
+            "unavailable-capability"
+        case .staleItem:
+            "stale-item"
+        case .unsafeMenuTracking:
+            "unsafe-menu-tracking"
+        case let .invalidSnapshot(reason):
+            snapshotRejectionCategory(reason)
+        case .interrupted:
+            "interrupted"
+        case .timedOut:
+            "timed-out"
+        case .operationFailed:
+            "operation-failed"
+        }
+    }
+
+    private func snapshotRejectionCategory(_ reason: SnapshotRejectionReason) -> String {
+        switch reason {
+        case .missingDisplayGeometry: "invalid-snapshot-missing-display-geometry"
+        case .invalidActiveSpace: "invalid-snapshot-active-space"
+        case .staleSnapshot: "invalid-snapshot-stale"
+        case .futureDatedSnapshot: "invalid-snapshot-future-dated"
+        case .unknownItemDisplay: "invalid-snapshot-unknown-item-display"
+        case .displayIdentitySetMismatch: "invalid-snapshot-display-identity-set"
+        case .duplicateDisplayIdentity: "invalid-snapshot-duplicate-display"
+        case .malformedDisplayFingerprint: "invalid-snapshot-display-fingerprint"
+        case .duplicateItemIdentity: "invalid-snapshot-duplicate-item"
+        case .unstableItemIdentity: "invalid-snapshot-unstable-item"
+        case .invalidItemGeometry: "invalid-snapshot-item-geometry"
+        case .missingRequiredControlItem: "invalid-snapshot-missing-control"
+        case .implausibleItemCountCollapse: "invalid-snapshot-item-collapse"
+        case .implausibleSystemItemCollapse: "invalid-snapshot-system-item-collapse"
+        case .emptySnapshot: "invalid-snapshot-empty"
+        case .nonMonotonicGeneration: "invalid-snapshot-generation"
         }
     }
 

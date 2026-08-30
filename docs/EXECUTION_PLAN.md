@@ -9,12 +9,12 @@ gate result.
 | 0. Import and provenance | Lead; delegated audit | Complete | none | Exact history, remotes, ancestor proof, vendor tag, license/provenance records |
 | 1. Baseline build and audit | Lead; delegated audits | Complete | M0 | Debug/Release/analyze/archive and policy scripts pass; permission-gated launch; result bundles |
 | 2. Rebrand and build system | Lead | Complete | M1 | Debug/Release/analyze pass; strict lint 0 violations; canonical Run verification pass |
-| 3. Core and compatibility firewall | Lead | Complete | M2 | 166 Core tests; strict source/binary firewall; helper generation rebasing, durable authority rehydration, and fail-closed recovery |
+| 3. Core and compatibility firewall | Lead | Complete | M2 | 167 Core tests; strict source/binary firewall; helper generation rebasing, durable authority rehydration, and fail-closed recovery |
 | 4. Fixture and local CI | Lead; delegated validation | Implemented; new exact-head rerun pending | M3 | real fixture/test targets and test plan; prior exact-head XCUITest passed without launching Barline; source changes require regeneration |
 | 5. Profiles and Focus | Lead | Implemented locally; system execution pending | M3–4 | configured app-group store, bounded import, transactional workspace/layout/presentation state, durable authority and Focus journals, conservative display reconnect; real Focus/Shortcuts requires signed runtime |
-| 6. Search and on-device interpretation | Lead | Complete for macOS 26 | M3–5 | collision-free opaque item identities, deterministic ranking, bounded Spotlight synchronization, cross-display metadata, 166 Core tests; macOS 27 tool remains gated |
+| 6. Search and on-device interpretation | Lead | Complete for macOS 26 | M3–5 | collision-free opaque item identities, deterministic ranking, bounded Spotlight synchronization, cross-display metadata, 167 Core tests; macOS 27 tool remains gated |
 | 7. UI and accessibility | Lead | Prior candidate passed; new exact-head rerun pending | M3–6 | profile UI, fixture UI, diagnostics review/save, and semantic accessibility audit; foreground Barline validation is excluded by the operator focus constraint |
-| 8. OS hardening | Lead | Non-focus integration implemented; new exact candidate/macOS 27 pending | M3–7 | coordinate-safe display matching, recovery and privacy gates; foreground reopen-to-visible p95 requires a dedicated session or host; Xcode/macOS 27 unavailable |
+| 8. OS hardening | Lead | Non-focus integration implemented; new exact candidate/macOS 27 pending | M3–7 | coordinate-safe display matching, categorized recovery diagnostics, and privacy gates; reopen samples now reset to a hidden Settings baseline, but foreground reopen-to-visible p95 requires a dedicated session or host; Xcode/macOS 27 unavailable |
 | 9. Distribution readiness | Lead | Prior candidate notarized; new exact-head evidence pending | M0–8 | prior exact candidate passed Developer ID export, notarization, stapling, Gatekeeper, Sparkle signing, and SBOM; identity is configuration-driven; all evidence must be regenerated after source changes |
 
 ## External boundaries currently known
