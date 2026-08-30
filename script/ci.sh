@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
 MODE="${1:-}"
-[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|full|release|xcode27|soak} [--release] [--publish-status] [--xcode PATH]"
+[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|nonfocus|full|release|xcode27|soak} [--release] [--publish-status] [--xcode PATH]"
 shift
 
 PUBLISH_STATUS=false
@@ -32,7 +32,7 @@ if "$RELEASE_SOAK" && [[ "$MODE" != soak ]]; then
 fi
 
 case "$MODE" in
-    fast|full|release|xcode27|soak) ;;
+    fast|nonfocus|full|release|xcode27|soak) ;;
     *) barline_die "unknown CI mode: $MODE" ;;
 esac
 
@@ -207,6 +207,14 @@ run_fast() {
 }
 
 run_full() {
+    run_nonfocus
+    require_gate_script ./script/test-xpc-interruption.sh
+    require_gate_script ./script/test-ui-smoke.sh
+    require_gate_script ./script/test-performance-smoke.sh
+    require_gate_script ./script/test-reopen-burst.sh
+}
+
+run_nonfocus() {
     run_fast
     run_step "architecture-firewall" ./script/ci/architecture_firewall.sh
     run_step "debug-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
@@ -240,18 +248,17 @@ run_full() {
     require_gate_script ./script/test-menu-bar-recovery.sh
     require_gate_script ./script/test-notch-overflow.sh
     require_gate_script ./script/test-fixtures.sh
-    require_gate_script ./script/test-xpc-interruption.sh
-    require_gate_script ./script/test-ui-smoke.sh
     require_gate_script ./script/test-xcode-ui.sh
     require_gate_script ./script/test-accessibility.sh
     require_gate_script ./script/test-support-bundle-privacy.sh
-    require_gate_script ./script/test-performance-smoke.sh
-    require_gate_script ./script/test-reopen-burst.sh
 }
 
 case "$MODE" in
     fast)
         run_fast
+        ;;
+    nonfocus)
+        run_nonfocus
         ;;
     full)
         run_full

@@ -218,7 +218,7 @@ write_summary() {
         /RESULT samples=(\d+) timeouts=(\d+) median_ms=([0-9.]+) p95_ms=([0-9.]+) max_ms=([0-9.]+).*verdict=(\w+)/
       )
       performance_latencies = File.read(ENV.fetch("PERFORMANCE_LOG_VALUE")).scan(
-        /^cycle=\d+ status=OK latency_ms=([0-9.]+)$/
+        /^cycle=\d+ status=OK latency_ms=([0-9.]+)/
       ).flatten.map(&:to_f).sort
       percentile = lambda do |values, fraction|
         next 0 if values.empty?

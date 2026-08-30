@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenProbeHideSettingsNotification = Notification.Name(
         "\(notificationPrefix).reopen-probe.hide-settings"
     )
+    private static let reopenProbePresentationNotification = Notification.Name(
+        "\(notificationPrefix).reopen-probe.presentation"
+    )
     /// The shared app state.
     let appState = AppState()
 
@@ -206,6 +209,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsOpenTask = nil
             appState.activate(withPolicy: .regular)
             appState.openWindow(.settings)
+            guard CommandLine.arguments.contains("--barline-reopen-probe") else {
+                return
+            }
+            let visibilityDeadline = ContinuousClock.now + .seconds(1)
+            while ContinuousClock.now < visibilityDeadline,
+                  !NSApp.windows.contains(where: {
+                      $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
+                  })
+            {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            guard NSApp.windows.contains(where: {
+                $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue && $0.isVisible
+            }) else {
+                return
+            }
+            DistributedNotificationCenter.default().postNotificationName(
+                Self.reopenProbePresentationNotification,
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
         }
     }
 

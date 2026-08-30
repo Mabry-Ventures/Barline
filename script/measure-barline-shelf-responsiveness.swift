@@ -59,6 +59,7 @@ private enum ProbeError: Error, CustomStringConvertible {
     case appleEventRejected(String)
     case recoveryFailed(String)
     case recoveryTimedOut
+    case presentationTimedOut
     case settingsBaselineTimedOut
     case barlineIconNotFound
     case unableToCloseBaseline
@@ -74,7 +75,9 @@ private enum ProbeError: Error, CustomStringConvertible {
         case let .recoveryFailed(reason):
             "The production reopen recovery reported failure: \(reason)"
         case .recoveryTimedOut:
-            "The app-owned production reopen and Settings confirmation did not complete"
+            "The production reopen recovery did not complete"
+        case .presentationTimedOut:
+            "The production reopen did not present Settings in time"
         case .settingsBaselineTimedOut:
             "The Settings window did not reach the hidden reopen-probe baseline"
         case .barlineIconNotFound:
@@ -122,11 +125,25 @@ private func establishHiddenSettingsBaseline(
 private func requestProductionReopen(
     processIdentifier: pid_t,
     timeout: Duration = Configuration.iconTimeout
-) throws -> Double {
+) throws -> (presentationMilliseconds: Double, recoveryMilliseconds: Double) {
     let recoveryGenerationKey = "ReopenRecoveryGeneration" as CFString
     let recoveryFailureKey = "ReopenRecoveryFailure" as CFString
     let recoverySucceededKey = "ReopenRecoverySucceeded" as CFString
     let applicationID = Configuration.appBundleIdentifier as CFString
+    let observationLock = NSLock()
+    var presentationObserved = false
+    let presentationObserver = DistributedNotificationCenter.default().addObserver(
+        forName: Configuration.notificationName("reopen-probe.presentation"),
+        object: nil,
+        queue: nil
+    ) { _ in
+        observationLock.withLock {
+            presentationObserved = true
+        }
+    }
+    defer {
+        DistributedNotificationCenter.default().removeObserver(presentationObserver)
+    }
     CFPreferencesAppSynchronize(applicationID)
     let startingGeneration = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
     guard processIsRunning(processIdentifier) else {
@@ -151,6 +168,17 @@ private func requestProductionReopen(
     else {
         throw ProbeError.applicationProcessChanged
     }
+    var presentationMilliseconds: Double?
+    while start.duration(to: .now) < timeout {
+        if observationLock.withLock({ presentationObserved }) {
+            presentationMilliseconds = milliseconds(start.duration(to: .now))
+            break
+        }
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+    }
+    guard let presentationMilliseconds else {
+        throw ProbeError.presentationTimedOut
+    }
     while start.duration(to: .now) < timeout {
         CFPreferencesAppSynchronize(applicationID)
         let generation = (CFPreferencesCopyAppValue(recoveryGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
@@ -160,9 +188,12 @@ private func requestProductionReopen(
                 let reason = CFPreferencesCopyAppValue(recoveryFailureKey, applicationID) as? String
                 throw ProbeError.recoveryFailed(reason ?? "unknown compatibility error")
             }
-            return milliseconds(start.duration(to: .now))
+            return (
+                presentationMilliseconds,
+                milliseconds(start.duration(to: .now))
+            )
         }
-        usleep(Configuration.pollingIntervalMicroseconds)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
     }
     throw ProbeError.recoveryTimedOut
 }
@@ -309,25 +340,38 @@ do {
             _ = try requestProductionReopen(processIdentifier: processIdentifier, timeout: timeout)
         }
         var latencies = [Double]()
+        var recoveryLatencies = [Double]()
         for cycle in 1 ... Configuration.measuredCycles {
             try establishHiddenSettingsBaseline(processIdentifier: processIdentifier)
-            let latency = try requestProductionReopen(processIdentifier: processIdentifier)
-            latencies.append(latency)
-            print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
+            let result = try requestProductionReopen(processIdentifier: processIdentifier)
+            latencies.append(result.presentationMilliseconds)
+            recoveryLatencies.append(result.recoveryMilliseconds)
+            print(
+                String(
+                    format: "cycle=%02d status=OK latency_ms=%.1f recovery_ms=%.1f",
+                    cycle,
+                    result.presentationMilliseconds,
+                    result.recoveryMilliseconds
+                )
+            )
         }
         let median = percentile(latencies, 0.50)
         let p95 = percentile(latencies, 0.95)
         let maximum = latencies.max() ?? 0
+        let recoveryP95 = percentile(recoveryLatencies, 0.95)
+        let recoveryMaximum = recoveryLatencies.max() ?? 0
         let budgetMilliseconds = milliseconds(Configuration.feedbackBudget)
         let passed = p95 <= budgetMilliseconds
         let verdict = passed ? "PASS" : (Configuration.enforceBudget ? "FAIL" : "OBSERVED")
         print(
             String(
-                format: "RESULT samples=%d timeouts=0 median_ms=%.1f p95_ms=%.1f max_ms=%.1f feedback_in_250ms=%@ silent_cancellation=false verdict=%@",
+                format: "RESULT samples=%d timeouts=0 median_ms=%.1f p95_ms=%.1f max_ms=%.1f recovery_p95_ms=%.1f recovery_max_ms=%.1f recovery_succeeded=true feedback_in_250ms=%@ silent_cancellation=false verdict=%@",
                 latencies.count,
                 median,
                 p95,
                 maximum,
+                recoveryP95,
+                recoveryMaximum,
                 passed.description,
                 verdict
             )
