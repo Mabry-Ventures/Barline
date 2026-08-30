@@ -34,6 +34,23 @@ rg -q 'let initialAccessibilityPermission = permissions\.accessibility\.hasPermi
 rg -q 'startsEnabled: initialAccessibilityPermission' "$ROOT/Barline/Main/AppState.swift"
 rg -q 'accessibilityIdentifier\("degraded-mode-banner"\)' "$ROOT/Barline/Settings/SettingsView.swift"
 
+# Background sampling must preflight permission without invoking any request API.
+screen_capture_body="$(sed -n '/static func captureMenuBarBackground(/,/^    }/p' \
+    "$ROOT/Barline/Utilities/ScreenCapture.swift")"
+guard_line="$(printf '%s\n' "$screen_capture_body" | rg -n 'guard checkPermissions\(\)' | cut -d: -f1)"
+request_line="$(printf '%s\n' "$screen_capture_body" | rg -n 'Connection\.shared\.captureBackground' | cut -d: -f1)"
+[[ -n "$guard_line" && -n "$request_line" && "$guard_line" -lt "$request_line" ]] || {
+    printf 'error: background capture must preflight Screen Recording before XPC\n' >&2
+    exit 1
+}
+if printf '%s\n' "$screen_capture_body" | rg -q \
+    'requestPermissions|CGRequestScreenCaptureAccess|SCShareableContent'; then
+    printf 'error: background capture contains a Screen Recording request API\n' >&2
+    exit 1
+fi
+rg -q 'request: \{' "$ROOT/Barline/Permissions/Permission.swift"
+rg -q 'ScreenCapture\.requestPermissions\(\)' "$ROOT/Barline/Permissions/Permission.swift"
+
 env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
     -project "$ROOT/Barline.xcodeproj" -scheme BarlineFixture -configuration Debug \
     -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" \

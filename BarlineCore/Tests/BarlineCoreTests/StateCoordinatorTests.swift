@@ -503,6 +503,254 @@ struct StateCoordinatorTests {
         #expect(await backend.restoredSnapshots.isEmpty)
     }
 
+    @Test("Activation checkpoint receives the resolved target before side effects")
+    func preparesResolvedActivationCheckpointBeforeMutation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let freshBefore = makeSnapshot(generation: 2, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(119),
+            name: "Prepared",
+            layout: ProfileLayout(hidden: before.items.map(\.id))
+        )
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: original)
+        let backend = FakeBackend(snapshots: [before, freshBefore])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: before.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.self) {
+            try await coordinator.activate(
+                profile: profile,
+                now: freshBefore.capturedAt,
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await recorder.capture() },
+                    apply: { try await recorder.apply($0) }
+                ),
+                prepareCheckpoint: { checkpoint, presentation in
+                    #expect(checkpoint.snapshot == freshBefore)
+                    #expect(checkpoint.workspace == original)
+                    #expect(presentation == profile.resolvedPresentation(using: nil))
+                    #expect(await recorder.values.isEmpty)
+                    #expect(await backend.moveOperations.isEmpty)
+                    throw MenuBarBackendError.operationFailed("simulated persistence failure")
+                }
+            )
+        }
+
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Pending activation promotes an exactly applied target without mutation")
+    func promotesCompletedPendingActivation() async throws {
+        let originalSnapshot = makeSnapshot(generation: 1, count: 2)
+        let layout = ProfileLayout(hidden: originalSnapshot.items.map(\.id))
+        let liveTarget = makeProfileSnapshot(generation: 2, layout: layout)
+        let profile = BarlineProfile(id: UUID(118), name: "Pending", layout: layout)
+        let presentation = profile.resolvedPresentation(using: nil)
+        var targetWorkspace = ProfileWorkspaceState(profile: profile)
+        targetWorkspace.presentation = presentation
+        let originalWorkspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: originalSnapshot,
+            activeProfileID: nil,
+            workspace: originalWorkspace
+        )
+        let recorder = WorkspaceRecorder(initial: targetWorkspace)
+        let backend = FakeBackend(snapshots: [liveTarget])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let result = try await coordinator.recoverPendingProfileActivation(
+            profile: profile,
+            persistedPresentation: presentation,
+            checkpoint: checkpoint,
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { await recorder.capture() },
+                apply: { try await recorder.apply($0) }
+            ),
+            now: liveTarget.capturedAt
+        )
+
+        #expect(result == .promoted(presentation))
+        #expect(await coordinator.activeProfileID == profile.id)
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
+    @Test("Pending partial activation restores the durable checkpoint")
+    func restoresPartialPendingActivation() async throws {
+        let originalSnapshot = makeSnapshot(generation: 1, count: 2)
+        let targetLayout = ProfileLayout(hidden: originalSnapshot.items.map(\.id))
+        let partialLayout = ProfileLayout(
+            visible: [originalSnapshot.items[1].id],
+            hidden: [originalSnapshot.items[0].id]
+        )
+        let partialSnapshot = makeProfileSnapshot(generation: 2, layout: partialLayout)
+        let restoredSnapshot = makeSnapshot(generation: 3, count: 2)
+        let profile = BarlineProfile(id: UUID(117), name: "Pending", layout: targetLayout)
+        let presentation = profile.resolvedPresentation(using: nil)
+        var partialWorkspace = ProfileWorkspaceState(profile: profile)
+        partialWorkspace.presentation = presentation
+        let originalWorkspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: originalSnapshot,
+            activeProfileID: nil,
+            workspace: originalWorkspace
+        )
+        let recorder = WorkspaceRecorder(initial: partialWorkspace)
+        let backend = FakeBackend(snapshots: [partialSnapshot, restoredSnapshot])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let result = try await coordinator.recoverPendingProfileActivation(
+            profile: profile,
+            persistedPresentation: presentation,
+            checkpoint: checkpoint,
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { await recorder.capture() },
+                apply: { try await recorder.apply($0) }
+            ),
+            now: partialSnapshot.capturedAt
+        )
+
+        #expect(result == .restored(restoredSnapshot))
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await recorder.values == [originalWorkspace])
+        #expect(await backend.restoredSnapshots == [originalSnapshot])
+    }
+
+    @Test("Pending no-op activation accepts the original state without mutation")
+    func acceptsUnchangedPendingActivation() async throws {
+        let originalSnapshot = makeSnapshot(generation: 1, count: 2)
+        let liveOriginal = makeSnapshot(generation: 2, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(116),
+            name: "Pending",
+            layout: ProfileLayout(hidden: originalSnapshot.items.map(\.id))
+        )
+        let originalWorkspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: originalSnapshot,
+            activeProfileID: nil,
+            workspace: originalWorkspace
+        )
+        let recorder = WorkspaceRecorder(initial: originalWorkspace)
+        let backend = FakeBackend(snapshots: [liveOriginal])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let result = try await coordinator.recoverPendingProfileActivation(
+            profile: profile,
+            persistedPresentation: profile.resolvedPresentation(using: nil),
+            checkpoint: checkpoint,
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { await recorder.capture() },
+                apply: { try await recorder.apply($0) }
+            ),
+            now: liveOriginal.capturedAt
+        )
+
+        #expect(result == .unchanged(liveOriginal))
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
+    @Test("Pending activation preserves unrelated live state")
+    func preservesUnrelatedPendingActivationState() async throws {
+        let originalSnapshot = makeSnapshot(generation: 1, count: 2)
+        let unrelatedLayout = ProfileLayout(alwaysHidden: originalSnapshot.items.map(\.id))
+        let unrelatedSnapshot = makeProfileSnapshot(generation: 2, layout: unrelatedLayout)
+        let profile = BarlineProfile(
+            id: UUID(115),
+            name: "Pending",
+            layout: ProfileLayout(hidden: originalSnapshot.items.map(\.id))
+        )
+        let originalWorkspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let unrelatedWorkspace = ProfileWorkspaceState(
+            profile: BarlineProfile(name: "Unrelated", layout: unrelatedLayout)
+        )
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: originalSnapshot,
+            activeProfileID: nil,
+            workspace: originalWorkspace
+        )
+        let recorder = WorkspaceRecorder(initial: unrelatedWorkspace)
+        let backend = FakeBackend(snapshots: [unrelatedSnapshot])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let result = try await coordinator.recoverPendingProfileActivation(
+            profile: profile,
+            persistedPresentation: profile.resolvedPresentation(using: nil),
+            checkpoint: checkpoint,
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { await recorder.capture() },
+                apply: { try await recorder.apply($0) }
+            ),
+            now: unrelatedSnapshot.capturedAt
+        )
+
+        #expect(result == .inconclusive)
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
+    @Test("Authority envelope survives every relaunch persistence boundary")
+    func persistsAuthorityEnvelopeAcrossRelaunchBoundaries() throws {
+        let suiteName = "com.mabryventures.Barline.tests.authority.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = "profileAuthority"
+        let snapshot = makeSnapshot(generation: 1, count: 2)
+        let profile = BarlineProfile(
+            id: UUID(114),
+            name: "Pending",
+            layout: ProfileLayout(hidden: snapshot.items.map(\.id))
+        )
+        let presentation = profile.resolvedPresentation(using: nil)
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: snapshot,
+            activeProfileID: nil,
+            workspace: ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        )
+        let token = UUID(113)
+        let pending = ProfileAuthorityEnvelope(
+            pendingFocusProfile: profile,
+            token: token,
+            presentation: presentation,
+            checkpoint: checkpoint,
+            priorAuthority: nil
+        )
+
+        try ProfileAuthorityEnvelopeStore(defaults: defaults, key: key).save(pending)
+        #expect(defaults.object(forKey: "focus.workspaceBeforeFocus") == nil)
+        #expect(ProfileAuthorityEnvelopeStore(defaults: defaults, key: key).load() == pending)
+        #expect(ProfileAuthorityEnvelopeStore(defaults: defaults, key: key).load() == pending)
+
+        let active = ProfileAuthorityEnvelope(active: ProfileActiveAuthority(
+            profileID: profile.id,
+            token: token,
+            presentation: presentation
+        ))
+        try ProfileAuthorityEnvelopeStore(defaults: defaults, key: key).save(active)
+        let relaunched = ProfileAuthorityEnvelopeStore(defaults: defaults, key: key)
+        #expect(relaunched.load() == active)
+        #expect(relaunched.load()?.activeAuthority?.token == token)
+    }
+
     @Test("Workspace settings commit and restore inside layout history")
     func restoresWorkspaceWithHistory() async throws {
         let before = makeSnapshot(generation: 1, count: 2)

@@ -60,6 +60,13 @@ public enum MenuBarConditionalRestoreResult: Sendable, Equatable {
     case superseded
 }
 
+public enum PendingProfileActivationRecoveryResult: Sendable, Equatable {
+    case promoted(ResolvedProfilePresentation)
+    case restored(MenuBarSnapshot)
+    case unchanged(MenuBarSnapshot)
+    case inconclusive
+}
+
 public enum MenuBarWorkspaceTransactionError: Error, Equatable, Sendable {
     case superseded
     case sideEffectRecoveryFailed
@@ -448,7 +455,9 @@ public actor MenuBarStateCoordinator {
         now: Date? = nil,
         expectedGeneration: UInt64? = nil,
         workspaceTransaction: MenuBarWorkspaceTransaction? = nil,
-        prepareCheckpoint: (@Sendable (MenuBarWorkspaceCheckpoint) async throws -> Void)? = nil
+        prepareCheckpoint: (
+            @Sendable (MenuBarWorkspaceCheckpoint, ResolvedProfilePresentation) async throws -> Void
+        )? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
@@ -532,7 +541,8 @@ public actor MenuBarStateCoordinator {
                     activeProfileID: priorProfileID,
                     activeDisplayID: workspaceBefore.presentation?.destinationDisplayID,
                     workspace: workspaceBefore
-                )
+                ),
+                presentation
             )
         }
         var targetWorkspace = ProfileWorkspaceState(profile: profile)
@@ -884,6 +894,94 @@ public actor MenuBarStateCoordinator {
         activeProfileID = profile.id
         lastKnownGoodProfileID = profile.id
         return resolvedPresentation
+    }
+
+    /// Resolves a crash-interrupted activation while holding the mutation turn.
+    /// An exactly applied target is promoted; every other valid in-flight state
+    /// is rolled back to the durable pre-activation checkpoint.
+    public func recoverPendingProfileActivation(
+        profile: BarlineProfile,
+        persistedPresentation: ResolvedProfilePresentation,
+        checkpoint: MenuBarWorkspaceCheckpoint,
+        workspaceTransaction: MenuBarWorkspaceTransaction,
+        now: Date? = nil
+    ) async throws -> PendingProfileActivationRecoveryResult {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try ProfileValidator().validate(profile)
+        try ProfileValidator().validate(checkpoint.workspace)
+        switch validator.validate(
+            checkpoint.snapshot,
+            previous: nil,
+            now: checkpoint.snapshot.capturedAt
+        ) {
+        case .success:
+            break
+        case let .failure(reason):
+            throw MenuBarBackendError.invalidSnapshot(reason)
+        }
+
+        let live = try await refreshedHistoryStartingCheckpoint(
+            workspaceTransaction: workspaceTransaction,
+            now: now
+        )
+        guard var liveWorkspace = live.workspace else {
+            throw MenuBarBackendError.operationFailed("workspace capture is unavailable")
+        }
+        if liveWorkspace == checkpoint.workspace,
+           logicalLayout(of: live.snapshot) == logicalLayout(of: checkpoint.snapshot),
+           live.snapshot.displayIDs == checkpoint.snapshot.displayIDs
+        {
+            activeProfileID = checkpoint.activeProfileID
+            lastKnownGoodProfileID = checkpoint.activeProfileID
+            return .unchanged(live.snapshot)
+        }
+        guard liveWorkspace.presentation == persistedPresentation,
+              let resolvedPresentation = DisplayProfileOverrideResolver()
+              .resolvePersistedPresentation(
+                  profile: profile,
+                  persisted: persistedPresentation,
+                  snapshot: live.snapshot
+              )
+        else {
+            return .inconclusive
+        }
+        liveWorkspace.presentation = resolvedPresentation
+        let liveCheckpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: live.snapshot,
+            activeProfileID: profile.id,
+            activeDisplayID: resolvedPresentation.destinationDisplayID,
+            workspace: liveWorkspace
+        )
+        if ProfileAuthorityMatcher.matches(profile: profile, checkpoint: liveCheckpoint) {
+            activeProfileID = profile.id
+            lastKnownGoodProfileID = profile.id
+            return .promoted(resolvedPresentation)
+        }
+        var targetWorkspace = ProfileWorkspaceState(profile: profile)
+        targetWorkspace.presentation = resolvedPresentation
+        guard liveWorkspace == targetWorkspace else {
+            return .inconclusive
+        }
+
+        let target = HistoryCheckpoint(
+            snapshot: checkpoint.snapshot,
+            activeProfileID: checkpoint.activeProfileID,
+            workspace: checkpoint.workspace,
+            workspaceRevision: nil
+        )
+        let restored = try await restoreHistoryCheckpoint(
+            target,
+            previous: live,
+            now: now,
+            workspaceTransaction: workspaceTransaction
+        )
+        recordUndoCheckpoint(
+            live.snapshot,
+            activeProfileID: live.activeProfileID,
+            workspace: live.workspace
+        )
+        return .restored(restored)
     }
 
     public func captureWorkspaceCheckpoint(
