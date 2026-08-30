@@ -99,7 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // available without Accessibility. Features that manage other apps'
         // status items request that grant only when the user chooses them.
         appState.performSetup()
-        if appState.permissions.permissionsState == .missing {
+        if appState.permissions.permissionsState == .missing,
+           !CommandLine.arguments.contains("--barline-reopen-probe")
+        {
             appState.permissions.logger.debug("Starting in degraded mode without Accessibility")
             openSettingsWindow()
         }
@@ -225,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsOpenTask = nil
             appState.activate(withPolicy: .regular)
             appState.openWindow(.settings)
+            bringSettingsWindowForward()
             guard acknowledgeReopenProbe || pendingReopenRecoveryCount > 0 else {
                 return
             }
@@ -232,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             while ContinuousClock.now < visibilityDeadline,
                   !isSettingsPresented()
             {
+                bringSettingsWindowForward()
                 do {
                     try await Task.sleep(for: .milliseconds(10))
                 } catch {
@@ -262,19 +266,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func bringSettingsWindowForward() {
+        guard let window = settingsWindow() else {
+            return
+        }
+        window.collectionBehavior.insert(.moveToActiveSpace)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func settingsWindow() -> NSWindow? {
+        NSApp.windows.first {
+            $0.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue
+        }
+    }
+
     private func isSettingsPresented() -> Bool {
         guard NSApp.isActive,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
         else {
             return false
         }
-        return NSApp.windows.contains { window in
-            window.identifier?.rawValue == BarlineWindowIdentifier.settings.rawValue &&
-                window.isVisible &&
-                window.isOnActiveSpace &&
-                window.occlusionState.contains(.visible) &&
-                (window.isKeyWindow || window.isMainWindow)
+        guard let window = settingsWindow() else {
+            return false
         }
+        return window.isVisible &&
+            window.isOnActiveSpace &&
+            (window.isKeyWindow || window.isMainWindow)
     }
 
     private func scheduleAccessoryDeactivation() {
@@ -312,7 +329,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {
             window.orderOut(nil)
         }
-        scheduleAccessoryDeactivation()
+        // The explicit probe is allowed to release focus immediately. Normal
+        // last-window handling keeps the one-second policy deferral so a user
+        // can reopen Settings without activation-policy churn.
+        appState.deactivate(withPolicy: .accessory)
         let defaults = UserDefaults.standard
         defaults.set(
             defaults.integer(forKey: Self.reopenProbeBaselineGenerationKey) + 1,
