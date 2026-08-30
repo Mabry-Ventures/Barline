@@ -45,6 +45,7 @@ private enum ProbeError: Error, CustomStringConvertible {
     case appleEventRejected(String)
     case recoveryFailed(String)
     case recoveryTimedOut
+    case settingsBaselineTimedOut
     case barlineIconNotFound
     case unableToCloseBaseline
 
@@ -60,12 +61,49 @@ private enum ProbeError: Error, CustomStringConvertible {
             "The production reopen recovery reported failure: \(reason)"
         case .recoveryTimedOut:
             "The app-owned production reopen and Settings confirmation did not complete"
+        case .settingsBaselineTimedOut:
+            "The Settings window did not reach the hidden reopen-probe baseline"
         case .barlineIconNotFound:
             "No on-screen Barline.ControlItem.Visible window was found"
         case .unableToCloseBaseline:
             "The Barline Bar could not be closed before measurement"
         }
     }
+}
+
+private func establishHiddenSettingsBaseline(
+    processIdentifier: pid_t,
+    timeout: Duration = Configuration.closeTimeout
+) throws {
+    let bundleIdentifier = "com.mabryventures.Barline"
+    let baselineGenerationKey = "ReopenProbeBaselineGeneration" as CFString
+    let applicationID = bundleIdentifier as CFString
+    CFPreferencesAppSynchronize(applicationID)
+    let startingGeneration =
+        (CFPreferencesCopyAppValue(baselineGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
+    guard processIsRunning(processIdentifier) else {
+        throw ProbeError.applicationNotRunning
+    }
+    DistributedNotificationCenter.default().postNotificationName(
+        Notification.Name("com.mabryventures.Barline.reopen-probe.hide-settings"),
+        object: nil,
+        userInfo: nil,
+        deliverImmediately: true
+    )
+    let start = ContinuousClock.now
+    while start.duration(to: .now) < timeout {
+        guard processIsRunning(processIdentifier) else {
+            throw ProbeError.applicationProcessChanged
+        }
+        CFPreferencesAppSynchronize(applicationID)
+        let generation =
+            (CFPreferencesCopyAppValue(baselineGenerationKey, applicationID) as? NSNumber)?.intValue ?? 0
+        if generation > startingGeneration {
+            return
+        }
+        usleep(Configuration.pollingIntervalMicroseconds)
+    }
+    throw ProbeError.settingsBaselineTimedOut
 }
 
 private func requestProductionReopen(
@@ -255,10 +293,12 @@ do {
             // completing setup and its initial XPC snapshot. Establish readiness
             // outside the measured window, then retain the strict timeout below.
             let timeout: Duration = warmup == 0 ? .seconds(30) : Configuration.iconTimeout
+            try establishHiddenSettingsBaseline(processIdentifier: processIdentifier)
             _ = try requestProductionReopen(processIdentifier: processIdentifier, timeout: timeout)
         }
         var latencies = [Double]()
         for cycle in 1 ... Configuration.measuredCycles {
+            try establishHiddenSettingsBaseline(processIdentifier: processIdentifier)
             let latency = try requestProductionReopen(processIdentifier: processIdentifier)
             latencies.append(latency)
             print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))

@@ -44,6 +44,11 @@ if git -C "$ROOT" grep -n -E -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----
     failures=$((failures + 1))
 fi
 
+if rg -q 'failureDescription = String\(describing: error\)' "$ROOT/Barline"; then
+    printf 'error: reopen recovery persists an unsanitized error description\n' >&2
+    failures=$((failures + 1))
+fi
+
 if ((failures == 0)); then
     swift build --package-path "$ROOT/BarlineCore"
     BIN_PATH="$(swift build --package-path "$ROOT/BarlineCore" --show-bin-path)"
