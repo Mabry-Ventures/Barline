@@ -180,8 +180,8 @@ INTENTS_ENTITLEMENTS="$RELEASE_ROOT/intents-entitlements.plist"
 codesign -d --entitlements - --xml "$APP" > "$APP_ENTITLEMENTS"
 codesign -d --entitlements - --xml "$INTENTS" > "$INTENTS_ENTITLEMENTS"
 for entitlements in "$APP_ENTITLEMENTS" "$INTENTS_ENTITLEMENTS"; do
-    plutil -extract com.apple.security.application-groups xml1 -o - "$entitlements" | grep -q 'group.com.mabryventures.Barline'
-    if plutil -extract com.apple.security.get-task-allow raw -o - "$entitlements" 2>/dev/null | grep -q true; then
+    plutil -extract 'com\.apple\.security\.application-groups' xml1 -o - "$entitlements" | grep -q 'group.com.mabryventures.Barline'
+    if plutil -extract 'com\.apple\.security\.get-task-allow' raw -o - "$entitlements" 2>/dev/null | grep -q true; then
         printf 'error: release entitlement contains get-task-allow: %s\n' "$entitlements" >&2
         exit 1
     fi
