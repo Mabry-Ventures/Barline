@@ -187,7 +187,7 @@ for entitlements in "$APP_ENTITLEMENTS" "$INTENTS_ENTITLEMENTS"; do
     fi
 done
 SIGNING_CERT_PREFIX="$SIGNING_SCRATCH/barline-signing-cert"
-codesign -d --extract-certificates "$SIGNING_CERT_PREFIX" "$APP"
+codesign -d "--extract-certificates=$SIGNING_CERT_PREFIX" "$APP"
 SIGNING_CERT_FINGERPRINT="$(openssl x509 -inform DER -in "${SIGNING_CERT_PREFIX}0" -noout -fingerprint -sha1 | cut -d= -f2)"
 
 validate_embedded_profile() {
