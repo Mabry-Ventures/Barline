@@ -89,6 +89,23 @@ if git grep -n -E -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'; then
     exit 1
 fi
 
+if grep -nE '^(RAW_)?BUILD_SETTINGS_JSON=.*RELEASE_ROOT' script/release.sh; then
+    printf 'error: raw Xcode build settings must not be preserved as release evidence\n' >&2
+    exit 1
+fi
+# These are literal release-script source invariants.
+# shellcheck disable=SC2016
+grep -Fq 'RAW_BUILD_SETTINGS_JSON="$(mktemp ' script/release.sh || {
+    printf 'error: release build settings must use temporary storage\n' >&2
+    exit 1
+}
+# These are literal release-script source invariants.
+# shellcheck disable=SC2016
+grep -Fq '"$RELEASE_ROOT/build-metadata.json"' script/release.sh || {
+    printf 'error: sanitized release build metadata evidence is missing\n' >&2
+    exit 1
+}
+
 executables=(
     script/bootstrap.sh
     script/build_and_run.sh
