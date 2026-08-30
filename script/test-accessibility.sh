@@ -6,7 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/barline-accessibility.XXXXXX")"
 APP="$DERIVED_DATA/Build/Products/Debug/BarlineFixture.app"
 MODULE_CACHE="${TMPDIR:-/tmp}/barline-accessibility-module-cache"
-BINARY="${TMPDIR:-/tmp}/barline-accessibility-audit"
+AUDIT_APP="$ROOT/.artifacts/tools/BarlineAccessibilityAudit.app"
+BINARY="$AUDIT_APP/Contents/MacOS/BarlineAccessibilityAudit"
 
 cleanup() {
     /usr/bin/pkill -x BarlineFixture >/dev/null 2>&1 || true
@@ -39,14 +40,18 @@ env DEVELOPER_DIR="${DEVELOPER_DIR:-$(xcode-select -p)}" xcodebuild \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO -quiet build
 /usr/bin/xattr -cr "$APP"
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP"
-/usr/bin/open -g -n "$APP"
-/bin/sleep 1
+/usr/bin/pkill -x BarlineFixture >/dev/null 2>&1 || true
+/usr/bin/open -g -n "$APP" --args --barline-fixture-accessibility-audit
 
 pid="$(/usr/bin/pgrep -x BarlineFixture | head -1)"
 [[ -n "$pid" ]] || { printf 'error: BarlineFixture is not running\n' >&2; exit 1; }
 
 mkdir -p "$MODULE_CACHE"
+mkdir -p "$AUDIT_APP/Contents/MacOS"
+/bin/cp "$ROOT/script/BarlineAccessibilityAudit-Info.plist" "$AUDIT_APP/Contents/Info.plist"
 xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     -framework ApplicationServices \
     "$ROOT/script/test-accessibility.swift" -o "$BINARY"
+/usr/bin/xattr -cr "$AUDIT_APP"
+/usr/bin/codesign --force --deep --sign - --timestamp=none "$AUDIT_APP"
 "$BINARY" "$pid"
