@@ -621,7 +621,12 @@ final class WindowServerClient: @unchecked Sendable {
         let explicitlyNonHideable = isControlCenter && [
             "AudioVideoModule",
             "FaceTime",
-        ].contains(title)
+        ].contains(title) || (
+            title == "Item-0" && [
+                "com.apple.controlcenter",
+                "com.apple.screencaptureui",
+            ].contains(normalizedNamespace)
+        )
         return (
             isMovable: !isImmovable,
             canBeHidden: !isImmovable && !explicitlyNonHideable,

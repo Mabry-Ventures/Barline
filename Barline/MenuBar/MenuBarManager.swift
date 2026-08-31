@@ -292,6 +292,11 @@ final class MenuBarManager: ObservableObject {
             logger.error("Error hiding application menus: Missing app state")
             return
         }
+        guard !appState.settings.general.hideDockIcon else {
+            logger.info("Skipping application-menu hiding while the Dock icon is disabled")
+            isHidingApplicationMenus = false
+            return
+        }
         logger.info("Hiding application menus")
         appState.activate(withPolicy: .regular)
         isHidingApplicationMenus = true

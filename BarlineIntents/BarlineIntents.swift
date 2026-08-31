@@ -46,8 +46,8 @@ private enum BarlineIntentBridge {
         try enqueue(kind: "activateProfile", profileID: profileID)
     }
 
-    static func storePresentationMode(_ isEnabled: Bool) throws {
-        try enqueue(kind: "setPresentationMode", presentationModeEnabled: isEnabled)
+    static func storeFocusProfile(_ profileID: UUID?) throws {
+        try enqueue(kind: "setFocusProfile", profileID: profileID)
     }
 
     private static func enqueue(
@@ -164,28 +164,6 @@ struct OpenBarlineIntent: AppIntent {
     }
 }
 
-struct SetBarlinePresentationModeIntent: AppIntent {
-    static let title: LocalizedStringResource = "Set Barline Presentation Mode"
-    static let description = IntentDescription(
-        "Requests Barline's presentation profile without moving menu bar items in the extension process."
-    )
-    static var supportedModes: IntentModes {
-        .foreground
-    }
-
-    @Parameter(title: "Enabled", default: true)
-    var isEnabled: Bool
-
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        try BarlineIntentBridge.storePresentationMode(isEnabled)
-        return .result(
-            dialog: isEnabled
-                ? "Barline will enable Presentation Mode."
-                : "Barline will restore the previous profile."
-        )
-    }
-}
-
 struct SwitchBarlineProfileIntent: AppIntent {
     static let title: LocalizedStringResource = "Switch Barline Profile"
     static let description = IntentDescription(
@@ -205,20 +183,23 @@ struct SwitchBarlineProfileIntent: AppIntent {
 }
 
 struct BarlineFocusFilter: SetFocusFilterIntent {
-    static let title: LocalizedStringResource = "Barline Presentation Mode"
+    static let title: LocalizedStringResource = "Barline Profile"
     static let description = IntentDescription(
-        "Select whether Barline should use Presentation Mode while this Focus is active."
+        "Select the saved Barline Profile to use while this Focus is active."
     )
 
-    @Parameter(title: "Use Presentation Mode", default: false)
-    var presentationMode: Bool
+    @Parameter(title: "Profile")
+    var profile: BarlineProfileEntity?
 
     var displayRepresentation: DisplayRepresentation {
-        presentationMode ? "Presentation Mode On" : "Presentation Mode Off"
+        if let profile {
+            return DisplayRepresentation(title: "\(profile.name)")
+        }
+        return DisplayRepresentation(title: "No Profile")
     }
 
     func perform() async throws -> some IntentResult {
-        try BarlineIntentBridge.storePresentationMode(presentationMode)
+        try BarlineIntentBridge.storeFocusProfile(profile?.id)
         return .result()
     }
 }
@@ -233,14 +214,6 @@ struct BarlineShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Open Barline",
             systemImageName: "menubar.rectangle"
-        )
-        AppShortcut(
-            intent: SetBarlinePresentationModeIntent(),
-            phrases: [
-                "Set presentation mode in \(.applicationName)",
-            ],
-            shortTitle: "Presentation Mode",
-            systemImageName: "rectangle.on.rectangle"
         )
         AppShortcut(
             intent: SwitchBarlineProfileIntent(),

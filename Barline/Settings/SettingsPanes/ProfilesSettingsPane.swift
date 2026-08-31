@@ -55,10 +55,6 @@ struct ProfilesSettingsPane: View {
                     }
                     .disabled(profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .disabled(!appState.permissions.accessibility.hasPermission)
-                    Button("Create Presentation Profile") {
-                        Task { await manager.createPresentationProfile() }
-                    }
-                    .disabled(!appState.permissions.accessibility.hasPermission)
                 }
                 if !appState.permissions.accessibility.hasPermission {
                     Text("Profile management remains available, but capturing or applying menu bar layouts requires Accessibility.")
@@ -169,7 +165,7 @@ struct ProfilesSettingsPane: View {
             }
 
             Section("Automation") {
-                Text("Shortcuts and Focus pass only stable profile identifiers through the App Intents extension. Barline validates and applies the profile transactionally in the app process.")
+                Text("In System Settings, add Barline as a Focus Filter and select any saved Profile. Barline applies that Profile when the Focus starts and restores the previous layout when it ends.")
                     .foregroundStyle(.secondary)
             }
 

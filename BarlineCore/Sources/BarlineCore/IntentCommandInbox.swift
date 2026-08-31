@@ -14,6 +14,9 @@ public enum BarlineIntentDestination: String, Codable, Sendable {
 public enum BarlineIntentCommandKind: String, Codable, Sendable {
     case openDestination
     case activateProfile
+    case setFocusProfile
+    /// Retained only so an already-queued command from an older build can be
+    /// decoded and safely acknowledged during migration.
     case setPresentationMode
 }
 
@@ -79,6 +82,22 @@ public struct BarlineIntentCommand: Codable, Equatable, Identifiable, Sendable {
         )
     }
 
+    public static func setFocusProfile(
+        _ profileID: UUID?,
+        id: UUID = UUID(),
+        createdAt: Date = Date()
+    ) -> Self {
+        Self(
+            schemaVersion: currentSchemaVersion,
+            id: id,
+            createdAt: createdAt,
+            kind: .setFocusProfile,
+            destination: nil,
+            profileID: profileID,
+            presentationModeEnabled: nil
+        )
+    }
+
     public var isValid: Bool {
         guard schemaVersion == Self.currentSchemaVersion else { return false }
         return switch kind {
@@ -86,6 +105,8 @@ public struct BarlineIntentCommand: Codable, Equatable, Identifiable, Sendable {
             destination != nil && profileID == nil && presentationModeEnabled == nil
         case .activateProfile:
             destination == nil && profileID != nil && presentationModeEnabled == nil
+        case .setFocusProfile:
+            destination == nil && presentationModeEnabled == nil
         case .setPresentationMode:
             destination == nil && profileID == nil && presentationModeEnabled != nil
         }

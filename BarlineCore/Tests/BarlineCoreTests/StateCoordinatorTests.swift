@@ -261,6 +261,48 @@ struct StateCoordinatorTests {
         #expect(await backend.revealedItems.isEmpty)
     }
 
+    @Test("Non-hideable items are rejected before a hidden-section move")
+    func rejectsHidingNonHideableItem() async throws {
+        let display = MenuBarDisplayID("test-display")
+        let itemID = MenuBarItemID(
+            bundleIdentifier: "com.apple.screencaptureui",
+            accessibilityIdentifier: "Item-0"
+        )
+        let snapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [MenuBarItemDescriptor(
+                id: itemID,
+                section: .visible,
+                order: 0,
+                displayID: display,
+                isSystemItem: true,
+                title: "Item-0",
+                isOnScreen: true,
+                isMovable: true,
+                canBeHidden: false
+            )],
+            displayIDs: [display],
+            activeSpaceIsValid: true
+        )
+        let backend = FakeBackend(snapshots: [snapshot])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: snapshot.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.operationFailed("menu bar item cannot be hidden")) {
+            try await coordinator.perform(.move(MenuBarMoveOperation(
+                itemID: itemID,
+                section: .hidden,
+                index: 0,
+                destinationDisplayID: display
+            )), now: snapshot.capturedAt)
+        }
+        #expect(await backend.moveOperations.isEmpty)
+    }
+
     @Test("Exhausted invalid refreshes preserve the last-known-good snapshot")
     func preservesLastKnownGoodAfterRetryExhaustion() async throws {
         let good = makeSnapshot(generation: 1, count: 3)

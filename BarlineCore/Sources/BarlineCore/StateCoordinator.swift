@@ -1427,6 +1427,19 @@ public actor MenuBarStateCoordinator {
         if let itemID, !snapshot.items.contains(where: { $0.id == itemID }) {
             throw MenuBarBackendError.staleItem(itemID)
         }
+
+        if case let .move(operation) = mutation,
+           operation.section != .visible,
+           snapshot.items.first(where: { $0.id == operation.itemID })?.canBeHidden == false
+        {
+            throw MenuBarBackendError.operationFailed("menu bar item cannot be hidden")
+        }
+        if case let .transientMove(operation) = mutation,
+           operation.section != .visible,
+           snapshot.items.first(where: { $0.id == operation.itemID })?.canBeHidden == false
+        {
+            throw MenuBarBackendError.operationFailed("menu bar item cannot be hidden")
+        }
     }
 
     private func validatedStartingSnapshot(now: Date?) async throws -> MenuBarSnapshot {

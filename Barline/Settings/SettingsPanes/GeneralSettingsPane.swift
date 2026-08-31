@@ -61,6 +61,8 @@ struct GeneralSettingsPane: View {
     @ViewBuilder
     private var appOptions: some View {
         LaunchAtLogin.Toggle()
+        Toggle("Hide Dock icon", isOn: $settings.hideDockIcon)
+            .annotation("Keep Barline out of the Dock, including while Settings is open.")
     }
 
     // MARK: Barline Icon Options
@@ -73,7 +75,6 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var showBarlineIcon: some View {
         Toggle("Show Barline icon", isOn: $settings.showBarlineIcon)
             .annotation("Click to show hidden menu bar items. Right-click to access Barline's settings.")
@@ -152,7 +153,6 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private func barlineIconMenuItem(for imageSet: ControlItemImageSet) -> some View {
         Label {
             Text(imageSet.name.rawValue)
@@ -180,13 +180,11 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var useBarlineShelf: some View {
         Toggle("Use Barline Bar", isOn: $settings.useBarlineShelf)
             .annotation("Show hidden menu bar items in a separate bar below the menu bar.")
     }
 
-    @ViewBuilder
     private var barlineShelfLocationPicker: some View {
         BarlinePicker("Location", selection: $settings.barlineShelfLocation) {
             ForEach(BarlineShelfLocation.allCases) { location in
@@ -227,12 +225,10 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var autoRehide: some View {
         Toggle("Automatically rehide", isOn: $settings.autoRehide)
     }
 
-    @ViewBuilder
     private var rehideStrategyPicker: some View {
         VStack {
             BarlinePicker("Strategy", selection: $settings.rehideStrategy) {
@@ -255,7 +251,7 @@ struct GeneralSettingsPane: View {
                 BarlineSlider(
                     rehideIntervalKey,
                     value: $settings.rehideInterval,
-                    in: 0...30,
+                    in: 0 ... 30,
                     step: 1
                 )
             }
@@ -264,13 +260,12 @@ struct GeneralSettingsPane: View {
 
     // MARK: Spacing Options
 
-    @ViewBuilder
     private var spacingOptions: some View {
         LabeledContent {
             BarlineSlider(
                 itemSpacingOffsetKey,
                 value: $tempItemSpacingOffset,
-                in: -16...16,
+                in: -16 ... 16,
                 step: 2
             )
             .disabled(isApplyingItemSpacingOffset)

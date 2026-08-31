@@ -16,6 +16,10 @@ final class GeneralSettings: ObservableObject {
     /// should be shown.
     @Published var showBarlineIcon = true
 
+    /// A Boolean value that keeps Barline out of the Dock even while its
+    /// settings and utility windows are visible.
+    @Published var hideDockIcon = false
+
     /// An icon to show in the menu bar, with a different image
     /// for when items are visible or hidden.
     @Published var barlineIcon: ControlItemImageSet = .defaultBarlineIcon
@@ -85,6 +89,7 @@ final class GeneralSettings: ObservableObject {
     /// Loads the model's initial state.
     private func loadInitialState() {
         Defaults.ifPresent(key: .showBarlineIcon, assign: &showBarlineIcon)
+        Defaults.ifPresent(key: .hideDockIcon, assign: &hideDockIcon)
         Defaults.ifPresent(key: .customBarlineIconIsTemplate, assign: &customBarlineIconIsTemplate)
         Defaults.ifPresent(key: .useBarlineShelf, assign: &useBarlineShelf)
         Defaults.ifPresent(key: .showOnClick, assign: &showOnClick)
@@ -125,6 +130,17 @@ final class GeneralSettings: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { showBarlineIcon in
                 Defaults.set(showBarlineIcon, forKey: .showBarlineIcon)
+            }
+            .store(in: &c)
+
+        $hideDockIcon
+            .receive(on: DispatchQueue.main)
+            .sink { [weak appState] shouldHide in
+                Defaults.set(shouldHide, forKey: .hideDockIcon)
+                if shouldHide {
+                    appState?.settings.advanced.hideApplicationMenus = false
+                }
+                appState?.applyDockIconPreference()
             }
             .store(in: &c)
 
@@ -232,7 +248,9 @@ enum RehideStrategy: Int, CaseIterable, Identifiable {
     /// Menu bar items are rehidden when the focused app changes.
     case focusedApp = 2
 
-    var id: Int { rawValue }
+    var id: Int {
+        rawValue
+    }
 
     /// Localized string key representation.
     var localized: LocalizedStringKey {

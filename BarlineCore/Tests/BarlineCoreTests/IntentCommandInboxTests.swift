@@ -20,8 +20,8 @@ struct IntentCommandInboxTests {
             id: UUID(),
             createdAt: Date(timeIntervalSince1970: 10)
         )
-        let second = BarlineIntentCommand.setPresentationMode(
-            true,
+        let second = BarlineIntentCommand.setFocusProfile(
+            UUID(),
             id: UUID(),
             createdAt: Date(timeIntervalSince1970: 20)
         )
@@ -52,7 +52,7 @@ struct IntentCommandInboxTests {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let inbox = IntentCommandInbox(containerURL: directory)
-        let command = BarlineIntentCommand.setPresentationMode(false)
+        let command = BarlineIntentCommand.setFocusProfile(nil)
 
         try await inbox.enqueue(command)
         try await inbox.enqueue(command)

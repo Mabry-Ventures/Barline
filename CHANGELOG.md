@@ -20,6 +20,8 @@ development line and are not release certification.
 - Saved profile editing/import/export, transactional activation, Focus and App
   Intent delivery, Presentation templates, opaque display reconnect aliases,
   operational shelf groups/spacers, and last-known-good recovery.
+- A General setting that keeps Barline out of the Dock even while its Settings
+  window is open.
 - Contextual permissions and degraded settings/search/diagnostics behavior.
 - Privacy-safe reviewed support-bundle export and a deterministic fixture app.
 - Release-only Sparkle trust configuration and credentialed packaging tooling.
@@ -33,10 +35,12 @@ development line and are not release certification.
 - Product-facing Ice names and identifiers were replaced with Barline; Ice
   remains in provenance, attribution, historical migration keys, and historical
   documentation where necessary.
-- Profile and Focus changes now serialize layout, workspace settings, and
-  resolved group/spacer presentation as one verified transaction, retain a
-  crash-stable pre-Presentation journal, and clear authority when rollback or a
-  restored profile definition cannot be proven current.
+- Apple's Focus settings now select any saved Barline Profile directly instead
+  of enabling a Barline-specific Presentation mode. Profile and Focus changes
+  serialize layout, workspace settings, and resolved group/spacer presentation
+  as one verified transaction, retain a crash-stable pre-Focus journal, and
+  clear authority when rollback or a restored profile definition cannot be
+  proven current.
 - Menu-bar restoration now uses global cross-display planning, section-relative
   postconditions, explicit stable destination-display targeting,
   already-correct no-op handling, and monotonic helper generation rebasing.

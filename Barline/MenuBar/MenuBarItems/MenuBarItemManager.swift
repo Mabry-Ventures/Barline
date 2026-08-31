@@ -661,17 +661,25 @@ extension MenuBarItemManager {
 
         let address: (section: MenuBarSection.Name, index: Int)
         if target.tag == .hiddenControlItem {
-            let hiddenCount = snapshot.items.count(where: { $0.section == .hidden })
+            let hiddenItems = snapshot.items.filter { $0.section == .hidden }
+            guard let controlIndex = hiddenItems.firstIndex(where: {
+                $0.id == targetDescriptor.id
+            }) else {
+                return nil
+            }
             address = switch destination {
-            case .leftOfItem: (.hidden, hiddenCount)
+            case .leftOfItem: (.hidden, controlIndex)
             case .rightOfItem: (.visible, 0)
             }
         } else if target.tag == .alwaysHiddenControlItem {
-            let alwaysHiddenCount = snapshot.items.count(where: {
-                $0.section == .alwaysHidden
-            })
+            let alwaysHiddenItems = snapshot.items.filter { $0.section == .alwaysHidden }
+            guard let controlIndex = alwaysHiddenItems.firstIndex(where: {
+                $0.id == targetDescriptor.id
+            }) else {
+                return nil
+            }
             address = switch destination {
-            case .leftOfItem: (.alwaysHidden, alwaysHiddenCount)
+            case .leftOfItem: (.alwaysHidden, controlIndex)
             case .rightOfItem: (.hidden, 0)
             }
         } else {

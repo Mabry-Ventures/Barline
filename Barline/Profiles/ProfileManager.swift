@@ -39,6 +39,7 @@ final class ProfileManager: ObservableObject {
     private static let processedCommandIDsKey = "intent.processedCommandIDs"
     private static let profileBeforeFocusIDKey = "focus.profileBeforeFocusID"
     private static let presentationProfileIDKey = "focus.presentationProfileID"
+    private static let activeFocusProfileIDKey = "focus.activeProfileID"
     private static let presentationFocusActiveKey = "focus.presentationModeIsActive"
     private static let workspaceBeforeFocusKey = "focus.workspaceBeforeFocus"
     private static let activeProfileAuthorityTokenKey = "profiles.activeAuthorityToken"
@@ -1333,9 +1334,9 @@ final class ProfileManager: ObservableObject {
                     continue
                 }
                 guard await handle(command) else {
-                    if command.kind == .setPresentationMode,
+                    if command.kind == .setFocusProfile || command.kind == .setPresentationMode,
                        commands.dropFirst(index + 1).contains(where: {
-                           $0.kind == .setPresentationMode
+                           $0.kind == .setFocusProfile || $0.kind == .setPresentationMode
                        })
                     {
                         recordProcessed(command.id)
@@ -1396,20 +1397,23 @@ final class ProfileManager: ObservableObject {
             }
             return await activate(profile, source: .appIntent)
 
+        case .setFocusProfile:
+            return await applyFocusProfile(command.profileID)
+
         case .setPresentationMode:
             guard let isEnabled = command.presentationModeEnabled else { return true }
-            return await applyPresentationMode(isEnabled)
+            return await applyFocusProfile(isEnabled ? resolvedPresentationProfile()?.id : nil)
         }
     }
 
-    private func applyPresentationMode(_ isEnabled: Bool) async -> Bool {
+    private func applyFocusProfile(_ profileID: UUID?) async -> Bool {
         switch await recoverPendingFocusAuthority() {
         case .promoted:
-            if isEnabled {
+            if let profileID, activeFocusProfile()?.id == profileID {
                 return true
             }
         case .restored:
-            if !isEnabled {
+            if profileID == nil {
                 return true
             }
         case .failed:
@@ -1417,10 +1421,19 @@ final class ProfileManager: ObservableObject {
         case .none:
             break
         }
-        if isEnabled {
-            guard let presentation = resolvedPresentationProfile() else {
-                statusMessage = "Create a Presentation profile before enabling the Focus filter."
-                return false
+        if let profileID,
+           processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil,
+           let currentFocusProfile = activeFocusProfile(),
+           currentFocusProfile.id != profileID
+        {
+            guard await applyFocusProfile(nil) else { return false }
+            return await applyFocusProfile(profileID)
+        }
+
+        if let profileID {
+            guard let presentation = profiles.first(where: { $0.id == profileID }) else {
+                statusMessage = "The profile selected by this Focus is no longer available."
+                return true
             }
             // A persisted workspace journal is the durable source of truth. It is
             // written before activation so a crash at any later point cannot cause
@@ -1435,10 +1448,14 @@ final class ProfileManager: ObservableObject {
                    persistedProfileAuthority()?.activeAuthority?.profileID == presentation.id
                 {
                     processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+                    processedDefaults.set(
+                        presentation.id.uuidString,
+                        forKey: Self.activeFocusProfileIDKey
+                    )
                     return true
                 }
                 guard await currentWorkspaceMatches(checkpoint) else {
-                    statusMessage = "Presentation recovery evidence is incomplete."
+                    statusMessage = "Focus profile recovery evidence is incomplete."
                     return false
                 }
                 clearProfileBeforeFocus()
@@ -1502,6 +1519,7 @@ final class ProfileManager: ObservableObject {
                 return false
             }
             processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+            processedDefaults.set(presentation.id.uuidString, forKey: Self.activeFocusProfileIDKey)
             return true
         }
 
@@ -1511,11 +1529,11 @@ final class ProfileManager: ObservableObject {
                 activationRequests.removeValue(forKey: .focus)
                 return true
             }
-            statusMessage = "The pre-Presentation workspace checkpoint is unavailable."
+            statusMessage = "The pre-Focus workspace checkpoint is unavailable."
             return false
         }
         guard let checkpoint = decodeFocusCheckpoint(data) else {
-            statusMessage = "The pre-Presentation workspace checkpoint is unavailable."
+            statusMessage = "The pre-Focus workspace checkpoint is unavailable."
             return false
         }
         if !processedDefaults.bool(forKey: Self.presentationFocusActiveKey),
@@ -1525,7 +1543,7 @@ final class ProfileManager: ObservableObject {
             clearProfileBeforeFocus()
             return true
         }
-        guard let presentation = resolvedPresentationProfile() else {
+        guard let presentation = activeFocusProfile() else {
             activationRequests.removeValue(forKey: .focus)
             clearProfileBeforeFocus()
             return true
@@ -1572,7 +1590,7 @@ final class ProfileManager: ObservableObject {
             didFinish = true
         }
         guard didFinish else {
-            statusMessage = "Barline could not restore the pre-Presentation workspace."
+            statusMessage = "Barline could not restore the pre-Focus workspace."
             return false
         }
         activationRequests.removeValue(forKey: .focus)
@@ -1721,12 +1739,13 @@ final class ProfileManager: ObservableObject {
     private func clearProfileBeforeFocus() {
         processedDefaults.set(false, forKey: Self.presentationFocusActiveKey)
         guard !processedDefaults.bool(forKey: Self.presentationFocusActiveKey) else {
-            statusMessage = "Presentation mode state could not be cleared."
+            statusMessage = "Focus profile state could not be cleared."
             return
         }
         profileBeforeFocusID = nil
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusIDKey)
         processedDefaults.removeObject(forKey: Self.workspaceBeforeFocusKey)
+        processedDefaults.removeObject(forKey: Self.activeFocusProfileIDKey)
         processedDefaults.removeObject(forKey: Self.focusAuthorityTokenKey)
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusAuthorityTokenKey)
     }
@@ -1826,7 +1845,7 @@ final class ProfileManager: ObservableObject {
               || pending.priorAuthority == nil
         else {
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-            statusMessage = "Presentation recovery evidence is inconsistent."
+            statusMessage = "Focus profile recovery evidence is inconsistent."
             return .failed
         }
         if let currentToken = activeProfileAuthorityToken(),
@@ -1834,7 +1853,7 @@ final class ProfileManager: ObservableObject {
            currentToken != pending.priorAuthority?.token
         {
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-            statusMessage = "Presentation recovery authority is inconsistent."
+            statusMessage = "Focus profile recovery authority is inconsistent."
             return .failed
         }
         do {
@@ -1878,6 +1897,7 @@ final class ProfileManager: ObservableObject {
                     presentation: presentation
                 )))
                 processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+                processedDefaults.set(profile.id.uuidString, forKey: Self.activeFocusProfileIDKey)
                 return .promoted
             case .restored:
                 restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
@@ -1892,7 +1912,7 @@ final class ProfileManager: ObservableObject {
                 activeProfileActivatedAt = nil
                 activePresentation = nil
                 processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-                statusMessage = "Barline preserved an interrupted Presentation recovery for review."
+                statusMessage = "Barline preserved an interrupted Focus profile recovery for review."
                 return .failed
             }
         } catch {
@@ -1900,7 +1920,7 @@ final class ProfileManager: ObservableObject {
             activeProfileActivatedAt = nil
             activePresentation = nil
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-            statusMessage = "Barline could not recover an interrupted Presentation activation."
+            statusMessage = "Barline could not recover an interrupted Focus profile activation."
             return .failed
         }
     }
@@ -1992,17 +2012,25 @@ final class ProfileManager: ObservableObject {
         return nil
     }
 
+    private func activeFocusProfile() -> BarlineProfile? {
+        if let profileID = processedDefaults.string(forKey: Self.activeFocusProfileIDKey)
+            .flatMap(UUID.init(uuidString:))
+        {
+            return profiles.first(where: { $0.id == profileID })
+        }
+        return pendingFocusAuthority()?.pendingProfile ?? resolvedPresentationProfile()
+    }
+
     private func validateProfileDefinitionMutation(profileID: UUID) throws {
         guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil else {
             return
         }
-        let protectedProfileID = processedDefaults.string(forKey: Self.presentationProfileIDKey)
+        let protectedProfileID = processedDefaults.string(forKey: Self.activeFocusProfileIDKey)
             .flatMap(UUID.init(uuidString:))
-            ?? resolvedPresentationProfile()?.id
-            ?? PresentationProfileTemplateBuilder.profileID
+            ?? pendingFocusAuthority()?.profileID
         if profileID == protectedProfileID {
             throw MenuBarBackendError.operationFailed(
-                "disable or recover Presentation mode before changing its profile"
+                "disable or recover the active Focus before changing its profile"
             )
         }
     }

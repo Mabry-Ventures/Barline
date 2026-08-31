@@ -305,7 +305,7 @@ final class AppState: ObservableObject {
     /// Activates the app and sets its activation policy.
     func activate(withPolicy policy: NSApplication.ActivationPolicy? = nil) {
         if let policy {
-            NSApp.setActivationPolicy(policy)
+            NSApp.setActivationPolicy(resolvedActivationPolicy(for: policy))
         }
         // NSApplication.activate(ignoringOtherApps:) is deprecated, with
         // no suitable alternative for explicit activation, so we activate
@@ -320,8 +320,36 @@ final class AppState: ObservableObject {
     /// Deactivates the app and sets its activation policy.
     func deactivate(withPolicy policy: NSApplication.ActivationPolicy? = nil) {
         if let policy {
-            NSApp.setActivationPolicy(policy)
+            NSApp.setActivationPolicy(resolvedActivationPolicy(for: policy))
         }
         NSApp.deactivate()
+    }
+
+    /// Applies the user's Dock preference without presenting or focusing UI.
+    func applyDockIconPreference() {
+        let hasVisibleAppWindow = NSApp.windows.contains {
+            $0.isVisible && ($0.canBecomeKey || $0.canBecomeMain)
+        }
+        let requestedPolicy: NSApplication.ActivationPolicy = hasVisibleAppWindow ? .regular : .accessory
+        NSApp.setActivationPolicy(resolvedActivationPolicy(for: requestedPolicy))
+    }
+
+    private func resolvedActivationPolicy(
+        for requestedPolicy: NSApplication.ActivationPolicy
+    ) -> NSApplication.ActivationPolicy {
+        Self.activationPolicy(
+            requested: requestedPolicy,
+            hideDockIcon: settings.general.hideDockIcon
+        )
+    }
+
+    static func activationPolicy(
+        requested: NSApplication.ActivationPolicy,
+        hideDockIcon: Bool
+    ) -> NSApplication.ActivationPolicy {
+        DockVisibilityPolicy.usesRegularActivationPolicy(
+            requestedRegular: requested == .regular,
+            hideDockIcon: hideDockIcon
+        ) ? .regular : .accessory
     }
 }
