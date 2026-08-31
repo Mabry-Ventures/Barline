@@ -8,6 +8,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ProfilesSettingsPane: View {
+    private static let focusSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.Focus-Settings.extension"
+    )!
+
     @EnvironmentObject var appState: AppState
     @ObservedObject var manager: ProfileManager
     @State private var profileName = "Work"
@@ -18,12 +22,23 @@ struct ProfilesSettingsPane: View {
 
     var body: some View {
         Form {
-            Section("Saved Profiles") {
+            Section("macOS Focus") {
+                Text(
+                    "Apple keeps Focus modes in System Settings and does not share their names with apps. "
+                        + "Add Barline as a Focus Filter inside each Focus, then choose one of the menu bar layouts below."
+                )
+                .foregroundStyle(.secondary)
+                Link("Open Focus Settings", destination: Self.focusSettingsURL)
+            }
+
+            Section("Menu Bar Layouts") {
                 if manager.profiles.isEmpty {
                     ContentUnavailableView(
-                        "No Profiles",
-                        systemImage: "person.crop.rectangle.stack",
-                        description: Text("Capture the current menu bar layout to create one.")
+                        "No Saved Layouts",
+                        systemImage: "rectangle.topthird.inset.filled",
+                        description: Text(
+                            "Capture a menu bar layout, then assign it to a macOS Focus using Focus Settings."
+                        )
                     )
                 } else {
                     ForEach(manager.profiles) { profile in
@@ -47,8 +62,8 @@ struct ProfilesSettingsPane: View {
                 }
             }
 
-            Section("Create") {
-                TextField("Profile name", text: $profileName)
+            Section("Create Menu Bar Layout") {
+                TextField("Layout name", text: $profileName)
                 HStack {
                     Button("Capture Current Layout") {
                         Task { await manager.captureCurrentProfile(named: profileName) }
@@ -68,10 +83,10 @@ struct ProfilesSettingsPane: View {
                         Task { await manager.discoverIceImports() }
                     }
                     .disabled(!appState.permissions.accessibility.hasPermission)
-                    Button("Import Archive…") {
+                    Button("Import Layout Archive…") {
                         showsArchiveImporter = true
                     }
-                    Button("Export All Profiles…") {
+                    Button("Export All Layouts…") {
                         Task {
                             guard let data = await manager.archiveData() else { return }
                             exportDocument = ProfileArchiveDocument(data: data)
@@ -137,7 +152,7 @@ struct ProfilesSettingsPane: View {
                                 Task { await manager.commitArchiveImport(replacingExisting: true) }
                             }
                         } else {
-                            Button("Import Profiles") {
+                            Button("Import Layouts") {
                                 Task { await manager.commitArchiveImport(replacingExisting: false) }
                             }
                         }
@@ -161,11 +176,6 @@ struct ProfilesSettingsPane: View {
                 }
                 .disabled(!appState.permissions.accessibility.hasPermission)
                 Text("Undo and redo keep a bounded in-memory layout history. Last-known-good restore does not delete profiles or reset unrelated settings.")
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Automation") {
-                Text("In System Settings, add Barline as a Focus Filter and select any saved Profile. Barline applies that Profile when the Focus starts and restores the previous layout when it ends.")
                     .foregroundStyle(.secondary)
             }
 
@@ -217,7 +227,7 @@ struct ProfilesSettingsPane: View {
             isPresented: $showsArchiveExporter,
             document: exportDocument,
             contentType: .barlineProfileArchive,
-            defaultFilename: "Barline Profiles.json"
+            defaultFilename: "Barline Layouts.json"
         ) { result in
             exportDocument = nil
             switch result {

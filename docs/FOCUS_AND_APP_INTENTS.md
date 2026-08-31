@@ -5,8 +5,15 @@
 Barline contains an embedded App Intents extension with an `AppEntity` profile
 query, Open Barline, Switch Profile, App Shortcuts, and a native
 `SetFocusFilterIntent`. The Focus Filter lets the user select any saved Barline
-Profile directly in System Settings > Focus; Barline does not create a separate
-kind of Focus or a special Presentation mode.
+menu bar layout directly in System Settings > Focus; Barline does not create a
+separate kind of Focus or a special Presentation mode.
+
+Apple's public API does not expose the user's Focus-mode names or identifiers to
+third-party apps. `FocusFilterSuggestionContext` contains no public mode
+metadata, and `SetFocusFilterIntent.current` returns only Barline's configured
+filter parameters. Barline therefore cannot mirror Work, Personal, or custom
+Focus modes in its own settings. The Layouts & Focus pane links to System
+Settings, where Apple requires each Focus-to-layout assignment to be made.
 
 `BarlineCore` supplies the supporting domain concepts:
 

@@ -95,7 +95,7 @@ private struct ProfileCatalogEntry: Codable {
 }
 
 struct BarlineProfileEntity: AppEntity {
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Barline Profile")
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Menu Bar Layout")
     static let defaultQuery = BarlineProfileQuery()
 
     let id: UUID
@@ -165,9 +165,9 @@ struct OpenBarlineIntent: AppIntent {
 }
 
 struct SwitchBarlineProfileIntent: AppIntent {
-    static let title: LocalizedStringResource = "Switch Barline Profile"
+    static let title: LocalizedStringResource = "Switch Menu Bar Layout"
     static let description = IntentDescription(
-        "Requests a saved profile. Barline validates and applies it transactionally in the app process."
+        "Requests a saved menu bar layout. Barline validates and applies it transactionally in the app process."
     )
     static var supportedModes: IntentModes {
         .foreground
@@ -183,12 +183,12 @@ struct SwitchBarlineProfileIntent: AppIntent {
 }
 
 struct BarlineFocusFilter: SetFocusFilterIntent {
-    static let title: LocalizedStringResource = "Barline Profile"
+    static let title: LocalizedStringResource = "Menu Bar Layout"
     static let description = IntentDescription(
-        "Select the saved Barline Profile to use while this Focus is active."
+        "Choose the saved menu bar layout Barline applies while this macOS Focus is active."
     )
 
-    @Parameter(title: "Profile")
+    @Parameter(title: "Menu Bar Layout")
     var profile: BarlineProfileEntity?
 
     var displayRepresentation: DisplayRepresentation {
@@ -220,7 +220,7 @@ struct BarlineShortcuts: AppShortcutsProvider {
             phrases: [
                 "Switch profile in \(.applicationName)",
             ],
-            shortTitle: "Switch Profile",
+            shortTitle: "Switch Layout",
             systemImageName: "person.crop.rectangle.stack"
         )
     }
