@@ -668,6 +668,7 @@ final class WindowServerClient: @unchecked Sendable {
             }
             CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
         }
+        permitLocalEvents()
         for (event, identifier) in [(down, item.identifier), (drag, item.identifier), (up, target.identifier), (up, target.identifier)] {
             event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
             event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(identifier))
@@ -676,13 +677,122 @@ final class WindowServerClient: @unchecked Sendable {
                 value: Int64(identifier)
             )
             event.setIntegerValueField(windowField, value: Int64(identifier))
-            event.postToPid(pid)
+            try await deliver(event, to: pid)
             // Once mouse-down is posted, complete the short gesture even if
             // cancellation arrives so the system cannot be left in a dragged
             // state. Cancellation is observed immediately after mouse-up.
             try? await Task.sleep(for: .milliseconds(15))
         }
         try Task.checkCancellation()
+    }
+
+    /// Routes a menu bar event through both the session and target-process
+    /// event streams. A direct `postToPid` reaches the hosted status-item
+    /// process on macOS 26 but does not trigger its movement behavior.
+    private func deliver(_ event: CGEvent, to pid: pid_t) async throws {
+        guard let entry = uniqueNullEvent(), let exit = uniqueNullEvent() else {
+            throw MenuBarBackendError.unavailableCapability("menu bar event delivery")
+        }
+        let delivery = HelperEventDelivery()
+        let fields: [CGEventField] = [
+            .eventSourceUserData,
+            .mouseEventWindowUnderMousePointer,
+            .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+            CGEventField(rawValue: 0x33)!, // swiftlint:disable:this force_unwrapping
+        ]
+
+        let processControlTap = HelperEventTap(
+            type: .null,
+            location: .process(pid),
+            placement: .headInsertEventTap,
+            options: .defaultTap
+        ) { _, received in
+            if self.event(received, matches: entry, fields: [.eventSourceUserData]) {
+                event.post(tap: .cgSessionEventTap)
+                return nil
+            }
+            if self.event(received, matches: exit, fields: [.eventSourceUserData]) {
+                delivery.finish()
+                return nil
+            }
+            return received
+        }
+        let sessionTap = HelperEventTap(
+            type: event.type,
+            location: .session,
+            placement: .tailAppendEventTap,
+            options: .listenOnly
+        ) { tap, received in
+            guard self.event(received, matches: event, fields: fields) else {
+                return received
+            }
+            tap.disable()
+            event.postToPid(pid)
+            received.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            return received
+        }
+        let processEventTap = HelperEventTap(
+            type: event.type,
+            location: .process(pid),
+            placement: .headInsertEventTap,
+            options: .listenOnly
+        ) { tap, received in
+            guard self.event(received, matches: event, fields: fields) else {
+                return received
+            }
+            tap.disable()
+            exit.postToPid(pid)
+            received.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            return received
+        }
+
+        do {
+            try await delivery.run(
+                taps: [processControlTap, sessionTap, processEventTap],
+                timeout: .milliseconds(500)
+            ) {
+                entry.postToPid(pid)
+            }
+        } catch {
+            throw MenuBarBackendError.operationFailed("Menu bar event delivery failed")
+        }
+    }
+
+    private func uniqueNullEvent() -> CGEvent? {
+        guard let event = CGEvent(source: nil) else { return nil }
+        event.setIntegerValueField(
+            .eventSourceUserData,
+            value: Int64.random(in: 1 ... Int64.max)
+        )
+        return event
+    }
+
+    private func event(
+        _ lhs: CGEvent,
+        matches rhs: CGEvent,
+        fields: [CGEventField]
+    ) -> Bool {
+        fields.allSatisfy {
+            lhs.getIntegerValueField($0) == rhs.getIntegerValueField($0)
+        }
+    }
+
+    private func permitLocalEvents() {
+        guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
+        let mask: CGEventFilterMask = [
+            .permitLocalMouseEvents,
+            .permitLocalKeyboardEvents,
+            .permitSystemDefinedEvents,
+        ]
+        source.setLocalEventsFilterDuringSuppressionState(
+            mask,
+            state: .eventSuppressionStateRemoteMouseDrag
+        )
+        source.setLocalEventsFilterDuringSuppressionState(
+            mask,
+            state: .eventSuppressionStateSuppressionInterval
+        )
+        source.localEventsSuppressionInterval = 0
     }
 
     private func windowLevel(for identifier: CGWindowID) -> CGWindowLevel? {

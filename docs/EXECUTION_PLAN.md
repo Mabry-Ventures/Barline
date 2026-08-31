@@ -15,7 +15,7 @@ gate result.
 | 6. Search and on-device interpretation | Lead | Complete for macOS 26 | M3–5 | collision-free opaque item identities, deterministic ranking, bounded and serialized latest-wins Spotlight replacement, cross-display metadata, 180 Core tests; macOS 27 tool remains gated |
 | 7. UI and accessibility | Lead | Exact-head automated validation passing | M3–6 | profile UI, fixture UI, diagnostics review/save, fixture XCUITest, and semantic accessibility pass on the exact candidate; foreground VoiceOver and Full Keyboard Access remain manual validation lanes |
 | 8. OS hardening | Lead | Exact-head automated runtime validation passing | M3–7 | coordinate-safe display matching, categorized recovery diagnostics, configuration-derived Release probes, bounded XPC mutation deadlines, privacy gates, XPC replacement, UI smoke, performance, and all reopen-recovery cycles pass on the exact candidate; physical scenario matrix, release soak, and macOS 27 remain pending |
-| 9. Distribution readiness | Lead | Exact-head unsigned preflight pass; signed completion pending | M0–8 | exact-head unsigned archive topology, arm64 identity, and privacy-safe metadata pass; a prior source SHA passed Developer ID export, App Group profile validation, notarization, stapling, Gatekeeper, Sparkle signing, checksums, SBOM, and source archive, but current source requires regeneration after the full-gate prerequisite and before clean install/update |
+| 9. Distribution readiness | Lead | Notarized 1.0.0 installed; runtime hotfix validation in progress | M0–8 | Developer ID export, App Group profile validation, notarization, stapling, Gatekeeper, Sparkle signing, checksums, SBOM, and source archive passed for the installed candidate; a macOS 26 live-use failure exposed a simplified direct event-delivery path, and the compatibility-baseline event-tap handshake is being restored before regenerating exact-head release evidence |
 
 ## External boundaries currently known
 
@@ -27,9 +27,9 @@ gate result.
 - A valid Mabry Ventures Developer ID identity and Barline App Group
   provisioning profiles exist locally. Keychain authorization is configured,
   and a Developer ID export has passed nested signature validation.
-- Sparkle signing material and the full credentialed release path passed on a
-  prior source SHA. The `barline-notary` Keychain profile is currently absent,
-  so exact-head notarization requires restoring that external credential.
+- Sparkle signing material and the full credentialed release path pass locally.
+  The `barline-notary` Keychain profile is available and has completed an Apple
+  Accepted submission, stapling, and Gatekeeper validation.
 - Developer Tools automation mode and the fixture accessibility path have been
   validated. The production reopen-to-visible p95 gate necessarily activates
   Barline and was run in a dedicated unlocked interactive session; Barline is

@@ -1,0 +1,174 @@
+import CoreGraphics
+import Foundation
+
+/// A helper-owned event tap used to deliver menu bar events through the
+/// WindowServer event stream. Raw event routing must remain inside the XPC
+/// compatibility service.
+final class HelperEventTap: @unchecked Sendable {
+    enum Location {
+        case session
+        case process(pid_t)
+    }
+
+    private static let callback: CGEventTapCallBack = { _, type, event, refcon in
+        guard let refcon else {
+            return Unmanaged.passUnretained(event)
+        }
+        let tap = Unmanaged<HelperEventTap>.fromOpaque(refcon).takeUnretainedValue()
+        return withExtendedLifetime(tap) {
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                tap.enable()
+                return nil
+            }
+            guard tap.isEnabled else {
+                return Unmanaged.passUnretained(event)
+            }
+            return tap.handler(tap, event).map(Unmanaged.passUnretained)
+        }
+    }
+
+    private let runLoop = CFRunLoopGetMain()
+    private let handler: (HelperEventTap, CGEvent) -> CGEvent?
+    private var port: CFMachPort?
+    private var source: CFRunLoopSource?
+
+    var isEnabled: Bool {
+        port.map(CGEvent.tapIsEnabled) ?? false
+    }
+
+    init(
+        type: CGEventType,
+        location: Location,
+        placement: CGEventTapPlacement,
+        options: CGEventTapOptions,
+        handler: @escaping (HelperEventTap, CGEvent) -> CGEvent?
+    ) {
+        self.handler = handler
+        let mask = CGEventMask(1) << type.rawValue
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let port: CFMachPort? = switch location {
+        case .session:
+            CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: placement,
+                options: options,
+                eventsOfInterest: mask,
+                callback: Self.callback,
+                userInfo: refcon
+            )
+        case let .process(pid):
+            CGEvent.tapCreateForPid(
+                pid: pid,
+                place: placement,
+                options: options,
+                eventsOfInterest: mask,
+                callback: Self.callback,
+                userInfo: refcon
+            )
+        }
+        guard let port,
+              let source = CFMachPortCreateRunLoopSource(nil, port, 0)
+        else {
+            return
+        }
+        self.port = port
+        self.source = source
+    }
+
+    deinit {
+        disable()
+        if let port {
+            CFMachPortInvalidate(port)
+        }
+    }
+
+    func enable() {
+        guard let port, let source else { return }
+        CGEvent.tapEnable(tap: port, enable: true)
+        if !CFRunLoopContainsSource(runLoop, source, .commonModes) {
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+        }
+    }
+
+    func disable() {
+        guard let port, let source else { return }
+        if CFRunLoopContainsSource(runLoop, source, .commonModes) {
+            CFRunLoopRemoveSource(runLoop, source, .commonModes)
+        }
+        CGEvent.tapEnable(tap: port, enable: false)
+    }
+}
+
+/// Serializes completion, timeout, and cancellation for one event delivery.
+final class HelperEventDelivery: @unchecked Sendable {
+    enum DeliveryError: Error {
+        case unavailable
+        case timedOut
+    }
+
+    private struct State {
+        var continuation: CheckedContinuation<Void, any Error>?
+        var taps = [HelperEventTap]()
+        var completed = false
+    }
+
+    private let state = NSLock()
+    private var storage = State()
+
+    func run(
+        taps: [HelperEventTap],
+        timeout: Duration,
+        start: () -> Void
+    ) async throws {
+        guard taps.allSatisfy(\.isEnabled) == false else {
+            throw DeliveryError.unavailable
+        }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                state.lock()
+                storage.continuation = continuation
+                storage.taps = taps
+                state.unlock()
+
+                taps.forEach { $0.enable() }
+                guard taps.allSatisfy(\.isEnabled) else {
+                    complete(throwing: DeliveryError.unavailable)
+                    return
+                }
+                start()
+
+                Task.detached { [weak self] in
+                    try? await Task.sleep(for: timeout)
+                    self?.complete(throwing: DeliveryError.timedOut)
+                }
+            }
+        } onCancel: {
+            complete(throwing: CancellationError())
+        }
+    }
+
+    func finish() {
+        complete(throwing: nil)
+    }
+
+    private func complete(throwing error: (any Error)?) {
+        state.lock()
+        guard !storage.completed else {
+            state.unlock()
+            return
+        }
+        storage.completed = true
+        let continuation = storage.continuation
+        let taps = storage.taps
+        storage.continuation = nil
+        storage.taps.removeAll()
+        state.unlock()
+
+        taps.forEach { $0.disable() }
+        if let error {
+            continuation?.resume(throwing: error)
+        } else {
+            continuation?.resume()
+        }
+    }
+}
