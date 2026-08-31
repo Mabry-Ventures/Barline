@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
 import Combine
 
@@ -520,10 +521,17 @@ extension HIDEventManager {
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of an empty space in the menu bar.
     func isMouseInsideEmptyMenuBarSpace(appState: AppState, screen: NSScreen) -> Bool {
-        isMouseInsideMenuBar(appState: appState, screen: screen) &&
-            !isMouseInsideApplicationMenu(appState: appState, screen: screen) &&
-            !isMouseInsideMenuBarItem(appState: appState, screen: screen) &&
-            !isMouseInsideNotch(appState: appState, screen: screen)
+        MenuBarClickArbitrationPolicy.isEmptyMenuBarSpace(
+            isInsideMenuBar: isMouseInsideMenuBar(appState: appState, screen: screen),
+            isInsideApplicationMenu: isMouseInsideApplicationMenu(appState: appState, screen: screen),
+            // The compatibility cache can briefly omit Barline's own icon
+            // while the helper reconnects after an update. Its live control
+            // item frame remains authoritative and prevents the same click
+            // from toggling once here and again through target-action.
+            isInsidePrimaryControlItem: isMouseInsideBarlineIcon(appState: appState),
+            isInsideCachedMenuBarItem: isMouseInsideMenuBarItem(appState: appState, screen: screen),
+            isInsideNotch: isMouseInsideNotch(appState: appState, screen: screen)
+        )
     }
 
     /// A Boolean value that indicates whether the mouse pointer is within
