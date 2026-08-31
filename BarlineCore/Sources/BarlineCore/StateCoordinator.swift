@@ -355,7 +355,11 @@ public actor MenuBarStateCoordinator {
                     throw CancellationError()
                 }
                 if let operation = mutation.moveOperation,
-                   !MenuBarMovePlanner().resultMatches(operation, in: snapshot)
+                   !MenuBarMovePlanner().resultMatches(
+                       operation,
+                       in: snapshot,
+                       from: before
+                   )
                 {
                     throw MenuBarBackendError.operationFailed(
                         "menu bar move did not reach requested section"

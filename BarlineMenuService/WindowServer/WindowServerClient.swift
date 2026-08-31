@@ -471,16 +471,26 @@ final class WindowServerClient: @unchecked Sendable {
             return nil
         }
         identifiers.removeSubrange(Int(count) ..< identifiers.count)
+        if let activeSpaceID = activeSpaceID() {
+            identifiers = identifiers.filter {
+                Bridging.isWindowOnSpace($0, activeSpaceID)
+            }
+        }
+        identifiers = identifiers.filter {
+            windowLevel(for: $0) != kCGMainMenuWindowLevel
+        }
 
         guard
-            let array = Self.createWindowArray(identifiers),
+            // CGS returns process menu bar windows from right to left. Ice
+            // reverses the identifiers before assigning section-relative
+            // indices; the typed move contract uses that left-to-right order.
+            let array = Self.createWindowArray(Array(identifiers.reversed())),
             let descriptions = CGWindowListCreateDescriptionFromArray(array) as? [[CFString: Any]]
         else {
             return []
         }
 
         return descriptions.compactMap(WindowRecord.init)
-            .filter { windowLevel(for: $0.identifier) != kCGMainMenuWindowLevel }
     }
 
     private func currentWindows() throws -> [WindowRecord] {
@@ -975,6 +985,7 @@ final class WindowServerClient: @unchecked Sendable {
         "CGSGetProcessMenuBarWindowList",
         "CGSGetWindowLevel",
         "CGSGetActiveSpace",
+        "CGSCopySpacesForWindows",
     ]
 
     private static let barlineControlTitles: Set<String> = [

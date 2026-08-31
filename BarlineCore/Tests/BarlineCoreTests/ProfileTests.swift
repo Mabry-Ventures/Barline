@@ -695,7 +695,40 @@ struct ProfileTests {
             activeSpaceIsValid: true
         )
         let firstRestore = MenuBarMovePlanner().restoreOperations(for: snapshot)[0]
-        #expect(MenuBarMovePlanner().resultMatches(firstRestore, in: swapped) == false)
+        #expect(MenuBarMovePlanner().resultMatches(
+            firstRestore,
+            in: swapped,
+            from: snapshot
+        ) == false)
+    }
+
+    @Test("Move result accounts for removing an earlier same-section source")
+    func matchesSameSectionRightwardMove() {
+        let before = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: item(1), section: .visible, order: 0),
+                MenuBarItemDescriptor(id: item(2), section: .visible, order: 1),
+                MenuBarItemDescriptor(id: item(3), section: .visible, order: 2),
+            ],
+            displayIDs: [],
+            activeSpaceIsValid: true
+        )
+        let after = MenuBarSnapshot(
+            generation: 2,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: item(2), section: .visible, order: 0),
+                MenuBarItemDescriptor(id: item(1), section: .visible, order: 1),
+                MenuBarItemDescriptor(id: item(3), section: .visible, order: 2),
+            ],
+            displayIDs: [],
+            activeSpaceIsValid: true
+        )
+        let move = MenuBarMoveOperation(itemID: item(1), section: .visible, index: 2)
+
+        #expect(MenuBarMovePlanner().resultMatches(move, in: after, from: before))
     }
 
     @Test("Activation precedence is deterministic before request recency")

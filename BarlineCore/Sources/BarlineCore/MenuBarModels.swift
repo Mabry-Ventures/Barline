@@ -257,11 +257,23 @@ public struct MenuBarMovePlanner: Sendable {
 
     public func resultMatches(
         _ operation: MenuBarMoveOperation,
-        in snapshot: MenuBarSnapshot
+        in snapshot: MenuBarSnapshot,
+        from previousSnapshot: MenuBarSnapshot
     ) -> Bool {
         let candidates = snapshot.items.filter { $0.section == operation.section }
         guard !candidates.isEmpty else { return false }
-        let expectedIndex = min(max(operation.index, 0), candidates.count - 1)
+        let previousCandidates = previousSnapshot.items.filter {
+            $0.section == operation.section
+        }
+        var expectedIndex = min(max(operation.index, 0), previousCandidates.count)
+        if let sourceIndex = previousCandidates.firstIndex(where: { $0.id == operation.itemID }),
+           sourceIndex < expectedIndex
+        {
+            // The operation index is an insertion offset in the pre-move
+            // section. Removing an earlier source shifts that offset left.
+            expectedIndex -= 1
+        }
+        expectedIndex = min(expectedIndex, candidates.count - 1)
         return candidates.indices.contains(expectedIndex)
             && candidates[expectedIndex].id == operation.itemID
             && operation.destinationDisplayID.map {
