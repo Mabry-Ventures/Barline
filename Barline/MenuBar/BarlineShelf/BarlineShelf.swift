@@ -24,6 +24,9 @@ final class BarlineShelfPanel: NSPanel {
     /// Manager for the Barline Bar's color.
     private let colorManager = BarlineShelfColorManager()
 
+    /// Confirms that AppKit ordering produced an onscreen WindowServer surface.
+    private let commitVerifier: any ShelfPresentationCommitVerifying
+
     /// The currently displayed section.
     private(set) var currentSection: MenuBarSection.Name?
 
@@ -36,6 +39,9 @@ final class BarlineShelfPanel: NSPanel {
     /// The cache refresh associated with the active presentation.
     private var cacheRefreshTask: Task<Void, Never>?
 
+    /// Generations inside a bounded order-and-verify transaction.
+    private var committingPresentationGenerations = Set<UInt>()
+
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
 
@@ -43,7 +49,11 @@ final class BarlineShelfPanel: NSPanel {
     private let logger = Logger(category: "BarlineShelf")
 
     /// Creates a new Barline Bar panel.
-    init() {
+    init(
+        commitVerifier: any ShelfPresentationCommitVerifying =
+            ShelfWindowCommitVerifier()
+    ) {
+        self.commitVerifier = commitVerifier
         super.init(
             contentRect: .zero,
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
@@ -56,11 +66,12 @@ final class BarlineShelfPanel: NSPanel {
         allowsToolTipsWhenApplicationIsInactive = true
         isFloatingPanel = true
         hidesOnDeactivate = false
+        canHide = false
         animationBehavior = .none
         backgroundColor = .clear
         hasShadow = false
         level = .mainMenu + 1
-        collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .moveToActiveSpace]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
     }
 
     /// Sets up the panel.
@@ -84,6 +95,22 @@ final class BarlineShelfPanel: NSPanel {
         }
         .store(in: &c)
 
+        publisher(for: \.isVisible)
+            .removeDuplicates()
+            .sink { [weak self] isVisible in
+                guard
+                    let self,
+                    !isVisible,
+                    committingPresentationGenerations.isEmpty,
+                    currentSection != nil
+                else {
+                    return
+                }
+                logger.error("Shelf ordered offscreen outside presentation transaction")
+                hide()
+            }
+            .store(in: &c)
+
         // Update the panel's origin whenever its size changes.
         publisher(for: \.frame).map(\.size)
             .removeDuplicates()
@@ -103,6 +130,10 @@ final class BarlineShelfPanel: NSPanel {
                 .throttle(for: 0.1, scheduler: DispatchQueue.main, latest: true)
                 .sink { [weak self] frame, screen in
                     guard let self else {
+                        return
+                    }
+
+                    guard committingPresentationGenerations.isEmpty else {
                         return
                     }
 
@@ -197,6 +228,7 @@ final class BarlineShelfPanel: NSPanel {
         // before updating the caches.
         appState.navigationState.isBarlineShelfPresented = true
         currentSection = section
+        // swiftformat:disable:next redundantSelf
         logger.notice(
             "Shelf presentation began generation=\(self.presentationGeneration, privacy: .public)"
         )
@@ -213,6 +245,7 @@ final class BarlineShelfPanel: NSPanel {
             return false
         }
         guard request.generation == presentationGeneration else {
+            // swiftformat:disable:next redundantSelf
             logger.notice(
                 "Shelf presentation rejected: stale generation request=\(request.generation, privacy: .public) current=\(self.presentationGeneration, privacy: .public)"
             )
@@ -254,20 +287,20 @@ final class BarlineShelfPanel: NSPanel {
             contentView = hostingView
         }
 
-        updateOrigin(for: screen)
-
-        // Color manager must be updated after updating the panel's origin,
-        // but before it is shown.
-        //
-        // Color manager handles frame changes automatically, but does so on
-        // the main queue, so we need to update manually once before showing
-        // the panel to prevent the color from flashing.
-        colorManager.updateAllProperties(with: frame, screen: screen)
-
-        orderFrontRegardless()
-        logger.notice(
-            "Shelf ordered generation=\(request.generation, privacy: .public)"
-        )
+        guard await commitPresentation(
+            request,
+            hostingView: hostingView,
+            on: screen
+        ) else {
+            guard request.generation == presentationGeneration else {
+                return false
+            }
+            logger.error(
+                "Shelf presentation rolled back generation=\(request.generation, privacy: .public)"
+            )
+            hide()
+            return false
+        }
 
         let firstFrameLatency = request.start.duration(to: .now)
         Logger.default.debug(
@@ -290,6 +323,94 @@ final class BarlineShelfPanel: NSPanel {
         }
 
         return true
+    }
+
+    /// Orders the shelf and commits only after WindowServer confirms it.
+    private func commitPresentation(
+        _ request: PresentationRequest,
+        hostingView: BarlineShelfHostingView,
+        on screen: NSScreen
+    ) async -> Bool {
+        committingPresentationGenerations.insert(request.generation)
+        defer { committingPresentationGenerations.remove(request.generation) }
+
+        for attempt in 1 ... 2 {
+            guard
+                request.generation == presentationGeneration,
+                currentSection == request.section,
+                appState?.navigationState.isBarlineShelfPresented == true
+            else {
+                return false
+            }
+
+            hostingView.layoutSubtreeIfNeeded()
+            let fittingSize = hostingView.fittingSize
+            if fittingSize.width > 0, fittingSize.height > 0 {
+                setContentSize(
+                    NSSize(
+                        width: min(fittingSize.width, screen.frame.width),
+                        height: fittingSize.height
+                    )
+                )
+            }
+            updateOrigin(for: screen)
+
+            // The color manager's frame observer runs on the next main-queue
+            // turn, so update synchronously before the first visible frame.
+            colorManager.updateAllProperties(with: frame, screen: screen)
+
+            orderFrontRegardless()
+            displayIfNeeded()
+            logger.notice(
+                "Shelf ordered generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public)"
+            )
+
+            let result = await commitVerifier.waitForCommit(
+                panel: self,
+                targetScreen: screen
+            )
+
+            guard request.generation == presentationGeneration else {
+                return false
+            }
+
+            switch result {
+            case .committed:
+                if hiddenControlGeometryRequiresHide() {
+                    logger.error(
+                        "Shelf commit rejected by fresh control geometry generation=\(request.generation, privacy: .public)"
+                    )
+                    return false
+                }
+                logger.notice(
+                    "Shelf presentation committed generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public)"
+                )
+                return true
+            case .cancelled:
+                return false
+            case let .timedOut(lastFailure):
+                logger.error(
+                    "Shelf presentation uncommitted generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public) failure=\(String(describing: lastFailure), privacy: .public)"
+                )
+                if attempt == 1 {
+                    orderOut(nil)
+                    await Task.yield()
+                }
+            }
+        }
+
+        return false
+    }
+
+    /// Rechecks the latest hidden-control geometry after a commit wait.
+    private func hiddenControlGeometryRequiresHide() -> Bool {
+        guard let controlItem = appState?.menuBarManager.controlItem(withName: .hidden) else {
+            return false
+        }
+        return MenuBarRecoveryPolicy.shouldHidePanel(
+            controlItemFrame: controlItem.frame,
+            screenFrame: controlItem.screen?.frame
+        )
     }
 
     /// Refreshes the caches after allowing the first panel frame to commit.
@@ -363,15 +484,16 @@ final class BarlineShelfPanel: NSPanel {
     }
 
     override func close() {
+        // swiftformat:disable:next redundantSelf
         logger.notice(
             "Shelf close requested generation=\(self.presentationGeneration, privacy: .public)"
         )
         cacheRefreshTask?.cancel()
         cacheRefreshTask = nil
         presentationGeneration &+= 1
-        super.close()
         currentSection = nil
         appState?.navigationState.isBarlineShelfPresented = false
+        super.close()
     }
 }
 

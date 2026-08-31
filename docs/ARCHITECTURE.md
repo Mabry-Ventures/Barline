@@ -44,6 +44,11 @@ responses cannot become authoritative.
    generations monotonically, restores when the backend supports it, and
    refreshes authoritative state. A failed recovery never republishes cached
    state from the superseded helper.
+8. Shelf presentation is provisional until two consecutive observations agree
+   that AppKit has a visible, active-Space panel with usable target-display
+   geometry and public Core Graphics reports that exact app-owned window
+   onscreen. Failed commits retry once and then roll back the logical section;
+   later AppKit order-out also reconciles the logical presentation state.
 
 Recurring 1–10 second refresh and image-capture timers have been removed.
 Refreshes are driven by application, workspace, wake, active-space, display,

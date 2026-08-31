@@ -16,7 +16,7 @@ PROBE="${BARLINE_PERFORMANCE_PROBE:-runtime-smoke}"
 BUILD_CONFIGURATION="${BARLINE_BUILD_CONFIGURATION:-Debug}"
 
 usage() {
-    printf 'usage: %s [--reuse-running] [--probe runtime-smoke|apple-event-reopen] [--output PATH]\n' "$0" >&2
+    printf 'usage: %s [--reuse-running] [--probe runtime-smoke|status-item-click|apple-event-reopen] [--output PATH]\n' "$0" >&2
 }
 
 while (($#)); do
@@ -38,7 +38,13 @@ while (($#)); do
     shift
 done
 
-[[ "$PROBE" == runtime-smoke || "$PROBE" == apple-event-reopen ]] || { usage; exit 2; }
+[[ "$PROBE" == runtime-smoke || "$PROBE" == status-item-click || "$PROBE" == apple-event-reopen ]] || {
+    usage
+    exit 2
+}
+if [[ "$PROBE" == status-item-click && -z "${BARLINE_BUILD_CONFIGURATION:-}" ]]; then
+    BUILD_CONFIGURATION="Release"
+fi
 [[ "$BUILD_CONFIGURATION" == Debug || "$BUILD_CONFIGURATION" == Release ]] || {
     printf 'error: BARLINE_BUILD_CONFIGURATION must be Debug or Release\n' >&2
     exit 2
@@ -82,7 +88,15 @@ if "$REUSE_RUNNING"; then
     }
 else
     /usr/bin/defaults write "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" -bool true
-    if [[ "$BUILD_CONFIGURATION" == Release ]]; then
+    if [[ "$PROBE" == status-item-click ]]; then
+        if [[ "$BUILD_CONFIGURATION" == Release ]]; then
+            BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_PRODUCTION_LAUNCH=1 \
+                "$ROOT/script/build_and_run.sh" --release --verify
+        else
+            BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_PRODUCTION_LAUNCH=1 \
+                "$ROOT/script/build_and_run.sh" --verify
+        fi
+    elif [[ "$BUILD_CONFIGURATION" == Release ]]; then
         BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_RUNTIME_SMOKE=1 \
             "$ROOT/script/build_and_run.sh" --release --verify
     else
