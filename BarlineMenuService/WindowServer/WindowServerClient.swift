@@ -210,23 +210,28 @@ final class WindowServerClient: @unchecked Sendable {
             guard !destinationIndices.isEmpty else {
                 throw MenuBarBackendError.operationFailed("No destination item is available")
             }
-            let targetIndex: Int
-            let placement: MovePlacement
-            if insertionIndex < destinationIndices.count {
-                targetIndex = destinationIndices[insertionIndex]
-                placement = .left
-            } else {
-                targetIndex = destinationIndices[destinationIndices.count - 1]
-                placement = .right
+            let eligibleDestinations = destinationIndices.enumerated().filter { _, index in
+                operation.destinationDisplayID.map {
+                    displayID(containing: classified[index].window.bounds) == $0
+                } != false
             }
-            let target = classified[targetIndex].window
-            if let destinationDisplayID = operation.destinationDisplayID,
-               displayID(containing: target.bounds) != destinationDisplayID
-            {
+            guard !eligibleDestinations.isEmpty else {
                 throw MenuBarBackendError.operationFailed(
                     "No destination item is available on the requested display"
                 )
             }
+            let targetIndex: Int
+            let placement: MovePlacement
+            if let following = eligibleDestinations.first(where: { offset, _ in
+                offset >= insertionIndex
+            }) {
+                targetIndex = following.element
+                placement = .left
+            } else {
+                targetIndex = eligibleDestinations[eligibleDestinations.count - 1].element
+                placement = .right
+            }
+            let target = classified[targetIndex].window
             lastOrigin = item.bounds.origin
             try Task.checkCancellation()
             try await synthesizeMove(item: item, target: target, placement: placement)
@@ -731,13 +736,19 @@ final class WindowServerClient: @unchecked Sendable {
         let initialOrigin = item.bounds.origin
         do {
             try await deliver(down, to: pid)
-            let draggedOrigin = try await waitForOriginChange(
+            guard let draggedOrigin = try await waitForOriginChange(
                 of: item.identifier,
                 from: initialOrigin,
                 timeout: .milliseconds(200)
-            )
+            ) else {
+                throw MenuBarBackendError.operationFailed("Menu bar item did not respond to move")
+            }
             try await deliver(up, to: pid)
             try await deliver(up, to: pid)
+            // Some hosted status items settle directly at their final origin
+            // after mouse-up and therefore have no second geometry transition.
+            // Event delivery has completed; the outer move loop and the typed
+            // coordinator postcondition verify the final placement.
             _ = try await waitForOriginChange(
                 of: item.identifier,
                 from: draggedOrigin,
@@ -760,7 +771,7 @@ final class WindowServerClient: @unchecked Sendable {
         of identifier: CGWindowID,
         from origin: CGPoint,
         timeout: Duration
-    ) async throws -> CGPoint {
+    ) async throws -> CGPoint? {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {
@@ -772,7 +783,7 @@ final class WindowServerClient: @unchecked Sendable {
             }
             try await Task.sleep(for: .milliseconds(2))
         }
-        throw MenuBarBackendError.operationFailed("Menu bar item did not respond to move")
+        return nil
     }
 
     /// Routes a menu bar event through both the session and target-process

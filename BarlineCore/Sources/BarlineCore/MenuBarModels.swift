@@ -261,24 +261,43 @@ public struct MenuBarMovePlanner: Sendable {
         from previousSnapshot: MenuBarSnapshot
     ) -> Bool {
         let candidates = snapshot.items.filter { $0.section == operation.section }
-        guard !candidates.isEmpty else { return false }
+        guard let itemIndex = candidates.firstIndex(where: { $0.id == operation.itemID }) else {
+            return false
+        }
+        guard operation.destinationDisplayID.map({ candidates[itemIndex].displayID == $0 }) != false else {
+            return false
+        }
         let previousCandidates = previousSnapshot.items.filter {
             $0.section == operation.section
         }
-        var expectedIndex = min(max(operation.index, 0), previousCandidates.count)
+        var insertionIndex = min(max(operation.index, 0), previousCandidates.count)
         if let sourceIndex = previousCandidates.firstIndex(where: { $0.id == operation.itemID }),
-           sourceIndex < expectedIndex
+           sourceIndex < insertionIndex
         {
             // The operation index is an insertion offset in the pre-move
             // section. Removing an earlier source shifts that offset left.
-            expectedIndex -= 1
+            insertionIndex -= 1
         }
-        expectedIndex = min(expectedIndex, candidates.count - 1)
-        return candidates.indices.contains(expectedIndex)
-            && candidates[expectedIndex].id == operation.itemID
-            && operation.destinationDisplayID.map {
-                candidates[expectedIndex].displayID == $0
-            } != false
+        let destinationCandidates = previousCandidates.filter { $0.id != operation.itemID }
+        insertionIndex = min(insertionIndex, destinationCandidates.count)
+
+        // Validate against the stable neighbor that defined the insertion
+        // slot. Absolute ordinals can shift when macOS adds or removes an
+        // unrelated status item while the move is in flight.
+        if insertionIndex < destinationCandidates.count {
+            let rightAnchorID = destinationCandidates[insertionIndex].id
+            guard let anchorIndex = candidates.firstIndex(where: { $0.id == rightAnchorID }) else {
+                return false
+            }
+            return itemIndex + 1 == anchorIndex
+        }
+        if let leftAnchorID = destinationCandidates.last?.id {
+            guard let anchorIndex = candidates.firstIndex(where: { $0.id == leftAnchorID }) else {
+                return false
+            }
+            return itemIndex == anchorIndex + 1
+        }
+        return itemIndex == 0
     }
 
     public func restoreOperations(for snapshot: MenuBarSnapshot) -> [MenuBarMoveOperation] {

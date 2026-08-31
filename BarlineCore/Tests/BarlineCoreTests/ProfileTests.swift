@@ -731,6 +731,50 @@ struct ProfileTests {
         #expect(MenuBarMovePlanner().resultMatches(move, in: after, from: before))
     }
 
+    @Test("Move result follows its stable anchor when unrelated ordinals shift")
+    func matchesMoveAfterUnrelatedOrdinalShift() {
+        let before = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: item(1), section: .hidden, order: 0),
+                MenuBarItemDescriptor(id: item(2), section: .hidden, order: 1),
+                MenuBarItemDescriptor(id: item(3), section: .hidden, order: 2),
+            ],
+            displayIDs: [],
+            activeSpaceIsValid: true
+        )
+        let after = MenuBarSnapshot(
+            generation: 2,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: item(4), section: .hidden, order: 0),
+                MenuBarItemDescriptor(id: item(2), section: .hidden, order: 1),
+                MenuBarItemDescriptor(id: item(1), section: .hidden, order: 2),
+                MenuBarItemDescriptor(id: item(3), section: .hidden, order: 3),
+            ],
+            displayIDs: [],
+            activeSpaceIsValid: true
+        )
+        let move = MenuBarMoveOperation(itemID: item(1), section: .hidden, index: 2)
+
+        #expect(MenuBarMovePlanner().resultMatches(move, in: after, from: before))
+
+        let nonAdjacent = MenuBarSnapshot(
+            generation: 3,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(id: item(4), section: .hidden, order: 0),
+                MenuBarItemDescriptor(id: item(1), section: .hidden, order: 1),
+                MenuBarItemDescriptor(id: item(2), section: .hidden, order: 2),
+                MenuBarItemDescriptor(id: item(3), section: .hidden, order: 3),
+            ],
+            displayIDs: [],
+            activeSpaceIsValid: true
+        )
+        #expect(!MenuBarMovePlanner().resultMatches(move, in: nonAdjacent, from: before))
+    }
+
     @Test("Activation precedence is deterministic before request recency")
     func activationPrecedence() {
         let low = ProfileActivationRequest(
