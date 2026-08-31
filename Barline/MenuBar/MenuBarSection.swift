@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import SwiftUI
 
 /// A representation of a section in a menu bar.
@@ -105,11 +106,10 @@ final class MenuBarSection {
 
     /// A Boolean value that indicates whether the section is enabled.
     var isEnabled: Bool {
-        if case .visible = name {
-            // The visible section should always be enabled.
-            return true
-        }
-        return controlItem.isAddedToMenuBar
+        MenuBarSectionAvailabilityPolicy.isEnabled(
+            isPrimarySection: name == .visible,
+            controlItemIsAdded: controlItem.isAddedToMenuBar
+        )
     }
 
     /// The hotkey to toggle the section.
@@ -155,9 +155,8 @@ final class MenuBarSection {
             return
         }
 
-        guard controlItem.isAddedToMenuBar else {
+        guard isEnabled else {
             // The section is disabled.
-            // TODO: Can we use isEnabled for this check?
             return
         }
 
