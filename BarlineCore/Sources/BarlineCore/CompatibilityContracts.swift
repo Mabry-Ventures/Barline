@@ -111,6 +111,42 @@ public struct MenuBarPointContext: Codable, Equatable, Sendable {
     }
 }
 
+/// A stable, domain-level request to inspect Barline's shelf surface.
+///
+/// The helper resolves the role to its private WindowServer representation;
+/// no window number or other ephemeral WindowServer identity crosses XPC.
+public struct MenuBarShelfPresentationProbe: Codable, Equatable, Sendable {
+    public let ownerProcessIdentifier: Int32
+    public let targetDisplayID: UInt32
+
+    public init(ownerProcessIdentifier: Int32, targetDisplayID: UInt32) {
+        self.ownerProcessIdentifier = ownerProcessIdentifier
+        self.targetDisplayID = targetDisplayID
+    }
+}
+
+public struct MenuBarShelfPresentationObservation: Codable, Equatable, Sendable {
+    public let roleIsPresentOnscreen: Bool
+    public let ownerMatches: Bool
+    public let intersectsTargetDisplay: Bool
+
+    public init(
+        roleIsPresentOnscreen: Bool,
+        ownerMatches: Bool,
+        intersectsTargetDisplay: Bool
+    ) {
+        self.roleIsPresentOnscreen = roleIsPresentOnscreen
+        self.ownerMatches = ownerMatches
+        self.intersectsTargetDisplay = intersectsTargetDisplay
+    }
+
+    public static let unavailable = MenuBarShelfPresentationObservation(
+        roleIsPresentOnscreen: false,
+        ownerMatches: false,
+        intersectsTargetDisplay: false
+    )
+}
+
 public struct MenuBarRevealObservationToken: Codable, Equatable, Hashable, Sendable {
     public let value: UUID
 
@@ -203,6 +239,7 @@ public enum MenuBarServiceRequest: Codable, Equatable, Sendable {
     case environment
     case configureCursorInBackground(Bool)
     case pointContext(MenuBarPoint)
+    case shelfPresentationObservation(MenuBarShelfPresentationProbe)
     case beginRevealObservation(MenuBarItemID)
     case revealObservationIsVisible(MenuBarRevealObservationToken)
     case endRevealObservation(MenuBarRevealObservationToken)
@@ -220,6 +257,7 @@ public enum MenuBarServiceResponse: Codable, Equatable, Sendable {
     case background(MenuBarBackgroundCapture)
     case environment(MenuBarEnvironmentSnapshot)
     case pointContext(MenuBarPointContext)
+    case shelfPresentationObservation(MenuBarShelfPresentationObservation)
     case revealObservation(MenuBarRevealObservationToken)
     case boolean(Bool)
     case health(MenuBarBackendHealth)

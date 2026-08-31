@@ -22,7 +22,7 @@ protocol ShelfPresentationCommitVerifying: AnyObject {
     ) async -> ShelfPresentationCommitResult
 }
 
-/// Uses public AppKit and Core Graphics state to verify shelf presentation.
+/// Reconciles public AppKit state with a typed helper-side WindowServer probe.
 @MainActor
 final class ShelfWindowCommitVerifier: ShelfPresentationCommitVerifying {
     private let timeout: Duration
@@ -54,7 +54,7 @@ final class ShelfWindowCommitVerifier: ShelfPresentationCommitVerifying {
                 return .cancelled
             }
 
-            let decision = ShelfPresentationCommitPolicy.evaluate(
+            let decision = await ShelfPresentationCommitPolicy.evaluate(
                 observation(panel: panel, targetScreen: targetScreen)
             )
             if commitTracker.observe(decision) {
@@ -80,45 +80,22 @@ final class ShelfWindowCommitVerifier: ShelfPresentationCommitVerifying {
     private func observation(
         panel: NSPanel,
         targetScreen: NSScreen
-    ) -> ShelfPresentationObservation {
-        let windowNumber = panel.windowNumber
-        let rows = CGWindowListCopyWindowInfo(
-            [.optionIncludingWindow],
-            CGWindowID(windowNumber)
-        ) as? [[String: Any]] ?? []
-        let row = rows.first {
-            ($0[kCGWindowNumber as String] as? NSNumber)?.intValue == windowNumber
-        }
-        let ownerProcessIdentifier = (row?[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
-        let isOnscreen = (row?[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue ?? false
-        let windowServerFrame = row?[kCGWindowBounds as String]
-            .flatMap(windowServerRect(from:))
-        let targetDisplayFrame = ShelfPresentationRect(CGDisplayBounds(targetScreen.displayID))
+    ) async -> ShelfPresentationObservation {
+        let windowServer = await (try? BarlineMenuService.Connection.shared
+            .shelfPresentationObservation(
+                ownerProcessIdentifier: ProcessInfo.processInfo.processIdentifier,
+                targetDisplayID: targetScreen.displayID
+            )) ?? .unavailable
 
         return ShelfPresentationObservation(
             appKitIsVisible: panel.isVisible,
             appKitIsOnActiveSpace: panel.isOnActiveSpace,
             appKitFrame: ShelfPresentationRect(panel.frame),
             targetScreenFrame: ShelfPresentationRect(targetScreen.frame),
-            windowServerIsPresentOnscreen: row != nil && isOnscreen,
-            windowServerOwnerMatches: ownerProcessIdentifier == ProcessInfo.processInfo.processIdentifier,
-            windowServerIntersectsTargetDisplay: windowServerFrame?.hasPositiveAreaIntersection(
-                with: targetDisplayFrame
-            ) == true
+            windowServerIsPresentOnscreen: windowServer.roleIsPresentOnscreen,
+            windowServerOwnerMatches: windowServer.ownerMatches,
+            windowServerIntersectsTargetDisplay: windowServer.intersectsTargetDisplay
         )
-    }
-
-    private func windowServerRect(from value: Any) -> ShelfPresentationRect? {
-        guard
-            let dictionary = value as? [String: Any],
-            let x = (dictionary["X"] as? NSNumber)?.doubleValue,
-            let y = (dictionary["Y"] as? NSNumber)?.doubleValue,
-            let width = (dictionary["Width"] as? NSNumber)?.doubleValue,
-            let height = (dictionary["Height"] as? NSNumber)?.doubleValue
-        else {
-            return nil
-        }
-        return ShelfPresentationRect(x: x, y: y, width: width, height: height)
     }
 }
 

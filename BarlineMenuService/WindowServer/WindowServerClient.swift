@@ -383,6 +383,25 @@ final class WindowServerClient: @unchecked Sendable {
         )
     }
 
+    static func shelfPresentationObservation(
+        _ probe: MenuBarShelfPresentationProbe
+    ) -> MenuBarShelfPresentationObservation {
+        let roleWindows = WindowInfo.createWindows(option: .onScreen)
+            .filter { $0.title == "Barline Bar" && $0.isOnScreen }
+        let ownerWindows = roleWindows.filter {
+            $0.ownerPID == probe.ownerProcessIdentifier
+        }
+        let displayBounds = CGDisplayBounds(CGDirectDisplayID(probe.targetDisplayID))
+        return MenuBarShelfPresentationObservation(
+            roleIsPresentOnscreen: !roleWindows.isEmpty,
+            ownerMatches: !ownerWindows.isEmpty,
+            intersectsTargetDisplay: ownerWindows.contains {
+                $0.bounds.intersection(displayBounds).width > 0 &&
+                    $0.bounds.intersection(displayBounds).height > 0
+            }
+        )
+    }
+
     func beginRevealObservation(_ itemID: MenuBarItemID) throws -> MenuBarRevealObservationToken {
         let menuBarWindows = try currentWindows()
         guard let item = identifiedWindows(menuBarWindows).first(where: { $0.id == itemID })?.window else {

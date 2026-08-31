@@ -25,6 +25,10 @@ struct MenuBarServiceCodecTests {
         )
         let revealUUID = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
         let revealToken = MenuBarRevealObservationToken(value: revealUUID)
+        let shelfProbe = MenuBarShelfPresentationProbe(
+            ownerProcessIdentifier: 42,
+            targetDisplayID: 1
+        )
         let requests: [MenuBarServiceRequest] = [
             .start,
             .capabilities,
@@ -37,6 +41,7 @@ struct MenuBarServiceCodecTests {
             .environment,
             .configureCursorInBackground(true),
             .pointContext(MenuBarPoint(x: 10, y: 20)),
+            .shelfPresentationObservation(shelfProbe),
             .beginRevealObservation(itemID),
             .revealObservationIsVisible(revealToken),
             .endRevealObservation(revealToken),
@@ -88,6 +93,11 @@ struct MenuBarServiceCodecTests {
         )
         let revealUUID = try #require(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
         let revealToken = MenuBarRevealObservationToken(value: revealUUID)
+        let shelfObservation = MenuBarShelfPresentationObservation(
+            roleIsPresentOnscreen: true,
+            ownerMatches: true,
+            intersectsTargetDisplay: true
+        )
         let responses: [MenuBarServiceResponse] = [
             .acknowledged,
             .capabilities(capabilities),
@@ -97,6 +107,7 @@ struct MenuBarServiceCodecTests {
             .background(background),
             .environment(environment),
             .pointContext(pointContext),
+            .shelfPresentationObservation(shelfObservation),
             .revealObservation(revealToken),
             .boolean(true),
             .health(MenuBarBackendHealth(backendName: "Tahoe", state: .degraded, message: "probe")),

@@ -193,6 +193,10 @@ final class Listener: @unchecked Sendable {
                         }
                     }
                 return .pointContext(result ?? .failure(.timedOut))
+            case let .shelfPresentationObservation(probe):
+                return .shelfPresentationObservation(
+                    .success(WindowServerClient.shelfPresentationObservation(probe))
+                )
             case let .beginRevealObservation(item):
                 let result: BarlineMenuService.ServiceResult<MenuBarRevealObservationToken>? =
                     AsyncRequestBridge.run {

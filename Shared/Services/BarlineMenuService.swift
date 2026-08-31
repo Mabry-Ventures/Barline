@@ -40,6 +40,7 @@ extension BarlineMenuService {
         case environment
         case configureCursorInBackground(Bool)
         case pointContext(MenuBarPoint)
+        case shelfPresentationObservation(MenuBarShelfPresentationProbe)
         case beginRevealObservation(MenuBarItemID)
         case revealObservationIsVisible(MenuBarRevealObservationToken)
         case endRevealObservation(MenuBarRevealObservationToken)
@@ -58,6 +59,7 @@ extension BarlineMenuService {
         case background(ServiceResult<MenuBarBackgroundCapture>)
         case environment(ServiceResult<MenuBarEnvironmentSnapshot>)
         case pointContext(ServiceResult<MenuBarPointContext>)
+        case shelfPresentationObservation(ServiceResult<MenuBarShelfPresentationObservation>)
         case revealObservation(ServiceResult<MenuBarRevealObservationToken>)
         case boolean(ServiceResult<Bool>)
         case health(MenuBarBackendHealth)
