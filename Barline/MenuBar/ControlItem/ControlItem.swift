@@ -5,6 +5,7 @@
 
 import Cocoa
 import Combine
+import OSLog
 
 // MARK: - ControlItem
 
@@ -135,6 +136,9 @@ final class ControlItem {
 
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
+
+    /// Privacy-safe lifecycle diagnostics for status-item action delivery.
+    private let logger = Logger(category: "ControlItem")
 
     /// The control item's underlying status item.
     private var statusItem: NSStatusItem {
@@ -470,6 +474,16 @@ final class ControlItem {
         else {
             return
         }
+
+        let eventPhase = switch event.type {
+        case .leftMouseDown: "left-down"
+        case .leftMouseUp: "left-up"
+        case .rightMouseUp: "right-up"
+        default: "other"
+        }
+        logger.notice(
+            "Control action delivered for \(self.sectionName.logString, privacy: .public), phase=\(eventPhase, privacy: .public)"
+        )
 
         switch event.type {
         // Scene-backed status items can briefly deliver their default mouse-up

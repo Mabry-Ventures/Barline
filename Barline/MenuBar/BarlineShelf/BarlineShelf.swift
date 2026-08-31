@@ -39,6 +39,9 @@ final class BarlineShelfPanel: NSPanel {
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
 
+    /// Privacy-safe lifecycle diagnostics for accessory panel presentation.
+    private let logger = Logger(category: "BarlineShelf")
+
     /// Creates a new Barline Bar panel.
     init() {
         super.init(
@@ -52,6 +55,7 @@ final class BarlineShelfPanel: NSPanel {
         isMovableByWindowBackground = true
         allowsToolTipsWhenApplicationIsInactive = true
         isFloatingPanel = true
+        hidesOnDeactivate = false
         animationBehavior = .none
         backgroundColor = .clear
         hasShadow = false
@@ -193,6 +197,9 @@ final class BarlineShelfPanel: NSPanel {
         // before updating the caches.
         appState.navigationState.isBarlineShelfPresented = true
         currentSection = section
+        logger.notice(
+            "Shelf presentation began generation=\(self.presentationGeneration, privacy: .public)"
+        )
 
         return request
     }
@@ -201,12 +208,22 @@ final class BarlineShelfPanel: NSPanel {
     /// presentation request.
     @discardableResult
     func show(_ request: PresentationRequest, on screen: NSScreen) async -> Bool {
-        guard
-            let appState,
-            request.generation == presentationGeneration,
-            currentSection == request.section,
-            appState.navigationState.isBarlineShelfPresented
-        else {
+        guard let appState else {
+            logger.error("Shelf presentation rejected: missing app state")
+            return false
+        }
+        guard request.generation == presentationGeneration else {
+            logger.notice(
+                "Shelf presentation rejected: stale generation request=\(request.generation, privacy: .public) current=\(self.presentationGeneration, privacy: .public)"
+            )
+            return false
+        }
+        guard currentSection == request.section else {
+            logger.notice("Shelf presentation rejected: section ownership changed")
+            return false
+        }
+        guard appState.navigationState.isBarlineShelfPresented else {
+            logger.notice("Shelf presentation rejected: navigation state closed")
             return false
         }
 
@@ -248,6 +265,9 @@ final class BarlineShelfPanel: NSPanel {
         colorManager.updateAllProperties(with: frame, screen: screen)
 
         orderFrontRegardless()
+        logger.notice(
+            "Shelf ordered generation=\(request.generation, privacy: .public)"
+        )
 
         let firstFrameLatency = request.start.duration(to: .now)
         Logger.default.debug(
@@ -343,6 +363,9 @@ final class BarlineShelfPanel: NSPanel {
     }
 
     override func close() {
+        logger.notice(
+            "Shelf close requested generation=\(self.presentationGeneration, privacy: .public)"
+        )
         cacheRefreshTask?.cancel()
         cacheRefreshTask = nil
         presentationGeneration &+= 1
