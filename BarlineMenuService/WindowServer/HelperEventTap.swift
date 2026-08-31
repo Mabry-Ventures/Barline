@@ -36,6 +36,10 @@ final class HelperEventTap: @unchecked Sendable {
         port.map(CGEvent.tapIsEnabled) ?? false
     }
 
+    var isValid: Bool {
+        port.map(CFMachPortIsValid) ?? false
+    }
+
     init(
         type: CGEventType,
         location: Location,
@@ -102,7 +106,7 @@ final class HelperEventTap: @unchecked Sendable {
 /// Serializes completion, timeout, and cancellation for one event delivery.
 final class HelperEventDelivery: @unchecked Sendable {
     enum DeliveryError: Error {
-        case unavailable
+        case unavailable(stage: Int)
         case timedOut
     }
 
@@ -110,6 +114,7 @@ final class HelperEventDelivery: @unchecked Sendable {
         var continuation: CheckedContinuation<Void, any Error>?
         var taps = [HelperEventTap]()
         var completed = false
+        var terminalError: (any Error)?
     }
 
     private let state = NSLock()
@@ -120,19 +125,35 @@ final class HelperEventDelivery: @unchecked Sendable {
         timeout: Duration,
         start: () -> Void
     ) async throws {
-        guard taps.allSatisfy(\.isEnabled) == false else {
-            throw DeliveryError.unavailable
+        if let index = taps.firstIndex(where: { !$0.isValid }) {
+            throw DeliveryError.unavailable(stage: index + 1)
         }
         try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 state.lock()
+                if storage.completed {
+                    let error = storage.terminalError ?? CancellationError()
+                    state.unlock()
+                    continuation.resume(throwing: error)
+                    return
+                }
                 storage.continuation = continuation
                 storage.taps = taps
                 state.unlock()
 
                 taps.forEach { $0.enable() }
-                guard taps.allSatisfy(\.isEnabled) else {
-                    complete(throwing: DeliveryError.unavailable)
+                if let index = taps.firstIndex(where: { !$0.isEnabled }) {
+                    taps.forEach { $0.disable() }
+                    complete(throwing: DeliveryError.unavailable(stage: index + 1))
+                    return
+                }
+
+                state.lock()
+                let shouldStart = !storage.completed
+                state.unlock()
+                guard shouldStart else {
+                    taps.forEach { $0.disable() }
                     return
                 }
                 start()
@@ -158,6 +179,7 @@ final class HelperEventDelivery: @unchecked Sendable {
             return
         }
         storage.completed = true
+        storage.terminalError = error
         let continuation = storage.continuation
         let taps = storage.taps
         storage.continuation = nil

@@ -183,30 +183,22 @@ final class WindowServerClient: @unchecked Sendable {
             let candidateIndices = classified.indices.filter {
                 classified[$0].section == operation.section
             }
-            let candidates = candidateIndices.map { classified[$0].window }
-            guard !candidates.isEmpty else {
+            guard !candidateIndices.isEmpty else {
                 throw MenuBarBackendError.operationFailed("No destination item is available")
             }
-            let requestedIndex = min(max(operation.index, 0), candidates.count - 1)
-            let targetIndex: Int
-            if let destinationDisplayID = operation.destinationDisplayID {
-                let displayCandidateIndices = candidates.indices.filter {
-                    displayID(containing: candidates[$0].bounds) == destinationDisplayID
-                }
-                guard let closestIndex = displayCandidateIndices.min(by: {
-                    abs($0 - requestedIndex) < abs($1 - requestedIndex)
-                }) else {
-                    throw MenuBarBackendError.operationFailed(
-                        "No destination item is available on the requested display"
-                    )
-                }
-                targetIndex = closestIndex
-            } else {
-                targetIndex = requestedIndex
-            }
+            let requestedIndex = min(max(operation.index, 0), candidateIndices.count)
             let sourceDisplayID = displayID(containing: item.bounds)
+            var insertionIndex = requestedIndex
+            let sourcePosition = candidateIndices.firstIndex(of: sourceIndex)
+            if let sourcePosition,
+               sourcePosition < insertionIndex
+            {
+                insertionIndex -= 1
+            }
+            let destinationIndices = candidateIndices.filter { $0 != sourceIndex }
+            insertionIndex = min(max(insertionIndex, 0), destinationIndices.count)
             if classified[sourceIndex].section == operation.section,
-               candidateIndices.firstIndex(of: sourceIndex) == requestedIndex,
+               sourcePosition == insertionIndex,
                operation.destinationDisplayID.map({ sourceDisplayID == $0 }) != false
             {
                 let updated = try snapshot()
@@ -215,10 +207,29 @@ final class WindowServerClient: @unchecked Sendable {
                     changedItemIDs: []
                 )
             }
-            let target = candidates[targetIndex]
+            guard !destinationIndices.isEmpty else {
+                throw MenuBarBackendError.operationFailed("No destination item is available")
+            }
+            let targetIndex: Int
+            let placement: MovePlacement
+            if insertionIndex < destinationIndices.count {
+                targetIndex = destinationIndices[insertionIndex]
+                placement = .left
+            } else {
+                targetIndex = destinationIndices[destinationIndices.count - 1]
+                placement = .right
+            }
+            let target = classified[targetIndex].window
+            if let destinationDisplayID = operation.destinationDisplayID,
+               displayID(containing: target.bounds) != destinationDisplayID
+            {
+                throw MenuBarBackendError.operationFailed(
+                    "No destination item is available on the requested display"
+                )
+            }
             lastOrigin = item.bounds.origin
             try Task.checkCancellation()
-            try await synthesizeDrag(item: item, target: target)
+            try await synthesizeMove(item: item, target: target, placement: placement)
             let delay = min(25 + (attempt * 20), 150)
             try await Task.sleep(for: .milliseconds(delay))
             let refreshed = try currentWindows()
@@ -644,32 +655,60 @@ final class WindowServerClient: @unchecked Sendable {
         try Task.checkCancellation()
     }
 
-    private func synthesizeDrag(item: WindowRecord, target: WindowRecord) async throws {
+    private enum MovePlacement {
+        case left
+        case right
+    }
+
+    private func synthesizeMove(
+        item: WindowRecord,
+        target: WindowRecord,
+        placement: MovePlacement
+    ) async throws {
         try Task.checkCancellation()
-        let start = CGPoint(x: item.bounds.midX, y: item.bounds.midY)
-        let end = CGPoint(x: target.bounds.midX, y: target.bounds.midY)
+        var start: CGPoint
+        var end: CGPoint
+        switch placement {
+        case .left:
+            start = CGPoint(x: target.bounds.minX, y: target.bounds.minY)
+            end = start
+            if item.bounds.maxX <= target.bounds.minX {
+                end.x -= item.bounds.width
+            } else {
+                start.x -= 1
+            }
+        case .right:
+            start = CGPoint(x: target.bounds.maxX, y: target.bounds.minY)
+            end = start
+            if item.bounds.minX <= target.bounds.maxX {
+                end.x -= item.bounds.width
+            } else {
+                start.x += 1
+            }
+        }
         let pid = WindowInfo(windowID: item.identifier)
             .flatMap { SourcePIDCache.shared.pid(for: $0) } ?? item.ownerPID
         guard
             let source = CGEventSource(stateID: .hidSystemState),
             let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: start, mouseButton: .left),
-            let drag = CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: end, mouseButton: .left),
             let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left),
             let windowField = CGEventField(rawValue: 0x33)
         else {
             throw MenuBarBackendError.unavailableCapability("menu bar drag synthesis")
         }
         down.flags = .maskCommand
+        down.setIntegerValueField(.eventSourceUserData, value: Int64.random(in: 1 ... Int64.max))
+        up.setIntegerValueField(.eventSourceUserData, value: Int64.random(in: 1 ... Int64.max))
         let cursorLocation = CGEvent(source: nil)?.location
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+        CGDisplayHideCursor(CGMainDisplayID())
         defer {
             if let cursorLocation {
                 CGWarpMouseCursorPosition(cursorLocation)
             }
-            CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+            CGDisplayShowCursor(CGMainDisplayID())
         }
         permitLocalEvents()
-        for (event, identifier) in [(down, item.identifier), (drag, item.identifier), (up, target.identifier), (up, target.identifier)] {
+        for (event, identifier) in [(down, item.identifier), (up, target.identifier)] {
             event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
             event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(identifier))
             event.setIntegerValueField(
@@ -677,13 +716,53 @@ final class WindowServerClient: @unchecked Sendable {
                 value: Int64(identifier)
             )
             event.setIntegerValueField(windowField, value: Int64(identifier))
-            try await deliver(event, to: pid)
-            // Once mouse-down is posted, complete the short gesture even if
-            // cancellation arrives so the system cannot be left in a dragged
-            // state. Cancellation is observed immediately after mouse-up.
-            try? await Task.sleep(for: .milliseconds(15))
+        }
+
+        let initialOrigin = item.bounds.origin
+        do {
+            try await deliver(down, to: pid)
+            let draggedOrigin = try await waitForOriginChange(
+                of: item.identifier,
+                from: initialOrigin,
+                timeout: .milliseconds(200)
+            )
+            try await deliver(up, to: pid)
+            try await deliver(up, to: pid)
+            _ = try await waitForOriginChange(
+                of: item.identifier,
+                from: draggedOrigin,
+                timeout: .milliseconds(200)
+            )
+        } catch {
+            // Always complete mouse-up after a successful or partially
+            // successful mouse-down so the item cannot remain grabbed.
+            let cleanup = Task.detached { [self] in
+                try? await deliver(up, to: pid)
+                try? await deliver(up, to: pid)
+            }
+            await cleanup.value
+            throw error
         }
         try Task.checkCancellation()
+    }
+
+    private func waitForOriginChange(
+        of identifier: CGWindowID,
+        from origin: CGPoint,
+        timeout: Duration
+    ) async throws -> CGPoint {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            if let current = try currentWindows().first(where: { $0.identifier == identifier })?.bounds.origin,
+               current != origin
+            {
+                return current
+            }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        throw MenuBarBackendError.operationFailed("Menu bar item did not respond to move")
     }
 
     /// Routes a menu bar event through both the session and target-process
@@ -705,7 +784,10 @@ final class WindowServerClient: @unchecked Sendable {
             type: .null,
             location: .process(pid),
             placement: .headInsertEventTap,
-            options: .defaultTap
+            // A passive control tap keeps the XPC service from needing its own
+            // separate Accessibility grant. Null signals are harmless if they
+            // continue through the target process's event stream.
+            options: .listenOnly
         ) { _, received in
             if self.event(received, matches: entry, fields: [.eventSourceUserData]) {
                 event.post(tap: .cgSessionEventTap)
@@ -753,6 +835,17 @@ final class WindowServerClient: @unchecked Sendable {
             ) {
                 entry.postToPid(pid)
             }
+        } catch let HelperEventDelivery.DeliveryError.unavailable(stage) {
+            let listenAllowed = CGPreflightListenEventAccess()
+            let postAllowed = CGPreflightPostEventAccess()
+            throw MenuBarBackendError.operationFailed(
+                "Menu bar event delivery unavailable at stage \(stage) " +
+                    "(listen: \(listenAllowed), post: \(postAllowed))"
+            )
+        } catch HelperEventDelivery.DeliveryError.timedOut {
+            throw MenuBarBackendError.operationFailed("Menu bar event delivery timed out")
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw MenuBarBackendError.operationFailed("Menu bar event delivery failed")
         }
