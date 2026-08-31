@@ -40,6 +40,8 @@ struct ProfilesSettingsPane: View {
                             "Capture a menu bar layout, then assign it to a macOS Focus using Focus Settings."
                         )
                     )
+                    .frame(maxWidth: .infinity)
+                    .gridCellColumns(2)
                 } else {
                     ForEach(manager.profiles) { profile in
                         HStack {
