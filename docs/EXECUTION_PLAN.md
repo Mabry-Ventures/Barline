@@ -28,8 +28,10 @@ gate result.
   provisioning profiles exist locally. Keychain authorization is configured,
   and a Developer ID export has passed nested signature validation.
 - Sparkle signing material and the full credentialed release path pass locally.
-  The `barline-notary` Keychain profile is available and has completed an Apple
-  Accepted submission, stapling, and Gatekeeper validation.
+  The `barline-notary` profile is stored in the login Keychain; release tooling
+  selects that Keychain explicitly to avoid a same-named stale credential in a
+  different backend. Exact-head release validation uses this explicit
+  credential-selection path.
 - Developer Tools automation mode and the fixture accessibility path have been
   validated. The production reopen-to-visible p95 gate necessarily activates
   Barline and was run in a dedicated unlocked interactive session; Barline is

@@ -14,10 +14,11 @@ EXPORT_OPTIONS=""
 RAW_BUILD_SETTINGS_JSON=""
 UNSIGNED=false
 NOTARY_PROFILE="${BARLINE_NOTARY_PROFILE:-}"
+NOTARY_KEYCHAIN="${BARLINE_NOTARY_KEYCHAIN:-${HOME}/Library/Keychains/login.keychain-db}"
 SPARKLE_ACCOUNT="${BARLINE_SPARKLE_ACCOUNT:-mabry-ventures-barline}"
 
 usage() {
-    printf 'usage: ./script/release.sh [--unsigned] [--notary-profile NAME] [--sparkle-account NAME]\n'
+    printf 'usage: ./script/release.sh [--unsigned] [--notary-profile NAME] [--notary-keychain PATH] [--sparkle-account NAME]\n'
 }
 
 while (($#)); do
@@ -26,6 +27,11 @@ while (($#)); do
         --notary-profile)
             (($# >= 2)) || { usage >&2; exit 2; }
             NOTARY_PROFILE="$2"
+            shift
+            ;;
+        --notary-keychain)
+            (($# >= 2)) || { usage >&2; exit 2; }
+            NOTARY_KEYCHAIN="$2"
             shift
             ;;
         --sparkle-account)
@@ -60,6 +66,7 @@ trap cleanup EXIT
 
 if ! "$UNSIGNED"; then
     [[ -n "$NOTARY_PROFILE" ]] || { printf 'error: signed release requires --notary-profile or BARLINE_NOTARY_PROFILE\n' >&2; exit 2; }
+    [[ -f "$NOTARY_KEYCHAIN" ]] || { printf 'error: notary Keychain does not exist\n' >&2; exit 2; }
     SIGNING_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/barline-release.${SHA}.XXXXXX")"
     ARCHIVE="$SIGNING_SCRATCH/Barline.xcarchive"
     RELEASE_DERIVED_DATA="$SIGNING_SCRATCH/DerivedData"
@@ -293,7 +300,9 @@ mkdir -p "$DIST"
 ZIP="$DIST/Barline-$VERSION.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
-env DEVELOPER_DIR="$DEVELOPER_PATH" xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json > "$RELEASE_ROOT/notarization.json"
+env DEVELOPER_DIR="$DEVELOPER_PATH" xcrun notarytool submit "$ZIP" \
+    --keychain-profile "$NOTARY_PROFILE" --keychain "$NOTARY_KEYCHAIN" \
+    --wait --output-format json > "$RELEASE_ROOT/notarization.json"
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' "$RELEASE_ROOT/notarization.json" || { printf 'error: notarization was not accepted\n' >&2; exit 1; }
 env DEVELOPER_DIR="$DEVELOPER_PATH" xcrun stapler staple "$APP"
 env DEVELOPER_DIR="$DEVELOPER_PATH" xcrun stapler validate "$APP"
