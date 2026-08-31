@@ -10,6 +10,42 @@ struct ShelfPresentationCommitPolicyTests {
         #expect(ShelfPresentationCommitPolicy.evaluate(observation()) == .committed)
     }
 
+    @Test
+    func preservesValidAppKitPresentationWhenWindowServerObserverIsUnavailable() {
+        let candidate = observation(windowServerIsPresentOnscreen: false)
+
+        #expect(ShelfPresentationCommitPolicy.evaluateAppKit(candidate) == .committed)
+        #expect(
+            ShelfPresentationCommitPolicy.evaluate(candidate) ==
+                .pending(.missingWindowServerWindow)
+        )
+    }
+
+    @Test(arguments: [
+        ShelfPresentationCommitDecision.pending(.notVisible),
+        .pending(.inactiveSpace),
+        .pending(.emptyFrame),
+        .pending(.outsideTargetScreen),
+    ])
+    func rejectsInvalidLocalPresentation(expected: ShelfPresentationCommitDecision) {
+        let candidate: ShelfPresentationObservation = switch expected {
+        case .committed:
+            observation()
+        case .pending(.notVisible):
+            observation(appKitIsVisible: false)
+        case .pending(.inactiveSpace):
+            observation(appKitIsOnActiveSpace: false)
+        case .pending(.emptyFrame):
+            observation(appKitFrame: ShelfPresentationRect(x: 0, y: 0, width: 0, height: 0))
+        case .pending(.outsideTargetScreen):
+            observation(appKitFrame: ShelfPresentationRect(x: 2000, y: 2000, width: 100, height: 40))
+        case .pending:
+            observation()
+        }
+
+        #expect(ShelfPresentationCommitPolicy.evaluateAppKit(candidate) == expected)
+    }
+
     @Test(arguments: [
         ShelfPresentationCommitDecision.pending(.notVisible),
         .pending(.inactiveSpace),

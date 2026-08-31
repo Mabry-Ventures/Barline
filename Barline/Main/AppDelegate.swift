@@ -101,12 +101,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // available without Accessibility. Features that manage other apps'
         // status items request that grant only when the user chooses them.
         appState.performSetup()
-        if appState.permissions.permissionsState == .missing,
-           !CommandLine.arguments.contains("--barline-reopen-probe")
-        {
-            appState.permissions.logger.debug("Starting in degraded mode without Accessibility")
-            openSettingsWindow()
-        }
+        // Permission checks can transiently report missing while macOS is
+        // reconnecting a newly installed signed build. Launch remains an
+        // accessory-only operation; permission UI is presented contextually
+        // when the user chooses a feature that needs it.
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {

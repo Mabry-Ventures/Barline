@@ -44,9 +44,12 @@ development line and are not release certification.
 - Menu-bar restoration now uses global cross-display planning, section-relative
   postconditions, explicit stable destination-display targeting,
   already-correct no-op handling, and monotonic helper generation rebasing.
-- The hidden-item shelf now commits presentation only after two consecutive
-  AppKit and WindowServer visibility confirmations, retries once on a bounded
-  timeout, and rolls back stale logical state when presentation cannot commit.
+- The hidden-item shelf now keeps a valid AppKit presentation ordered while an
+  unrelated compatibility-helper request delays WindowServer observation.
+  Helper confirmation remains stronger evidence and recovery input, but helper
+  availability can no longer erase a delivered status-item click.
+- Background launch no longer opens permission or Settings windows from a
+  transient permission read; permission UI remains contextual.
 - Release evidence now preserves a strict build-metadata whitelist instead of
   raw Xcode settings containing machine paths or signing configuration.
 

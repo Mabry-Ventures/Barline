@@ -9,6 +9,7 @@ import BarlineCore
 /// A bounded result from reconciling AppKit state with WindowServer state.
 enum ShelfPresentationCommitResult: Equatable, Sendable {
     case committed
+    case locallyCommitted(lastFailure: ShelfPresentationCommitFailure)
     case timedOut(lastFailure: ShelfPresentationCommitFailure)
     case cancelled
 }
@@ -48,15 +49,16 @@ final class ShelfWindowCommitVerifier: ShelfPresentationCommitVerifying {
             requiredConsecutiveSamples: requiredConsecutiveSamples
         )
         var lastFailure = ShelfPresentationCommitFailure.notVisible
+        var lastObservation: ShelfPresentationObservation?
 
         while start.duration(to: .now) < timeout {
             guard !Task.isCancelled else {
                 return .cancelled
             }
 
-            let decision = await ShelfPresentationCommitPolicy.evaluate(
-                observation(panel: panel, targetScreen: targetScreen)
-            )
+            let observation = await observation(panel: panel, targetScreen: targetScreen)
+            lastObservation = observation
+            let decision = ShelfPresentationCommitPolicy.evaluate(observation)
             if commitTracker.observe(decision) {
                 return .committed
             }
@@ -74,6 +76,12 @@ final class ShelfWindowCommitVerifier: ShelfPresentationCommitVerifying {
             }
         }
 
+        if
+            let lastObservation,
+            ShelfPresentationCommitPolicy.evaluateAppKit(lastObservation) == .committed
+        {
+            return .locallyCommitted(lastFailure: lastFailure)
+        }
         return .timedOut(lastFailure: lastFailure)
     }
 

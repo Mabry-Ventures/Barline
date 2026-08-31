@@ -69,7 +69,13 @@ public enum ShelfPresentationCommitDecision: Equatable, Sendable {
 
 /// Decides whether AppKit and WindowServer agree that the shelf is onscreen.
 public enum ShelfPresentationCommitPolicy {
-    public static func evaluate(
+    /// Decides whether AppKit has established a valid local presentation.
+    ///
+    /// WindowServer confirmation is stronger evidence, but its observer may be
+    /// temporarily unavailable while the compatibility helper is servicing an
+    /// unrelated request. A valid local presentation must remain ordered in
+    /// that case so observer availability cannot erase a user action.
+    public static func evaluateAppKit(
         _ observation: ShelfPresentationObservation
     ) -> ShelfPresentationCommitDecision {
         guard observation.appKitIsVisible else {
@@ -85,6 +91,16 @@ public enum ShelfPresentationCommitPolicy {
             with: observation.targetScreenFrame
         ) else {
             return .pending(.outsideTargetScreen)
+        }
+        return .committed
+    }
+
+    public static func evaluate(
+        _ observation: ShelfPresentationObservation
+    ) -> ShelfPresentationCommitDecision {
+        let appKitDecision = evaluateAppKit(observation)
+        guard appKitDecision == .committed else {
+            return appKitDecision
         }
         guard observation.windowServerIsPresentOnscreen else {
             return .pending(.missingWindowServerWindow)

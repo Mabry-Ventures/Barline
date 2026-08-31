@@ -21,8 +21,10 @@ final class Listener: @unchecked Sendable {
     /// The underlying XPC listener object.
     private var listener: XPCListener?
 
-    /// Probe-selected compatibility backend.
-    private let backend: any MenuBarBackend
+    /// Probe-selected compatibility backend. Construct it only after the
+    /// lightweight start handshake so backend capability probes cannot make
+    /// the containing app mistake service startup for a dead connection.
+    private lazy var backend: any MenuBarBackend = MenuBarBackendFactory.make()
 
     /// Returns a strict peer requirement for the containing Barline app.
     /// Certificate-signed builds require the same team and exact app signing
@@ -68,9 +70,7 @@ final class Listener: @unchecked Sendable {
     }
 
     /// Creates the shared listener.
-    private init() {
-        backend = MenuBarBackendFactory.make()
-    }
+    private init() {}
 
     deinit {
         cancel()

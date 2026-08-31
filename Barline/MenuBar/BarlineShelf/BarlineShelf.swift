@@ -386,6 +386,14 @@ final class BarlineShelfPanel: NSPanel {
                     "Shelf presentation committed generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public)"
                 )
                 return true
+            case let .locallyCommitted(lastFailure):
+                // The helper is an observer, not presentation authority. Keep
+                // a valid AppKit surface ordered while compatibility work is
+                // busy instead of rolling back the user's click.
+                logger.warning(
+                    "Shelf preserved with local commit generation=\(request.generation, privacy: .public) observerFailure=\(String(describing: lastFailure), privacy: .public)"
+                )
+                return true
             case .cancelled:
                 return false
             case let .timedOut(lastFailure):
