@@ -31,6 +31,15 @@ hosted autosave-name alias instead of assuming its rendered text is its AX label
 These results must be rebound after this gate correction changes the source SHA.
 No public release or production GO is implied.
 
+The second signed iteration (`a7f6e72`) also passed native-menu and popover
+activation, action, closure, and original-position restoration with a stricter
+visible-action resolver. Earlier failures are retained, not discarded: a menu
+opened and closed without its action receipt, and another run missed its short
+visible interval. The gate now requires a unique, enabled, on-screen,
+fixture-owned action with the expected menu-item or button role. This prevents
+stale or wrong-interface selection; it does not establish that as the cause of
+every earlier failure. The final source-bound package must rerun these journeys.
+
 The September 6 audit found 12 issues in `b03645e` (installed 1.0.6).
 The historical milestone table below is not qualification evidence for this
 replacement. Follow [the finding ledger](PRODUCTION_REMEDIATION.md) for current

@@ -52,20 +52,41 @@ func matches(_ element: AXUIElement, _ name: String) -> Bool {
 
 /// Depth and count caps ensure an unexpected AX tree cannot become an unbounded
 /// process-inventory crawl. Only these two explicitly selected apps are queried.
-func find(_ root: AXUIElement, named name: String, aliases: [String] = []) -> AXUIElement? {
+func find(
+    _ root: AXUIElement,
+    named name: String,
+    aliases: [String] = [],
+    requiredRole: String? = nil,
+    unique: Bool = false,
+    accepting: (AXUIElement) -> Bool = { _ in true }
+) -> AXUIElement? {
     var remaining = 500
     var visited = Set<CFHashCode>()
+    var candidates = [AXUIElement]()
+    var complete = true
     let deadline = Date().addingTimeInterval(1)
     func visit(_ element: AXUIElement, depth: Int) -> AXUIElement? {
-        guard depth < 12, remaining > 0, Date() < deadline,
-              visited.insert(CFHash(element)).inserted else { return nil }
+        guard visited.insert(CFHash(element)).inserted else { return nil }
+        guard depth < 12, remaining > 0, Date() < deadline else {
+            complete = false
+            return nil
+        }
         remaining -= 1
         AXUIElementSetMessagingTimeout(element, 0.03)
-        if matches(element, name) || aliases.contains(where: { matches(element, $0) }) {
-            return element
+        if matches(element, name) || aliases.contains(where: { matches(element, $0) }),
+           requiredRole == nil || (attribute(element, kAXRoleAttribute) as? String) == requiredRole,
+           accepting(element)
+        {
+            if !unique {
+                return element
+            }
+            candidates.append(element)
         }
         for key in [kAXWindowsAttribute, kAXChildrenAttribute, kAXContentsAttribute] {
             let children = attribute(element, key) as? [AXUIElement] ?? []
+            if children.count > 100 {
+                complete = false
+            }
             for child in children.prefix(100) {
                 if let found = visit(child, depth: depth + 1) {
                     return found
@@ -74,7 +95,8 @@ func find(_ root: AXUIElement, named name: String, aliases: [String] = []) -> AX
         }
         return nil
     }
-    return visit(root, depth: 0)
+    let first = visit(root, depth: 0)
+    return unique ? (complete && candidates.count == 1 ? candidates.first : nil) : first
 }
 
 func extras(_ app: AXUIElement) -> AXUIElement? {
@@ -168,6 +190,26 @@ do {
     func targetFrame() -> CGRect? {
         guard let bar = extras(fixture), let element = find(bar, named: target) else { return nil }
         return frame(element)
+    }
+    let actionRole = target == "BF Popover" && !right ? kAXButtonRole : kAXMenuItemRole
+    func targetAction() -> AXUIElement? {
+        let visibleFixtureWindows = windows().filter {
+            ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == fixturePID
+        }.compactMap(bounds)
+        guard !visibleFixtureWindows.isEmpty else { return nil }
+        // A retained popover can expose an identically named button while a
+        // native menu is active. Accept only this journey's role and one visible,
+        // fixture-owned action, never the first label encountered in the tree.
+        return find(fixture, named: "Fixture Receipt Action", aliases: ["fixture-journey-action"],
+                    requiredRole: actionRole, unique: true)
+        { element in
+            var owner: pid_t = 0
+            guard AXUIElementGetPid(element, &owner) == .success, owner == fixturePID,
+                  (attribute(element, kAXEnabledAttribute) as? Bool) != false,
+                  (attribute(element, "AXHidden") as? Bool) != true,
+                  let rect = frame(element), rect.width > 0, rect.height > 0 else { return false }
+            return visibleFixtureWindows.contains { $0.contains(CGPoint(x: rect.midX, y: rect.midY)) }
+        }
     }
     var shelfLabels = [target]
     func verifiedHostedFixtureAlias(sourceFrame: CGRect) -> String? {
@@ -418,9 +460,9 @@ do {
               current.button == (right ? "right" : "left") else { return false }
         // The witness reports its delegate transition; independently require the
         // target's real actionable menu/popover control to be exposed by AppKit.
-        return find(fixture, named: "Fixture Receipt Action") != nil
+        return targetAction() != nil
     }
-    guard let action = find(fixture, named: "Fixture Receipt Action"), let actionFrame = frame(action) else {
+    guard let action = targetAction(), let actionFrame = frame(action) else {
         throw JourneyError.failed("target_interface_action_unavailable")
     }
     guard !shelfVisible() else {
@@ -445,6 +487,7 @@ do {
         "physicalEventPath": true, "shelfObserved": true, "targetReceiptObserved": true,
         "targetInterfaceObserved": true, "targetActionObserved": true, "restorationObserved": true,
         "shelfStayedClosedDuringActivation": true,
+        "targetActionRole": actionRole, "targetActionUniqueAndOnScreen": true,
         "sourceSHA": required("BARLINE_SOURCE_SHA"),
         "executableSHA256": required("BARLINE_EXECUTABLE_SHA256"),
         "version": Bundle(url: runningApp.bundleURL!)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",

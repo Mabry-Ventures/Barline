@@ -13,6 +13,10 @@ present during activation/restoration. These are implementation changes until
 the signed candidate's target-receipt journey passes. The journey's bounded
 AX hit-test diagnostic fallback explicitly retains a failed AX traversal lane;
 it cannot promote pointer interaction evidence into an accessibility pass.
+The installed journey additionally requires a unique, visible, fixture-owned
+target action of the expected role. Candidate logs retain failed attempts as
+well as successful native-menu and popover action/restoration witnesses; one
+successful attempt is not broad compatibility or full production readiness.
 
 | Finding | Change | Acceptance evidence |
 | --- | --- | --- |
