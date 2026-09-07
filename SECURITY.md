@@ -1,11 +1,24 @@
 # Security policy
 
-Please report a suspected vulnerability privately through GitHub's private
-vulnerability reporting feature when it is available for the canonical Barline
-repository. Do not include credentials, private screen content, process lists,
+## Reporting a vulnerability
+
+Do not post exploit details, credentials, private screenshots, process lists,
 or other personal data in a public issue.
 
-Barline has no cloud service or account system. Reports about its local macOS
-permission use, XPC boundary, update verification, signing, or handling of
-diagnostic data are in scope. Supported versions will be listed here after the
-first Barline release.
+Use [GitHub private vulnerability reporting](https://github.com/Mabry-Ventures/Barline/security/advisories/new).
+Private reporting is enabled for this repository. Reports go to the repository
+maintainers, not the public issue tracker. Include the affected build, expected
+and observed behavior, and the smallest safe reproduction. No response-time
+commitment is currently made.
+
+## Scope and supported versions
+
+Barline has no cloud account system. Vulnerabilities involving local macOS
+permission handling, the XPC boundary, update verification, signing, imported
+layouts, or diagnostic data are in scope. General feature requests and ordinary
+UI bugs belong in [GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues)
+without sensitive attachments.
+
+No public binary release is available yet. The first qualified release and its
+security-support policy will be listed here when published. Development builds
+and unqualified macOS versions should not be mistaken for supported releases.

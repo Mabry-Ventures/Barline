@@ -4,6 +4,12 @@ Approved direction: September 7, 2026. This document supersedes older roadmap
 language about macOS 27 feature adoption or deferring its compatibility work.
 It does not supersede the source-bound qualification record of any candidate.
 
+The latest implementation and remaining feature gates are tracked in
+[FEATURE_QUALIFICATION.md](FEATURE_QUALIFICATION.md). Candidate 1.0.11 build 20
+includes the previously unfinished authoring/rule/shortcut paths; installed
+qualification remains separate from implementation. The user has conditionally
+authorized release once all required qualification passes.
+
 ## Product promise
 
 Your menu bar, organized. Your Mac, uninterrupted.

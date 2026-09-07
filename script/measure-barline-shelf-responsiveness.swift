@@ -333,17 +333,25 @@ private func click(at point: CGPoint) throws {
             deliverImmediately: true
         )
     case "status-item-click":
+        // Status items can move while Control Center relays out the bar. Resolve
+        // the exact app's current target for every dispatch, not once per burst.
+        let currentPoint = try barlineIconCenter()
+        if ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_TRACE"] == "1" {
+            let moved = hypot(currentPoint.x - point.x, currentPoint.y - point.y) > 1
+            print("TRACE click monotonic_ns=\(DispatchTime.now().uptimeNanoseconds) target_moved=\(moved) shelf_before=\(isBarlineShelfVisible())")
+            fflush(stdout)
+        }
         guard
             let mouseDown = CGEvent(
                 mouseEventSource: nil,
                 mouseType: .leftMouseDown,
-                mouseCursorPosition: point,
+                mouseCursorPosition: currentPoint,
                 mouseButton: .left
             ),
             let mouseUp = CGEvent(
                 mouseEventSource: nil,
                 mouseType: .leftMouseUp,
-                mouseCursorPosition: point,
+                mouseCursorPosition: currentPoint,
                 mouseButton: .left
             )
         else {
@@ -439,21 +447,29 @@ private func ensureClosed(iconPoint: CGPoint) throws {
 }
 
 private func runSingleClick(iconPoint: CGPoint) throws -> Double? {
-    try click(at: iconPoint)
-    guard let latency = waitForVisibility(true, timeout: Configuration.openTimeout) else {
-        return nil
-    }
-    try click(at: iconPoint)
-    _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
-    return milliseconds(latency)
+    let start = ContinuousClock.now
+    return try ShelfProbeCycle.run(
+        baselineClosed: { !isBarlineShelfVisible() },
+        click: { try click(at: iconPoint) },
+        waitForOpen: {
+            guard waitForVisibility(true, timeout: Configuration.openTimeout) != nil else { return nil }
+            // Include dispatch and target lookup, not just the post-click poll.
+            return milliseconds(start.duration(to: .now))
+        },
+        waitForClose: { waitForVisibility(false, timeout: Configuration.closeTimeout) != nil }
+    )
 }
 
 private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool, silentCancellation: Bool) {
+    let start = ContinuousClock.now
     try click(at: iconPoint)
     if waitForVisibility(true, timeout: Configuration.feedbackBudget) != nil {
+        let feedbackInBudget = start.duration(to: .now) <= Configuration.feedbackBudget
         try click(at: iconPoint)
-        _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
-        return (true, false)
+        guard waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+            throw ShelfProbeCycle.Failure.closeTimedOut
+        }
+        return (feedbackInBudget, false)
     }
 
     // Reproduce a user retrying because the first click produced no visible feedback.
@@ -462,7 +478,9 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
 
     if isBarlineShelfVisible() {
         try click(at: iconPoint)
-        _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
+        guard waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+            throw ShelfProbeCycle.Failure.closeTimedOut
+        }
     }
     return (false, silentCancellation)
 }

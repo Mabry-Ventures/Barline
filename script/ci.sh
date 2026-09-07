@@ -200,9 +200,11 @@ run_fast() {
     run_step "core-build" swift build --package-path BarlineCore
     run_step "core-tests" swift test --package-path BarlineCore --enable-code-coverage
     run_step "status-item-geometry" bash ./script/test-status-item-geometry.sh
+    run_step "shelf-probe-cycle" bash ./script/test-shelf-probe-cycle.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
         run_step "search-preferences-atomicity" bash ./script/test-search-preferences.sh
+        run_step "feature-preferences-atomicity" bash ./script/test-feature-preferences.sh
     fi
     run_step "installed-evidence-validator" bash ./script/test-installed-evidence.sh
     run_step "installed-evidence-writer" bash ./script/test-evidence-writer.sh
@@ -250,6 +252,7 @@ run_full() {
 run_nonfocus() {
     run_fast
     run_step "architecture-firewall" ./script/ci/architecture_firewall.sh
+    run_step "hotkey-registration" bash ./script/test-hotkey-registry.sh
     run_step "debug-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Debug \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/debug.xcresult" \

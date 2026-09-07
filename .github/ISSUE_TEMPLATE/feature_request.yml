@@ -3,6 +3,11 @@ description: Request a feature or suggest an idea.
 title: "[Feature Request]: "
 labels: Feature
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Barline prioritizes reliability, speed, local privacy, and a small understandable feature set.
+        Explain the problem you want to solve and how you handle it today. Issues and attachments are public; redact private information.
   - type: checkboxes
     attributes:
       label: Search for Similar Requests

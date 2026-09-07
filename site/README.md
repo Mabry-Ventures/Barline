@@ -1,7 +1,11 @@
-# Barline site
+# Barline website
 
-Static HTML/CSS for Cloudflare Pages. No framework, client JavaScript, third-party
-fonts, analytics, forms, payment SDK, cookies, database, or app backend.
+A small static HTML/CSS site for Cloudflare Pages. No framework, client-side
+JavaScript, third-party fonts, analytics, cookies, database, or app backend.
+Optional contributions open Stripe-hosted checkout; the site contains no
+payment SDK, secret keys, card fields, webhook, or entitlement logic.
+
+## Local development
 
 ```sh
 cd site
@@ -10,54 +14,46 @@ npm run build
 npm run preview
 ```
 
-Output: ignored `site/dist/`. Preview binds only to `127.0.0.1:4178`. No dependency
-installation is needed. The icon is copied from the existing native app asset.
+No dependency installation is needed. Build output is ignored `site/dist/`.
+Preview binds to `127.0.0.1:4178`. The icon comes from the native app asset.
 
-## Staging, not publication
+## Deployment and availability
 
-The site shows pending release availability and is marked `noindex`. The user
-registered `usebarline.com` and authorized staging plus live support setup after
-sandbox success/decline/abandonment checks. The support button opens:
-https://buy.stripe.com/cNibJ1a370l33AVgnk1ck02
-This accepts real payments even from preview; visible copy warns visitors.
-No real payment was submitted during live verification.
-No card fields, keys, webhooks, entitlement state or app payment logic are needed.
+The configured Cloudflare Pages project is `barline-site`, with `site` as the
+project root and `dist` as output. It uses Direct Upload. Deployment ownership
+must be chosen deliberately; do not add another GitHub workflow as a shortcut.
 
-Cloudflare Pages output is `dist`, project root is `site`. The supplied Wrangler
-configuration targets the `barline-site` Direct Upload project in Mabry Ventures.
-The `staging` branch is a Preview environment, not production. Direct Upload
-cannot later switch to Git integration without creating a new Pages project;
-select deployment ownership deliberately. Do not add a second GitHub workflow.
+The `staging` branch is a Preview environment. Its pages are marked `noindex`
+and show pending app-release availability. The contribution link accepts real
+payments even from preview, and the visible copy says so. `noindex` discourages
+indexing; it is not access control.
 
-Verified preview: https://staging.barline-site.pages.dev
-Latest immutable deployment: https://5c0693c2.barline-site.pages.dev
-Live-support update: September 7, 2026. Evidence: `QA.md`.
-The provider lists source `184edc7`, but this upload includes uncommitted site
-changes; that field is not a complete source certificate. Asset hashes and
-deployed content checks are retained under ignored `.artifacts/site/`.
-No custom domain, production deployment or public app release was activated.
-Live checkout is active. `noindex` discourages indexing; it is not access control.
+`usebarline.com` is the intended canonical domain. Production DNS/TLS, redirects,
+deployed content, and app-download destinations still require launch validation.
+Do not turn a staging deployment into a claim of public app availability.
 
-Before public launch: confirm domain/TLS and redirects, qualify real download
-and complete source/archive links, remove preview-only real-payment/indexing
-wording and restrictions, check external links, verify
-deployed security headers/404 and re-run desktop/mobile/keyboard QA. Publishing
-the app release/update feed still requires the user's final approval.
+## Public launch checklist
 
-## Design system
+- Finish app qualification and provide exact signed binary, corresponding
+  source, checksums, license notices, and version-specific release notes.
+- Validate approved download and support destinations; no placeholder buttons.
+- Confirm production domain ownership, DNS/TLS, HTTPS redirects, and canonical URL.
+- Update preview-only copy and indexing controls only for the approved launch.
+- Verify deployed response bodies, CSP/security headers, and a genuine 404.
+- Repeat desktop/mobile, keyboard, reduced-motion, and contrast checks.
+- Confirm the private security/conduct reporting channels before linking them.
 
-Two generated section references, retained under ignored `.artifacts/site/design/`,
-define the implementation: true white background, graphite text, restrained
-cobalt actions, native system sans, open columns and thin rules, 12px buttons.
-No card grid, hero eyebrow, animated background, or commercial pricing tiers.
+See [QA](QA.md) and [support delivery](../docs/SUPPORT_DELIVERY.md). Keep provider
+identifiers, payment receipts, private workspace links, and detailed operator
+logs in ignored local evidence rather than public documentation.
 
-Allowed hero copy: Barline; How it works; Support; Your menu bar, organized.;
-Your Mac, uninterrupted.; A quieter menu bar. A native Mac utility.; Everything
-stays on your Mac.; Release status; See how it works; For Apple Silicon · macOS 26.
+## Design
 
-Intentional accuracy deviations: use the real Barline icon, not the generated
-approximation; replace the invented two-row Customize Shelf illustration with
-a clearly labeled single-row disclosure demonstration; use explicit unqualified
-macOS 27 language. The illustration is not a screenshot or a real OS control.
-Its generic symbols are native SVG icons; all website text/controls are HTML.
-On phones columns stack in reading order and the illustrated shelf stays in bounds.
+Use white surfaces, graphite text, restrained cobalt actions, native system
+fonts, open columns, and thin rules. Avoid commercial pricing tiers, donation
+nags, animated backgrounds, and invented screenshots or performance claims.
+
+The tagline is **Your menu bar, organized. Your Mac, uninterrupted.** The menu
+illustration is a labeled demonstration, not a screenshot or live OS control.
+Preserve the About page's Ice attribution, source/provenance links, GPL notices,
+and independent-project language.

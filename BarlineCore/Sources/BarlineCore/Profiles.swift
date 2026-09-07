@@ -981,6 +981,7 @@ public struct BarlineProfile: Codable, Hashable, Sendable, Identifiable {
 
 public enum ProfileActivationSource: String, Codable, CaseIterable, Sendable {
     case configuredDefault
+    case contextualRule
     case focus
     case shortcut
     case appIntent
@@ -990,13 +991,14 @@ public enum ProfileActivationSource: String, Codable, CaseIterable, Sendable {
     public var retainsArbitrationRequestWhileActive: Bool {
         switch self {
         case .configuredDefault, .focus: true
-        case .shortcut, .appIntent, .manual, .recovery: false
+        case .contextualRule, .shortcut, .appIntent, .manual, .recovery: false
         }
     }
 
     public var precedence: Int {
         switch self {
         case .configuredDefault: 0
+        case .contextualRule: 50
         case .focus: 100
         case .shortcut: 200
         case .appIntent: 300

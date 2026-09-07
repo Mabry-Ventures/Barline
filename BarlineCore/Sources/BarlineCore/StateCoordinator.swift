@@ -510,9 +510,25 @@ public actor MenuBarStateCoordinator {
         }
     }
 
-    /// Applies every item move in a profile as one serialized transaction.
-    /// The profile is not made authoritative until the post-operation snapshot
-    /// validates; any failure restores both the prior layout and profile ID.
+    /// Captures a fresh, uniquely identified active display without mutating it.
+    public func captureDisplayVariant(profile: BarlineProfile) async throws -> DisplayProfileOverride {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
+        try Task.checkCancellation()
+        let environment = try await backend.environment()
+        guard let displayID = environment.activeStableDisplayID else {
+            throw DisplayVariantCapture.Failure.unavailable
+        }
+        let candidate = try await normalizedBackendSnapshot()
+        let snapshot = try validator.validate(candidate, previous: currentSnapshot, now: Date()).get()
+        guard try await backend.environment().activeStableDisplayID == displayID else {
+            throw DisplayVariantCapture.Failure.unavailable
+        }
+        return try DisplayVariantCapture.capture(profile: profile, snapshot: snapshot, displayID: displayID)
+    }
+
+    /// Applies a profile transactionally; failures restore prior layout and authority.
     @discardableResult
     public func activate(
         profile: BarlineProfile,
@@ -520,6 +536,7 @@ public actor MenuBarStateCoordinator {
         now: Date? = nil,
         expectedGeneration: UInt64? = nil,
         workspaceTransaction: MenuBarWorkspaceTransaction? = nil,
+        admission: (@Sendable () async throws -> Void)? = nil,
         prepareCheckpoint: (
             @Sendable (MenuBarWorkspaceCheckpoint, ResolvedProfilePresentation) async throws -> Void
         )? = nil
@@ -529,6 +546,7 @@ public actor MenuBarStateCoordinator {
         try requireItemInteraction(nil)
 
         try Task.checkCancellation()
+        try await admission?()
         if let expectedGeneration {
             try requireCurrentGeneration(expectedGeneration)
         }
@@ -614,7 +632,10 @@ public actor MenuBarStateCoordinator {
         }
         var targetWorkspace = ProfileWorkspaceState(profile: profile)
         targetWorkspace.presentation = presentation
+        try await admission?()
         try await supersedeTemporaryReveals()
+        try Task.checkCancellation()
+        try await admission?()
         mutationGeneration &+= 1
         let generation = mutationGeneration
         var didBeginLayoutMutation = false
@@ -654,6 +675,8 @@ public actor MenuBarStateCoordinator {
                     sectionCandidates.firstIndex(where: { $0.displayID == displayID })
                 } ?? 0
                 for (index, itemID) in itemIDs.enumerated() {
+                    try Task.checkCancellation()
+                    try await admission?()
                     didBeginLayoutMutation = true
                     _ = try await backend.move(
                         MenuBarMoveOperation(
@@ -668,6 +691,7 @@ public actor MenuBarStateCoordinator {
 
             try Task.checkCancellation()
             let candidate = try await normalizedBackendSnapshot()
+            try await admission?()
             switch validator.validate(candidate, previous: before, now: now ?? Date()) {
             case let .success(snapshot):
                 guard generation == mutationGeneration else {
@@ -699,11 +723,13 @@ public actor MenuBarStateCoordinator {
                     }
                 }
                 try validateProfileResult(layout, in: snapshot, displayID: profileDisplayID)
+                try await admission?()
                 if let appliedWorkspaceRevision,
                    await workspaceTransaction?.currentRevision() != appliedWorkspaceRevision
                 {
                     throw MenuBarWorkspaceTransactionError.superseded
                 }
+                try Task.checkCancellation()
                 currentSnapshot = snapshot
                 lastKnownGoodSnapshot = snapshot
                 lastRejection = nil

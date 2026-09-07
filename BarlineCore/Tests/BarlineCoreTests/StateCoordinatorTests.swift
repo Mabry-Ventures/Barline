@@ -9,6 +9,98 @@ import Testing
 
 @Suite("Transactional state coordinator")
 struct StateCoordinatorTests {
+    @Test("Rule authority denial occurs before any layout or workspace effect")
+    func ruleAdmissionDenialHasNoEffects() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(snapshots: [before])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(profile: profile, admission: { throw CancellationError() })
+        }
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.mutationGeneration == 0)
+    }
+
+    @Test("Rule authority revocation between moves compensates without publishing the layout")
+    func ruleAdmissionRevocationRollsBack() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let restored = makeSnapshot(generation: 3, count: 2)
+        let backend = FakeBackend(snapshots: [before, restored])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(profile: profile, admission: {
+                if await !backend.moveOperations.isEmpty {
+                    throw CancellationError()
+                }
+            })
+        }
+        #expect(await backend.moveOperations.count == 1)
+        #expect(await backend.restoredSnapshots.count == 1)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.currentSnapshot == restored)
+        #expect(await coordinator.canUndo == false)
+    }
+
+    @Test("Rule revocation after workspace apply restores workspace without moving items")
+    func ruleAdmissionRestoresWorkspace() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let restored = makeSnapshot(generation: 3, count: 2)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let workspace = WorkspaceRecorder(initial: original)
+        let backend = FakeBackend(snapshots: [before, live, restored])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(
+                profile: profile,
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() }, apply: { try await workspace.apply($0) }
+                ),
+                admission: {
+                    if await !workspace.values.isEmpty {
+                        throw CancellationError()
+                    }
+                }
+            )
+        }
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await workspace.values.count == 2)
+        #expect(await workspace.capture() == original)
+        #expect(await coordinator.currentSnapshot == restored)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Admission is rechecked after the asynchronous restoration journal guard")
+    func ruleAdmissionRecheckedAfterJournal() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(snapshots: [before])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let journal = RestorationGuardRecorder(rejects: false)
+        _ = try await coordinator.refresh()
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await journal.check() }
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(profile: profile, admission: {
+                if await journal.calls > 0 {
+                    throw CancellationError()
+                }
+            })
+        }
+        #expect(await journal.calls == 1)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.mutationGeneration == 0)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
     @Test("Pending restoration guard blocks manual layout effects without replacing authority")
     func restorationGuardBlocksManualMutation() async throws {
         let before = makeSnapshot(generation: 1, count: 2)

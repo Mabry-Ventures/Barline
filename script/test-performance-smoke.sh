@@ -137,6 +137,7 @@ cp "$ROOT/script/measure-barline-shelf-responsiveness.swift" "$PERFORMANCE_SOURC
 xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     -framework AppKit -framework CoreGraphics \
     "$ROOT/script/StatusItemFrameMatching.swift" \
+    "$ROOT/script/ShelfProbeCycle.swift" \
     "$PERFORMANCE_SOURCE_DIR/main.swift" -o "$BINARY"
 if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
     BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \

@@ -765,6 +765,9 @@ extension MenuBarItemManager {
         recordsHistory: Bool = true,
         interactionID: UUID? = nil
     ) async throws {
+        if recordsHistory {
+            appState?.contextualRules.pauseForManualChange()
+        }
         guard appState?.permissions.accessibility.hasPermission == true else {
             throw EventError.cannotComplete
         }

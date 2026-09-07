@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Carbon.HIToolbox
 import Cocoa
 import OSLog
@@ -10,6 +11,18 @@ import OSLog
 struct KeyCombination: Hashable {
     let key: KeyCode
     let modifiers: Modifiers
+
+    var portableChord: ItemShortcutChord {
+        ItemShortcutChord(keyCode: key.rawValue, modifiers: modifiers.rawValue)
+    }
+
+    var isValid: Bool {
+        portableChord.isValid
+    }
+
+    init(chord: ItemShortcutChord) {
+        self.init(key: KeyCode(rawValue: chord.keyCode), modifiers: Modifiers(rawValue: chord.modifiers))
+    }
 
     /// A string representation for the key combination suitable
     /// for display.
@@ -64,6 +77,7 @@ private func getSystemReservedKeyCombinations() -> [KeyCombination] {
 }
 
 // MARK: KeyCombination: Codable
+
 extension KeyCombination: Codable {
     init(from decoder: any Decoder) throws {
         var container = try decoder.unkeyedContainer()
@@ -71,8 +85,11 @@ extension KeyCombination: Codable {
             let description = "Expected 2 encoded values, found \(container.count ?? 0)"
             throw DecodingError.dataCorruptedError(in: container, debugDescription: description)
         }
-        self.key = try KeyCode(rawValue: container.decode(Int.self))
-        self.modifiers = try Modifiers(rawValue: container.decode(Int.self))
+        key = try KeyCode(rawValue: container.decode(Int.self))
+        modifiers = try Modifiers(rawValue: container.decode(Int.self))
+        guard isValid else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid shortcut combination")
+        }
     }
 
     func encode(to encoder: any Encoder) throws {

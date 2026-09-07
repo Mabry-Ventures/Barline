@@ -58,6 +58,7 @@ final class AppState: ObservableObject {
 
     /// Persistence and transactional activation for menu bar profiles.
     let profileManager = ProfileManager()
+    let contextualRules = ContextualRulesManager()
 
     /// Manager for user notifications.
     let userNotificationManager = UserNotificationManager()
@@ -107,6 +108,7 @@ final class AppState: ObservableObject {
         userNotificationManager.performSetup(with: self)
 
         configureCancellables()
+        await contextualRules.performSetup(with: self)
     }
 
     /// Performs app state setup. Compatibility-dependent features fail closed

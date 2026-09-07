@@ -35,6 +35,15 @@ final class ProfileManager: ObservableObject {
     @Published private(set) var isBusy = false
     @Published var statusMessage: String?
 
+    /// This is authority from Barline's configured native Focus Filter, not a
+    /// second Focus-mode catalog or inference from notification preferences.
+    var configuredFocusIsActive: Bool? {
+        guard bridgeDefaults != nil else { return nil }
+        return isProcessingBridgeCommands ||
+            processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil ||
+            activationRequests[.focus] != nil
+    }
+
     private static let profileCatalogKey = "intent.profileCatalog"
     private static let processedCommandIDsKey = "intent.processedCommandIDs"
     private static let profileBeforeFocusIDKey = "focus.profileBeforeFocusID"
@@ -67,6 +76,7 @@ final class ProfileManager: ObservableObject {
     private var isProcessingBridgeCommands = false
     private var needsBridgeCommandRescan = false
     private var workspaceRevision: UInt64 = 0
+    private var isApplyingWorkspaceSettings = false
 
     init(
         fileManager: FileManager = .default,
@@ -182,11 +192,15 @@ final class ProfileManager: ObservableObject {
         source: ProfileActivationSource = .manual,
         expectedGeneration: UInt64? = nil,
         authorityToken: UUID? = nil,
+        admission: (@Sendable () async throws -> Void)? = nil,
         prepareCheckpoint: (
             @Sendable (MenuBarWorkspaceCheckpoint, ResolvedProfilePresentation) async throws -> Void
         )? = nil
     ) async -> Bool {
         guard let appState else { return false }
+        if [.manual, .shortcut, .appIntent, .recovery].contains(source) {
+            appState.contextualRules.pauseForManualChange()
+        }
         let resolvedAuthorityToken = authorityToken ?? UUID()
         var didActivate = false
         await performOperation(successMessage: "Profile applied.") {
@@ -212,6 +226,7 @@ final class ProfileManager: ObservableObject {
                     profile: resolvedProfile,
                     expectedGeneration: expectedGeneration,
                     workspaceTransaction: self.workspaceTransaction(),
+                    admission: admission,
                     prepareCheckpoint: prepareCheckpoint
                 )
                 let reconciledProfiles = self.profilesReconcilingDisplayAliases(
@@ -286,19 +301,27 @@ final class ProfileManager: ObservableObject {
         return didActivate
     }
 
+    @discardableResult
     func update(
         _ profile: BarlineProfile,
         name: String,
         symbol: String?,
         groups: [ProfileGroup],
-        spacers: [ProfileSpacer]
-    ) async {
+        spacers: [ProfileSpacer],
+        displayOverrides: [DisplayProfileOverride]? = nil
+    ) async -> Bool {
+        var didSave = false
+        appState?.contextualRules.pauseForManualChange()
         await performOperation(successMessage: "Profile updated.") {
             guard let index = self.profiles.firstIndex(where: { $0.id == profile.id }) else {
                 throw MenuBarBackendError.operationFailed("profile is unavailable")
             }
             let current = self.profiles[index]
-            if current.groups != groups || current.spacers != spacers {
+            guard current == profile else {
+                throw MenuBarBackendError.operationFailed("layout changed while editing; reopen the editor")
+            }
+            let variants = displayOverrides ?? current.displayOverrides
+            if current.groups != groups || current.spacers != spacers || current.displayOverrides != variants {
                 try self.validateProfileDefinitionMutation(profileID: current.id)
             }
             let updatedProfile = BarlineProfile(
@@ -308,7 +331,7 @@ final class ProfileManager: ObservableObject {
                 layout: current.layout,
                 groups: groups,
                 spacers: spacers,
-                displayOverrides: current.displayOverrides,
+                displayOverrides: variants,
                 appearance: current.appearance,
                 shelfBehavior: current.shelfBehavior,
                 revealTriggers: current.revealTriggers,
@@ -321,7 +344,7 @@ final class ProfileManager: ObservableObject {
             var updated = self.profiles
             updated[index] = updatedProfile
             try await self.store.save(updated)
-            let presentationChanged = current.groups != groups || current.spacers != spacers
+            let presentationChanged = current.groups != groups || current.spacers != spacers || current.displayOverrides != variants
             let shouldInvalidatePublishedAuthority = presentationChanged
                 && self.activeProfileID == current.id
             let invalidatedCoordinatorAuthority = if presentationChanged,
@@ -339,6 +362,7 @@ final class ProfileManager: ObservableObject {
                     || invalidatedCoordinatorAuthority
             )
         } completion: { [weak self] saved in
+            didSave = true
             self?.profiles = saved.profiles
             if saved.invalidatedAuthority {
                 self?.activeProfileID = nil
@@ -356,9 +380,11 @@ final class ProfileManager: ObservableObject {
             }
             self?.publishCatalog()
         }
+        return didSave
     }
 
     func resetFromCurrentWorkspace(_ profile: BarlineProfile) async {
+        appState?.contextualRules.pauseForManualChange()
         guard let appState else { return }
         await performOperation(successMessage: "Profile reset from the current workspace.") {
             guard let index = self.profiles.firstIndex(where: { $0.id == profile.id }) else {
@@ -404,6 +430,7 @@ final class ProfileManager: ObservableObject {
     }
 
     func restoreLastKnownGoodLayout() async {
+        appState?.contextualRules.pauseForManualChange()
         guard let appState else { return }
         await performOperation(successMessage: "Last-known-good layout restored.") {
             _ = try await appState.compatibilityCoordinator.perform(.restoreLastKnownGood)
@@ -421,10 +448,12 @@ final class ProfileManager: ObservableObject {
     }
 
     func undoLayoutChange() async {
+        appState?.contextualRules.pauseForManualChange()
         await performHistoryChange(isUndo: true)
     }
 
     func redoLayoutChange() async {
+        appState?.contextualRules.pauseForManualChange()
         await performHistoryChange(isUndo: false)
     }
 
@@ -692,6 +721,8 @@ final class ProfileManager: ObservableObject {
     }
 
     private func applyWorkspaceSettings(_ workspace: ProfileWorkspaceState) {
+        isApplyingWorkspaceSettings = true
+        defer { isApplyingWorkspaceSettings = false }
         guard let appState else { return }
         let general = appState.settings.general
         general.useBarlineShelf = workspace.shelfBehavior.isEnabled
@@ -749,6 +780,7 @@ final class ProfileManager: ObservableObject {
         _ workspace: ProfileWorkspaceState,
         expectedRevision: UInt64? = nil
     ) async throws -> UInt64 {
+        try Task.checkCancellation()
         guard let appState else {
             throw MenuBarBackendError.operationFailed("app state unavailable")
         }
@@ -782,6 +814,8 @@ final class ProfileManager: ObservableObject {
             }
             throw MenuBarWorkspaceTransactionError.superseded
         }
+        isApplyingWorkspaceSettings = true
+        defer { isApplyingWorkspaceSettings = false }
         appState.appearanceManager.configuration = try appearanceConfiguration(
             applying: workspace.appearance,
             to: appState.appearanceManager.configuration
@@ -1108,6 +1142,9 @@ final class ProfileManager: ObservableObject {
         Publishers.MergeMany(changes)
             .sink { [weak self] in
                 self?.workspaceRevision &+= 1
+                if self?.isApplyingWorkspaceSettings == false {
+                    self?.appState?.contextualRules.pauseForManualChange()
+                }
             }
             .store(in: &cancellables)
 
@@ -1308,7 +1345,11 @@ final class ProfileManager: ObservableObject {
         }
 
         isProcessingBridgeCommands = true
-        defer { isProcessingBridgeCommands = false }
+        appState.contextualRules.contextDidChange()
+        defer {
+            isProcessingBridgeCommands = false
+            appState.contextualRules.contextDidChange()
+        }
 
         repeat {
             needsBridgeCommandRescan = false

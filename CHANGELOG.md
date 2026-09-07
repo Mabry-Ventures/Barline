@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.11 (build 20) — candidate
+
+- Capture and edit verified display-specific layout variants without replacing
+  the base layout or silently discarding a failed-save draft.
+- Add optional, event-driven frontmost-app and power/battery layout rules using
+  the existing transaction and rollback path. Configured Focus layouts and
+  manual changes take priority; rules start paused after relaunch.
+- Add per-item global shortcuts, once-per-release dispatch, conflict reporting,
+  and private atomic storage. Failed changes preserve prior assignments.
+- Harden shortcut suspension, teardown, and registration recovery.
+- Improve visitor documentation, privacy guidance, issue intake and verified
+  private security reporting. Preserve Ice attribution and GPL notices.
+- Make the shelf timing probe reject failed closes immediately and reacquire
+  its target before each click, so later samples cannot hide a failed cycle.
+
+This candidate is not published or runtime-qualified. Installed feature,
+physical display, accessibility, upgrade, and release gates remain mandatory.
+
 ## 1.0.10 (build 19) — candidate
 
 - Collapse and expand valid shelf groups without rearranging physical menu bar

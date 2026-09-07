@@ -18,6 +18,29 @@ commands use the Barline App Group container with atomic files, validation, and
 a previous-valid backup. Profile archives are accessed only after an explicit
 user import or export action.
 
+Search favorites and custom aliases are stored with stable item identifiers in
+the bounded `SearchItemPreferences.json` file in Barline's local Application
+Support directory. They are not sent to a server. You can remove a favorite or
+clear an alias in the search interface; after quitting Barline, removing that
+specific preferences file resets all search favorites and aliases. Exported
+diagnostics must not include these private labels.
+
+Optional automatic layout rules are off by default. When enabled, Barline reads
+the current frontmost app identifier and power/battery state locally. It does
+not retain an app-usage history. Selected app identifiers, target layout IDs,
+rule priorities, conditions, and enabled/paused choices are stored in the bounded
+`ContextualRules.json` file in local Application Support. Remove individual rules
+in Layouts & Focus; removing this file after quitting resets automation to off.
+Rules start paused whenever Barline reopens and require an explicit Resume;
+failed storage or an interrupted session cannot silently resume rearrangement.
+
+Per-item keyboard assignments pair stable item identifiers with key codes and
+modifier flags in the bounded `ItemShortcutPreferences.json` file in the same
+directory. They do not record typed text or keystroke history. Remove assignments
+in Hotkeys, or remove that file after quitting to reset all item shortcuts.
+Both files are written atomically with owner-only permissions. Neither is
+uploaded or included in diagnostic bundles.
+
 Interrupted temporary item reveals use a bounded local recovery journal in
 Barline's Application Support directory. It stores stable item identifiers,
 original display/section, neighboring identifiers and timestamps, not images.
@@ -63,3 +86,5 @@ exported, selectively imported, deleted, or reset; last-known-good recovery is
 available from Profiles settings.
 
 This document describes the development tree, not a published binary release.
+New feature code remains subject to installed-candidate qualification before
+public distribution.

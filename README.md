@@ -2,109 +2,86 @@
 
 **Your menu bar, organized. Your Mac, uninterrupted.**
 
-Barline is an Apple-native, privacy-first menu bar workspace manager for Apple
-Silicon Macs. It can organize visible, hidden, and always-hidden status items;
-reveal them on demand; present an overflow shelf; search items; and customize
-menu bar appearance and spacing.
+Barline is a free, open-source menu bar utility for Apple Silicon Macs. Keep
+everyday items visible, tuck the rest away, and reveal them when you need them.
+No account, subscription, advertising, or paid feature tier.
 
-Barline is a GPLv3 successor derived from
-[Ice](https://github.com/jordanbaird/Ice) and its
-[macOS compatibility fork](https://github.com/lxy1992/Ice). See
-[NOTICE.md](NOTICE.md), [docs/UPSTREAM.md](docs/UPSTREAM.md), and
-[docs/CHANGES_FROM_ICE.md](docs/CHANGES_FROM_ICE.md) for full attribution and
-source provenance.
+## Download status
 
-> Barline does not yet have a notarized public binary release. Do not download
-> binaries from an Ice release page expecting them to be Barline.
+An installable public release is **not available yet**. The next candidate is
+under development and qualification; a successful build is not a release pass.
+Qualified downloads will appear in this repository's
+[Releases](https://github.com/Mabry-Ventures/Barline/releases), together with
+corresponding source, checksums, license notices, and release notes.
 
-## Requirements
+Do not download an Ice binary expecting it to be Barline. Do not disable macOS
+security protections to install an unofficial build.
 
-- macOS 26.0 or later
-- Apple Silicon (`arm64`)
-- Accessibility permission for cross-application discovery and arrangement
-- Optional Screen & System Audio Recording permission for item-image previews
+## What Barline does
 
-Barline uses unsupported WindowServer behavior for cross-application status
-item management. The compatibility layer is designed to fail safely, but macOS
-updates can temporarily reduce that capability. Settings and recovery must
-remain available in a degraded state.
+- Organizes visible, hidden, and always-hidden menu bar sections.
+- Reveals hidden items through its menu bar control, shelf, or keyboard controls.
+- Saves menu bar layouts and integrates with Apple's Focus Filters.
+- Searches menu bar items locally and customizes their appearance and spacing.
+- Provides reviewed diagnostic export and layout recovery tools.
 
-## Privacy
+The development tree also contains new group, search-personalization, display,
+rule, and shortcut work. Implementation and testing are in progress; these are
+not a promise of qualified release features. See
+[known limitations](docs/KNOWN_LIMITATIONS.md) for the current boundaries.
 
-Barline has no account, cloud service, analytics SDK, advertising, remote AI,
-or menu bar inventory upload. Local development builds make no network request
-other than resolving source dependencies. Release builds will use the network
-only for Barline's signed update feed and explicit user-opened links.
+## Compatibility and permissions
 
-## Current features
+The current target is **macOS 26 on Apple Silicon (`arm64`)**. Intel Macs are
+not supported. macOS 27 has not been runtime-qualified; a newer OS version is
+not automatically a supported configuration.
 
-- Visible, hidden, and always-hidden sections
-- Click, hover, scroll, swipe, and hotkey reveal controls
-- Automatic rehide and application-menu overlap handling
-- Drag-and-drop and keyboard-assisted layout editing
-- Secondary shelf for overflow and notched displays
-- Saved profiles, Presentation templates, Focus Filters, and App Intents
-- Validated profile archive import/export and last-known-good recovery
-- Fast local search, Core Spotlight, and bounded on-device interpretation
-- Menu bar tint, gradient, border, shadow, and shape controls
-- Item spacing, launch at login, and update infrastructure
+The secondary shelf and graphical layout editor require an always-visible
+system menu bar. Automatically hidden menu bars use a native reveal fallback.
+Read [supported configurations](docs/SUPPORTED_CONFIGURATIONS.md) before testing
+full-screen, notched, or multiple-display setups.
 
-The compatibility backend remains isolated behind a typed XPC firewall. Search
-continues deterministically when Apple Intelligence is unavailable; generated
-commands remain inert until stable identifiers and confirmation policy pass.
+Accessibility permission enables cross-application discovery and arrangement.
+Screen & System Audio Recording permission enables optional item-image previews
+and appearance features. Settings, saved layout metadata, search, diagnostics,
+and recovery remain available without granting every permission.
 
-## Build and run
+Barline relies on unsupported WindowServer behavior. macOS updates can affect
+it. Our reliability goal is to preserve your last good state, keep your Mac
+usable, and make recovery clear—not to promise that failures are impossible.
 
-Install Xcode 26.6, clone the repository with its submodule-free Git history,
-then run:
+## Privacy and optional support
 
-```bash
-./script/build_and_run.sh --verify
-```
+Menu bar data stays local. Barline has no analytics, inventory upload, or remote
+AI service. Release builds use a signed update feed; external links open only
+when you choose them. Read the [privacy policy](PRIVACY.md).
 
-Useful variants:
+Barline is donationware. Optional contributions never unlock features, and
+the app does not display payment reminders.
 
-```bash
-./script/build_and_run.sh --clean --verify
-./script/build_and_run.sh --release --verify
-./script/build_and_run.sh --logs
-./script/build_and_run.sh --telemetry
-./script/build_and_run.sh --debug
-```
+## Help and contributions
 
-The script uses an explicit Xcode path, a repository-local DerivedData folder,
-an ad-hoc local signature, and the committed Swift package lock. It never
-changes the machine-wide selected Xcode.
+Start with [troubleshooting](FREQUENT_ISSUES.md). Report reproducible bugs or
+suggest improvements through
+[GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues). Review any
+diagnostic attachment and redact private information before sharing it.
+Security concerns belong under the [security policy](SECURITY.md), not in a
+public bug report.
 
-## Local validation
+Developers: see [Contributing](CONTRIBUTING.md), [Building](docs/BUILDING.md),
+and the [architecture guide](docs/ARCHITECTURE.md). Iteration uses
+`./script/ci.sh fast`; complete local qualification uses `./script/ci.sh full`.
+All macOS builds, testing, signing, and notarization run locally. GitHub Actions
+runs Linux repository hygiene only.
 
-The current rebrand gate is:
+## License and origins
 
-```bash
-swiftlint lint --strict --config .swiftlint.yml
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  xcodebuild -project Barline.xcodeproj -scheme Barline \
-  -configuration Debug -destination 'platform=macOS,arch=arm64' \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-```
+Barline is GPLv3 software derived from
+[Jordan Baird's Ice](https://github.com/jordanbaird/Ice) and
+[Xinyan Lu's macOS compatibility fork](https://github.com/lxy1992/Ice).
+It is an independent project, not an endorsement by its upstream authors.
 
-The `fast`, `full`, `release`, `xcode27`, and `soak` CI modes produce local,
-candidate-bound evidence. No GitHub-hosted macOS or self-hosted runner is used.
-
-## Installation and releases
-
-No installable Barline release is published yet. Release packages will include
-the exact source tag and archive, GPLv3 license, notices, build instructions,
-checksums, and signed update metadata. Signing and notarization remain local.
-
-## Contributing and support
-
-Use [GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues) for support
-and [SECURITY.md](SECURITY.md) for vulnerability reporting. Donations never
-unlock or gate functionality.
-
-## License
-
-Barline is licensed under the [GNU General Public License v3](LICENSE). Complete
-corresponding source, project files, lockfiles, and build scripts must accompany
-every distributed binary.
+See [LICENSE](LICENSE), [NOTICE.md](NOTICE.md),
+[third-party notices](THIRD_PARTY_NOTICES.md),
+[provenance](docs/PROVENANCE.md), and [changes from Ice](docs/CHANGES_FROM_ICE.md).
+Complete corresponding source and required notices accompany distributed builds.

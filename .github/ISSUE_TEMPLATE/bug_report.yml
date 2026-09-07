@@ -3,6 +3,11 @@ description: Submit a bug report.
 title: "[Bug]: "
 labels: Bug
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are public. Do not include credentials, private screen content, raw process lists, or unrelated logs.
+        Review any support bundle or screenshot before attaching it. For vulnerabilities, read our [security policy](https://github.com/Mabry-Ventures/Barline/blob/main/SECURITY.md) instead.
   - type: checkboxes
     attributes:
       label: Search for Similar Reports
@@ -33,18 +38,40 @@ body:
   - type: input
     id: app_version
     attributes:
-      label: App Version
-      placeholder: e.g. 1.2.3
+      label: App Version and Build
+      placeholder: e.g. 1.0.10 (build 19), from About
     validations:
       required: true
   - type: input
     id: macos_version
     attributes:
       label: macOS Version
-      placeholder: e.g. 15.3.2
+      placeholder: e.g. macOS 26.6.2 (include the OS build if available)
+    validations:
+      required: true
+  - type: input
+    id: installation_source
+    attributes:
+      label: Installation or Update Source
+      placeholder: Official release, local source build, or upgrade from a previous version
+    validations:
+      required: true
+  - type: textarea
+    id: display_configuration
+    attributes:
+      label: Menu Bar and Display Setup
+      description: Include display count, built-in notch if present, system menu bar auto-hide, and whether the issue occurs in full screen. Do not include display serial numbers.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected and Actual Behavior
+      description: What should happen, what happened instead, and whether this worked in an earlier Barline version.
     validations:
       required: true
   - type: textarea
     attributes:
       label: Additional Information
-      placeholder: Screenshots, screen recordings, logs, crash reports, or anything else you think might be helpful...
+      description: Optional. Use Advanced → Diagnostics to create and review a support bundle; it is not automatically sent. Redact private information from every attachment.
+      placeholder: Reviewed support bundle, redacted screenshot, or other relevant details

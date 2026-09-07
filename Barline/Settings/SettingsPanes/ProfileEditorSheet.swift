@@ -9,30 +9,38 @@ import SwiftUI
 struct ProfileEditorSheet: View {
     let profile: BarlineProfile
     let canResetFromWorkspace: Bool
-    let onSave: (String, String?, [ProfileGroup], [ProfileSpacer]) -> Void
+    let onSave: (String, String?, [ProfileGroup], [ProfileSpacer], [DisplayProfileOverride]) async -> Bool
     let onReset: () -> Void
+    let onCapture: (BarlineProfile) async throws -> DisplayProfileOverride
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var symbol: String
     @State private var groups: [ProfileGroup]
     @State private var spacers: [ProfileSpacer]
+    @State private var variants: [DisplayProfileOverride]
     @State private var showsResetConfirmation = false
+    @State private var isCapturing = false
+    @State private var isSaving = false
+    @State private var showsSaveFailure = false
 
     init(
         profile: BarlineProfile,
         canResetFromWorkspace: Bool,
-        onSave: @escaping (String, String?, [ProfileGroup], [ProfileSpacer]) -> Void,
-        onReset: @escaping () -> Void
+        onSave: @escaping (String, String?, [ProfileGroup], [ProfileSpacer], [DisplayProfileOverride]) async -> Bool,
+        onReset: @escaping () -> Void,
+        onCapture: @escaping (BarlineProfile) async throws -> DisplayProfileOverride
     ) {
         self.profile = profile
         self.canResetFromWorkspace = canResetFromWorkspace
         self.onSave = onSave
         self.onReset = onReset
+        self.onCapture = onCapture
         _name = State(initialValue: profile.name)
         _symbol = State(initialValue: profile.symbol ?? "")
         _groups = State(initialValue: profile.groups)
         _spacers = State(initialValue: profile.spacers)
+        _variants = State(initialValue: profile.displayOverrides)
     }
 
     private var itemIDs: [MenuBarItemID] {
@@ -92,13 +100,18 @@ struct ProfileEditorSheet: View {
                     }
                 }
 
-                displayVariantsSection
+                DisplayVariantsEditor(variants: $variants, isCapturing: $isCapturing, canCapture: canResetFromWorkspace) {
+                    var draft = profile
+                    draft.groups = groups
+                    draft.spacers = spacers
+                    return try await onCapture(draft)
+                }
 
                 Section("Recovery") {
                     Button("Reset Profile from Current Workspace", role: .destructive) {
                         showsResetConfirmation = true
                     }
-                    .disabled(!canResetFromWorkspace)
+                    .disabled(!canResetFromWorkspace || isCapturing)
                     Text("Replaces this profile’s layout and modeled workspace settings, and removes its groups, spacers, and display overrides. Other profiles and app settings are preserved.")
                         .foregroundStyle(.secondary)
                 }
@@ -107,15 +120,23 @@ struct ProfileEditorSheet: View {
             .navigationTitle("Edit Layout")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") { dismiss() }.disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        onSave(normalizedName, normalizedSymbol, groups, spacers)
-                        dismiss()
+                        isSaving = true
+                        Task {
+                            let saved = await onSave(normalizedName, normalizedSymbol, groups, spacers, variants)
+                            isSaving = false
+                            if saved {
+                                dismiss()
+                            } else {
+                                showsSaveFailure = true
+                            }
+                        }
                     }
                     .disabled(
-                        normalizedName.isEmpty || groups.contains {
+                        isCapturing || normalizedName.isEmpty || groups.contains {
                             $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         }
                     )
@@ -123,6 +144,13 @@ struct ProfileEditorSheet: View {
             }
         }
         .frame(minWidth: 560, minHeight: 520)
+        .disabled(isSaving)
+        .interactiveDismissDisabled(isSaving)
+        .alert("Couldn’t save this layout", isPresented: $showsSaveFailure) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Your draft is still here. Check local storage and make sure the layout has not changed elsewhere. A layout controlled by Focus must be released before its structure can be edited.")
+        }
         .confirmationDialog(
             "Reset \(profile.name)?",
             isPresented: $showsResetConfirmation,
@@ -135,38 +163,6 @@ struct ProfileEditorSheet: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The current validated layout and supported workspace settings will replace this profile.")
-        }
-    }
-
-    private var displayVariantsSection: some View {
-        Section("Display Variants") {
-            Text("Groups and spacers edited above belong to the base layout. Renaming applies to the whole saved layout. Display variants are preserved when you save.")
-                .foregroundStyle(.secondary)
-            if profile.displayOverrides.isEmpty {
-                Label("No display variants in this layout", systemImage: "display")
-                    .foregroundStyle(.secondary)
-                Text("To keep distinct laptop and desk arrangements, capture a separate saved layout for each workspace, then Apply the one you need.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(profile.displayOverrides.enumerated()), id: \.element.displayID) { index, variant in
-                    DisclosureGroup("Display variant \(index + 1)") {
-                        LabeledContent("Visible items", value: "\(variant.layout.visible.count)")
-                        LabeledContent("Hidden items", value: "\(variant.layout.hidden.count)")
-                        LabeledContent("Always-hidden items", value: "\(variant.layout.alwaysHidden.count)")
-                        LabeledContent("Groups", value: "\(variant.groups.count)")
-                        LabeledContent("Spacers", value: "\(variant.spacers.count)")
-                        LabeledContent(
-                            "Display matching",
-                            value: variant.displayFingerprint == nil ? "Stored display identifier" : "Hardware identity available"
-                        )
-                        Text("Variant numbers identify entries in this archive, not physical monitor numbers.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Text("These variants are read-only here. Importing a layout archive can supply display-specific item arrangements; it does not create a rule that switches between saved layouts.")
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 

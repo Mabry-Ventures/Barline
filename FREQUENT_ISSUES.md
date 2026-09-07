@@ -1,37 +1,82 @@
-# Frequent Issues <!-- omit in toc -->
+# Troubleshooting Barline
 
-- [Items are moved to the always-hidden section](#items-are-moved-to-the-always-hidden-section)
-- [Barline removed an item](#barline-removed-an-item)
-- [Barline does not remember the order of items](#barline-does-not-remember-the-order-of-items)
-- [How do I solve the `Barline cannot arrange menu bar items in automatically hidden menu bars` error?](#how-do-i-solve-the-barline-cannot-arrange-menu-bar-items-in-automatically-hidden-menu-bars-error)
+Start with the app version/build and macOS version. Check
+[known limitations](docs/KNOWN_LIMITATIONS.md) and
+[supported configurations](docs/SUPPORTED_CONFIGURATIONS.md) before changing
+permissions or resetting saved data.
 
-## Items are moved to the always-hidden section
+## An item disappeared
 
-By default, macOS adds new items to the far left of the menu bar, which is also the location of Barline's always-hidden section. Most apps are configured
-to remember the positions of their items, but some are not. macOS treats the items of these apps as new items each time they appear. This results in
-these items appearing in the always-hidden section, even if they have been previously been moved.
+A missing item may be in the hidden or always-hidden section, or its owning app
+may have stopped providing it. Barline arranges items; it does not uninstall
+their apps. Option-click Barline's menu bar control to reveal always-hidden
+items. The layout settings also offer **Show Hidden Items in Menu Bar** as a
+native recovery route.
 
-Barline can rediscover and move recognized items, but macOS and third-party apps
-can still recreate items with unstable identities. The compatibility engine
-retains the last valid snapshot instead of treating a transient empty result as
-authoritative.
+Check that the owning app is running and has its own menu bar icon enabled.
+macOS or an app can recreate an item with a new identity. Avoid repeatedly
+applying layouts while an item is disappearing and reappearing.
 
-## Barline removed an item
+## Changes do not stick, or an operation reports an error
 
-Barline does not have the ability to move or remove items. It likely got placed in the always-hidden section by macOS. Option + click the Barline icon to show
-the always-hidden section, then Command + drag the item into a different section.
+Do not assume the requested arrangement succeeded because an icon moved briefly.
+Check permissions and that only the intended Barline copy is running. If
+**Retry Item Restoration** is available in **Layouts & Focus**, use it after
+the owning app and display are available again. **Keep Current Item Positions**
+accepts the current positions instead of retrying the previous restoration;
+use it only if that is what you want.
 
-## Barline does not remember the order of items
+Save a reviewed support bundle and report a reproducible example. Do not delete
+layout or recovery files as a first troubleshooting step.
 
-Persistent stable identity and profile-based restoration are tracked in the
-repository execution plan.
+## Permissions look enabled, but Barline still asks for them
 
-## How do I solve the `Barline cannot arrange menu bar items in automatically hidden menu bars` error?
+In System Settings, check the Accessibility and Screen & System Audio Recording
+entries for the installed Barline app. Development and signed release builds
+can have different code-signing identities even when their names match.
 
-1. Open `System Settings` on your Mac
-2. Go to `Control Center`
-3. Select `Never` as shown in the image below
-4. Update your `Menu Bar Items` in `Barline`
-5. Return `Automatically hide and show the menu bar` to your preferred settings
+Quit duplicate or older copies and reopen the intended installed copy once.
+If the mismatch persists, report the app version and how it was installed.
+Do not reset all macOS privacy permissions or grant access to unrelated apps.
+Screen recording is optional; lack of preview images is different from an
+Accessibility failure.
 
-![Disable Menu Bar Hiding](https://github.com/user-attachments/assets/74c1fde6-d310-4fe3-9f2b-703d8ccb636a)
+## The shelf will not open or an item will not activate
+
+Right-click Barline's control to reach Settings, then use **Show Hidden Items in
+Menu Bar** from the layout pane to try the native route. Note whether the issue
+happened after an update, display change, sleep, or a permission change.
+
+Opening Settings should not be required before normal clicks work. If it is,
+that is a bug to report, not an expected setup step. Include whether a left-click,
+right-click, or an app-specific popover failed; do not attach private app content.
+
+## My system menu bar automatically hides
+
+The secondary shelf and graphical layout editor require an always-visible
+menu bar. With system auto-hide enabled, Barline uses native reveal instead;
+move the pointer to the top edge and use the system menu bar items there.
+
+Use **Open Menu Bar System Settings** from Barline's layout pane if you want to
+change that system preference. Barline does not change it for you. Full-screen
+Spaces and auto-hide are distinct test configurations; see
+[supported configurations](docs/SUPPORTED_CONFIGURATIONS.md).
+
+## Where are my Focus modes?
+
+macOS owns Focus modes. Barline saves menu bar **layouts**, not a second set of
+Focus modes. Add Barline as a Focus Filter in System Settings, then choose a
+saved layout there. See [Focus integration](docs/FOCUS_AND_APP_INTENTS.md).
+System Focus execution still requires candidate-bound qualification.
+
+## Sharing a useful bug report
+
+Use [GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues). Include
+the app version/build, macOS version, display setup, auto-hide setting,
+reproduction steps, expected behavior, and what happened instead.
+
+In **Advanced → Diagnostics**, create a support bundle, review its preview,
+and choose where to save it. Nothing is automatically sent. Redact screenshots
+and review every attachment; never post credentials, private screen content,
+raw process lists, or unrelated logs. See [support bundles](docs/SUPPORT_BUNDLE.md)
+and the [security policy](SECURITY.md).

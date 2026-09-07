@@ -8,12 +8,18 @@ dependencies, or assets.
 
 ## Set up
 
-Use an Apple Silicon Mac running macOS 26 or later with Xcode 26.6:
+Use an Apple Silicon Mac running macOS 26 with Xcode 26.6. macOS 27 is a separate,
+unqualified compatibility lane, not a substitute for the current toolchain.
 
 ```bash
 ./script/bootstrap.sh
-./script/build_and_run.sh --verify
 ```
+
+Follow [Building Barline](docs/BUILDING.md) for build and launch commands. The
+development launch script stops running Barline processes and launches an
+ad-hoc-signed build. Do not use it to replace an installed notarized candidate
+with the same bundle identifier: that can invalidate permission identity and
+installed qualification. Use the documented `full --installed` workflow instead.
 
 `./script/bootstrap.sh --install-tools` installs the tools listed in `Brewfile`
 without `sudo`. It does not change the machine-wide Xcode selection.
@@ -34,10 +40,11 @@ Before a pull request or merge, run:
 
 The full gate is intentionally fail-closed. Its fixture-regression, UI,
 accessibility, XPC-interruption, support-bundle, and performance scripts must
-all execute successfully. The current support-bundle check fails because the
-feature is absent, and runtime probes can remain unavailable without required
-macOS privacy grants. Do not publish a local commit status until every required
-step actually ran.
+all execute successfully. Runtime probes require the relevant macOS privacy
+and Developer Tools grants. Arrange a bounded interactive session for tests
+that use the pointer or open interfaces; do not run repeated focus-stealing
+tests on an unattended desktop. Do not publish a local commit status until
+every required step actually ran on the exact source candidate.
 
 All macOS compilation, tests, signing, notarization, and release validation are
 local. GitHub Actions is limited to Linux repository hygiene.
@@ -60,6 +67,10 @@ local. GitHub Actions is limited to Linux repository hygiene.
 Keep changes focused and use the repository pull-request template. Include the
 exact commit SHA, toolchain, local gate, test evidence, accessibility impact,
 migration impact, and macOS 27 status. Do not describe an unavailable test or
-credential-bound step as passing. The canonical public repository and support
-URLs are not configured yet, so this document intentionally contains no issue
-or pull-request URL.
+credential-bound step as passing. File bugs and discuss changes in
+[Issues](https://github.com/Mabry-Ventures/Barline/issues), then submit a focused
+[pull request](https://github.com/Mabry-Ventures/Barline/pulls).
+
+Preserve unrelated changes, upstream remotes, the recorded vendor baseline,
+and license notices. Keep local logs, result bundles, generated output, and
+credentials out of Git. Review attachments for private data before sharing.

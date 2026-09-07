@@ -1,5 +1,63 @@
 # Barline execution plan
 
+## Feature completion and visitor cleanup — September 7, 2026
+
+Candidate 1.0.11 build 20 integrates display-variant authoring, opt-in event-driven
+context rules and per-item shortcuts, alongside existing groups, search
+personalization and native Focus guidance. The implementation/qualification
+contract is [FEATURE_QUALIFICATION.md](FEATURE_QUALIFICATION.md). Editors retain
+failed-save drafts; rules recheck admission through the transaction, never
+restart other apps for spacing, pause after manual changes and start paused
+after relaunch. Shortcut conflicts, suspension and teardown now retain explicit
+ownership and fail closed.
+
+Visitor documentation and issue templates are corrected; detailed operational
+documents were preserved in ignored local backups. Private vulnerability
+reporting was verified enabled. A monitored private conduct contact remains a
+user choice. An unrelated awareness-campaign draft appeared during this work;
+it is preserved and excluded from engineering changes.
+
+Iteration evidence includes passing Core regression suites, actual preference
+write/cancellation/corruption/conflict probes, actual Carbon registration checks
+without event injection, Debug/Release builds and the fast gate at
+`.artifacts/ci/946e116047562599723ab7adce2a787b17d886e1/fast-2026-09-07T23-33-40Z`.
+Subsequent changes require fresh full gates. Installed 1.0.10 build 19 remains
+untouched during source work. No feature runtime pass, macOS 27 support,
+notarization for new source or public availability is claimed by this checkpoint.
+
+## BLN-17 diagnostic correction — September 7, 2026
+
+Candidate `946e116` (1.0.10 build 19) was signed/notarized and installed through
+a real preference-preserving Sparkle upgrade. Its final full gate failed one
+of 20 shelf cycles; the original failure and four passing target receipts remain
+under that source-bound artifact directory. Release has not been published.
+
+The performance driver discarded a failed close, misclassifying the following
+close as an opening timeout. It now rejects an unclosed baseline, fails the
+actual close phase, resolves the owned status-item target for each dispatch,
+and includes dispatch/lookup in latency. Four deterministic cycle regressions
+are wired into the fast gate. These are test-driver corrections, not a proven
+application fix for the original missed click.
+
+Two bounded diagnostic runs on the unchanged signed executable passed: the
+hardened 20-cycle probe (p95 163.5 ms including lookup/dispatch), and the original
+rapid cadence with a temporary listen-only session event observer (all 42
+clicks' down/up pairs observed). The latter ran alongside compilation and is
+diagnostic evidence, not a clean performance certificate. No target movement
+was observed in the hardened run. The original missed close is not reproduced
+or conclusively attributed; BLN-17 and release qualification remain open.
+No app relaunch, permission reset, target action bypass, or timeout relaxation
+was used. Temporary observer code is confined to ignored artifacts.
+Fast gate passed with the four new cycle regressions and 296 Core tests;
+receipt: `.artifacts/ci/946e116047562599723ab7adce2a787b17d886e1/fast-2026-09-07T22-53-17Z`.
+This dirty-tree iteration receipt is not a new release certificate.
+
+Additional-feature status: groups and search personalization are implemented
+but still need installed keyboard/persistence qualification; native Focus
+guidance is implemented, display variants are read-only, automatic context-rule
+integration and per-item global shortcuts remain unfinished. Site/donations
+are on staging; the canonical public-domain launch remains separate.
+
 ## Fresh release qualification — September 7, 2026
 
 User authorized release only after a new qualification battery passes. Candidate

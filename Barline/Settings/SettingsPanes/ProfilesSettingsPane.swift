@@ -86,6 +86,8 @@ struct ProfilesSettingsPane: View {
 
             displayLayoutsSection
 
+            ContextualRulesSection(manager: appState.contextualRules, profiles: manager.profiles)
+
             Section("Import and Export") {
                 HStack {
                     Button("Import from Ice…") {
@@ -211,18 +213,19 @@ struct ProfilesSettingsPane: View {
             ProfileEditorSheet(
                 profile: profile,
                 canResetFromWorkspace: appState.permissions.accessibility.hasPermission
-            ) { name, symbol, groups, spacers in
-                Task {
-                    await manager.update(
-                        profile,
-                        name: name,
-                        symbol: symbol,
-                        groups: groups,
-                        spacers: spacers
-                    )
-                }
+            ) { name, symbol, groups, spacers, variants in
+                await manager.update(
+                    profile,
+                    name: name,
+                    symbol: symbol,
+                    groups: groups,
+                    spacers: spacers,
+                    displayOverrides: variants
+                )
             } onReset: {
                 Task { await manager.resetFromCurrentWorkspace(profile) }
+            } onCapture: { draft in
+                try await appState.compatibilityCoordinator.captureDisplayVariant(profile: draft)
             }
         }
         .fileImporter(

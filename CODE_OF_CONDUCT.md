@@ -58,10 +58,12 @@ representative at an online or offline event.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported privately through the security/contact method published by the
-canonical Barline repository. The contact will be added before public launch.
-All complaints will be reviewed and investigated promptly and fairly.
+A verified private conduct-reporting contact must be published here before the
+first public binary release. It is not yet documented. Do not post a private
+conduct complaint, personal information, or sensitive evidence in a public
+issue, and do not use vulnerability reporting for unrelated conduct complaints.
+Community leaders are responsible for establishing that private channel and
+reviewing complaints fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
