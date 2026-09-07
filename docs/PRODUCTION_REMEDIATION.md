@@ -1,4 +1,4 @@
-# Production remediation — 1.0.8 (build 10)
+# Production remediation — 1.0.8 (build 11)
 
 Baseline: `b03645e432212aed10a827d3334ce278770fb74d` (1.0.6 build 7).
 The September 6 production audit is retained under `.artifacts/audit/2026-09-06-b03645e/`.
@@ -22,6 +22,12 @@ restores the baseline's paired releases, swallowed null-barrier signals, and
 balanced cursor hiding. The gate requires exactly one activation/open/action/
 close and rejects duplicates; these compatibility corrections require fresh
 candidate-bound runtime validation.
+The build-10 frame observer then proved the failing hosted item was marked
+on-screen while physically outside every display, bypassing reveal. Build 11
+corrects menu-item visibility using active-display click geometry and rejects
+off-display synthesis at the helper boundary. This is supported by unchanged
+synthetic CG/AX frames and target counters throughout the captured failure,
+not an inferred permission or timing issue.
 
 | Finding | Change | Acceptance evidence |
 | --- | --- | --- |

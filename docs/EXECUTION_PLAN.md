@@ -4,7 +4,7 @@ This is the live implementation ledger. A milestone is complete only when its
 code and evidence match the build specification; documentation alone is not a
 gate result.
 
-## Current checkpoint: shelf activation correction, 1.0.8 build 10
+## Current checkpoint: shelf activation correction, 1.0.8 build 11
 
 The installed 1.0.7 user journey exposed a real regression: a temporarily
 revealed native item remained in the shelf projection, and a no-interface
@@ -49,6 +49,17 @@ baseline's balanced cursor hiding instead of drag-style cursor disassociation.
 No second mouse-down or full-gesture retry is introduced. The installed journey
 now fails on duplicate activations, opens, actions, or closes; exactly one of
 each is required. Source parity is a hypothesis to validate, not a runtime pass.
+
+The bounded build-10 observer established the actual popover failure: the
+synthetic hosted item retained `kCGWindowIsOnscreen = true` while both its CG
+and AX frames were outside every active display. Its frame and target receipt
+did not change during the failed journey. The app therefore took its direct
+activation branch and clicked off-display instead of temporarily revealing it.
+Build 11 derives menu-item visibility from the reported flag AND a finite click
+center inside an active display. Hidden descriptors remain in the inventory;
+generic interface observations keep their existing visibility semantics. The
+helper checks fresh geometry again before any click side effects. Regression
+tests cover the observed stale-flag condition and multi-display geometry.
 
 The September 6 audit found 12 issues in `b03645e` (installed 1.0.6).
 The historical milestone table below is not qualification evidence for this

@@ -288,6 +288,9 @@ final class WindowServerClient: @unchecked Sendable {
         guard let item = identifiedWindows(windows).first(where: { $0.id == itemID })?.window else {
             throw MenuBarBackendError.staleItem(itemID)
         }
+        guard item.isOnScreen else {
+            throw MenuBarBackendError.operationFailed("Menu bar item must be revealed before activation")
+        }
         try await synthesizeClick(item: item, pid: resolvedEventPID(for: item), button: button)
     }
 
@@ -335,7 +338,7 @@ final class WindowServerClient: @unchecked Sendable {
         else {
             throw MenuBarBackendError.unavailableCapability("window scene enumeration")
         }
-        let windows = dictionaries.compactMap(WindowRecord.init)
+        let windows = dictionaries.compactMap { WindowRecord($0) }
         guard let menuBar = windows.first(where: { window in
             window.ownerName == "Window Server" &&
                 window.layer == kCGMainMenuWindowLevel &&
@@ -536,7 +539,19 @@ final class WindowServerClient: @unchecked Sendable {
             return []
         }
 
-        return descriptions.compactMap(WindowRecord.init)
+        guard let displayBounds = activeDisplayBounds() else { return nil }
+        return descriptions.compactMap { WindowRecord($0, activeDisplayBounds: displayBounds) }
+    }
+
+    private func activeDisplayBounds() -> [MenuBarRect]? {
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 32)
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(UInt32(displayIDs.count), &displayIDs, &count) == .success,
+              count > 0, count < displayIDs.count else { return nil }
+        return displayIDs.prefix(Int(count)).map { identifier in
+            let rect = CGDisplayBounds(identifier)
+            return MenuBarRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height)
+        }
     }
 
     private func currentWindows() throws -> [WindowRecord] {
@@ -658,7 +673,7 @@ final class WindowServerClient: @unchecked Sendable {
                 sceneIsAvailable: false, nativeMenuIsVisible: false, sourceInterfaceIsVisible: false
             )
         }
-        let windows = dictionaries.compactMap(WindowRecord.init)
+        let windows = dictionaries.compactMap { WindowRecord($0) }
         let itemWindowIDs = Set(menuBarWindows.map(\.identifier))
         let interfaces = windows.filter { window in
             guard !itemWindowIDs.contains(window.identifier),
@@ -844,7 +859,20 @@ final class WindowServerClient: @unchecked Sendable {
         case .right: .rightMouseUp
         case .other: .otherMouseUp
         }
-        let point = CGPoint(x: item.bounds.midX, y: item.bounds.midY)
+        // Re-read geometry after source-PID resolution. A hosted window can
+        // retain kCGWindowIsOnscreen while physically outside every display.
+        // Never synthesize a click there, even if an older snapshot allowed it.
+        guard let bounds = WindowInfo(windowID: item.identifier)?.currentBounds(),
+              let displays = activeDisplayBounds(),
+              MenuBarVisibilityPolicy.isClickable(
+                  reportedVisible: item.isOnScreen,
+                  itemBounds: MenuBarRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height),
+                  displayBounds: displays
+              )
+        else {
+            throw MenuBarBackendError.operationFailed("Menu bar item is outside the active displays")
+        }
+        let point = CGPoint(x: bounds.midX, y: bounds.midY)
         guard
             let source = CGEventSource(stateID: .hidSystemState),
             let down = CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: point, mouseButton: mouseButton),
@@ -1295,7 +1323,7 @@ private struct WindowRecord {
     let ownerName: String?
     let isOnScreen: Bool
 
-    init?(_ dictionary: [CFString: Any]) {
+    init?(_ dictionary: [CFString: Any], activeDisplayBounds: [MenuBarRect]? = nil) {
         guard
             let identifier = dictionary[kCGWindowNumber] as? CGWindowID,
             let ownerPID = dictionary[kCGWindowOwnerPID] as? pid_t,
@@ -1311,6 +1339,17 @@ private struct WindowRecord {
         self.layer = layer
         title = dictionary[kCGWindowName] as? String
         ownerName = dictionary[kCGWindowOwnerName] as? String
-        isOnScreen = dictionary[kCGWindowIsOnscreen] as? Bool ?? false
+        let reportedVisible = dictionary[kCGWindowIsOnscreen] as? Bool ?? false
+        if let activeDisplayBounds {
+            // Only menu-item enumeration supplies geometry. Generic interface
+            // observation retains its existing raw visibility semantics.
+            isOnScreen = MenuBarVisibilityPolicy.isClickable(
+                reportedVisible: reportedVisible,
+                itemBounds: MenuBarRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height),
+                displayBounds: activeDisplayBounds
+            )
+        } else {
+            isOnScreen = reportedVisible
+        }
     }
 }

@@ -13,6 +13,8 @@ development line and are not release certification.
   without changing saved layout positions.
 - Prevent picker presentation during reveal/restore and avoid automatically
   reopening it over an unconfirmed or delayed target interface.
+- Verify physical display geometry before treating a hosted item as visible;
+  a stale macOS on-screen flag can otherwise skip reveal and click off-display.
 
 ### Added
 
