@@ -1,5 +1,10 @@
 # Barline 1.0.9
 
+Candidate build 17 also excludes windowless primary-control and shelf clicks
+from smart rehide using captured event positions. Build 16 opened the shelf but
+failed its target journey when the panel closed before its controls were ready.
+It is not a qualified release. Build 17 requires all fresh candidate gates.
+
 Candidate build 16 additionally gives the primary control window exclusive
 ownership of its click and uses captured event coordinates in empty-space
 arbitration. Build 15's first installed shelf-open still failed, so it is not

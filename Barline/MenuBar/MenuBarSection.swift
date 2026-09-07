@@ -4,6 +4,7 @@
 //
 
 import BarlineCore
+import OSLog
 import SwiftUI
 
 /// A representation of a section in a menu bar.
@@ -239,9 +240,15 @@ final class MenuBarSection {
         show(useShelf: false)
     }
 
-    /// Hides the section.
-    func hide(ifOwnedBy lease: PresentationEpoch.Lease) {
-        guard menuBarManager?.barlineShelfPanel.ownsDismissal(lease) == true else {
+    enum DeferredHideReason: String {
+        case smartSpaceChange, smartApplication, hover, timer, focusedApplication
+    }
+
+    /// Hides only the presentation that originally scheduled this work.
+    func hide(ifOwnedBy lease: PresentationEpoch.Lease, reason: DeferredHideReason) {
+        let ownsPresentation = menuBarManager?.barlineShelfPanel.ownsDismissal(lease) == true
+        Logger.default.notice("Deferred rehide evaluated reason=\(reason.rawValue, privacy: .public) ownsPresentation=\(ownsPresentation, privacy: .public)")
+        guard ownsPresentation else {
             return
         }
         hide()
@@ -312,7 +319,7 @@ final class MenuBarSection {
                         }
                         if NSEvent.mouseLocation.y < screen.visibleFrame.maxY {
                             Task {
-                                await self.hide(ifOwnedBy: lease)
+                                await self.hide(ifOwnedBy: lease, reason: .timer)
                             }
                         } else {
                             Task {

@@ -1,4 +1,10 @@
-# Production remediation — 1.0.9 (build 16 preparation)
+# Production remediation — 1.0.9 (build 17 preparation)
+
+Build 16 committed the first shelf presentation but failed the installed target
+journey when it closed before its accessible item controls appeared. Build 17
+extends primary hit ownership to smart rehide (not only global toggle), covers
+windowless shelf clicks, and records bounded deferred-dismissal reason codes.
+Previous package signatures and fast results do not qualify this source.
 
 Build 15's first installed shelf-open failed despite the deferred-dismissal
 guard. Build 16 also enforces primary-window ownership of click events and

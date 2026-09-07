@@ -1,6 +1,16 @@
 # Barline execution plan
 
-## Distribution refinement — 1.0.9 build 16 preparation
+## Distribution refinement — 1.0.9 build 17 preparation
+
+Build 16 (`67399bb`) passed fast, signing/notarization, and upgrade/preferences.
+Its first shelf presentation committed, but closed roughly 400 ms later before
+fixture controls became actionable; the installed journey therefore failed.
+Build 17 applies primary control hit ownership to smart rehide as well as
+empty-space arbitration, including windowless hosted events with stale bar
+geometry. Shelf clicks are similarly excluded using captured event geometry.
+Deferred dismissal reasons now have bounded diagnostics. Policy regressions
+cover each exclusion and the genuine outside-click positive control. This is
+not runtime qualification until the new candidate passes its installed gates.
 
 Build 15 passed signing/notarization, upgrade/preference checks, and 263 Core
 tests, but its first installed shelf-open journey failed. The deferred-work

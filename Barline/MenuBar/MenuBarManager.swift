@@ -146,7 +146,7 @@ final class MenuBarManager: ObservableObject {
                     let lease = barlineShelfPanel.dismissalLease
                     Task {
                         try await Task.sleep(for: .seconds(0.1))
-                        hiddenSection.hide(ifOwnedBy: lease)
+                        hiddenSection.hide(ifOwnedBy: lease, reason: .focusedApplication)
                     }
                 }
             }

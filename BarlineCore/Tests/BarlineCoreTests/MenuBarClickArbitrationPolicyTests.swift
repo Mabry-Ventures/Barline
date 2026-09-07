@@ -8,6 +8,35 @@ import Testing
 
 @Suite("Menu-bar click arbitration")
 struct MenuBarClickArbitrationPolicyTests {
+    @Test("A windowless hosted control click cannot schedule rehide with stale bar geometry")
+    func windowlessPrimaryClickDoesNotRehide() {
+        #expect(!MenuBarClickArbitrationPolicy.shouldScheduleSmartRehide(
+            hasVisibleSection: true,
+            eventTargetsPrimaryControlItem: false,
+            isInsidePrimaryControlItem: true,
+            isInsideShelf: false,
+            isInsideMenuBar: false
+        ))
+    }
+
+    @Test("Smart rehide accepts only genuine outside clicks", arguments: 0 ..< 5)
+    func smartRehideOwnership(exclusion: Int) {
+        #expect(!MenuBarClickArbitrationPolicy.shouldScheduleSmartRehide(
+            hasVisibleSection: exclusion != 0,
+            eventTargetsPrimaryControlItem: exclusion == 1,
+            isInsidePrimaryControlItem: exclusion == 2,
+            isInsideShelf: exclusion == 3,
+            isInsideMenuBar: exclusion == 4
+        ))
+        #expect(MenuBarClickArbitrationPolicy.shouldScheduleSmartRehide(
+            hasVisibleSection: true,
+            eventTargetsPrimaryControlItem: false,
+            isInsidePrimaryControlItem: false,
+            isInsideShelf: false,
+            isInsideMenuBar: false
+        ))
+    }
+
     @Test("Target-action ownership wins even if every geometry cache describes a gap")
     func primaryWindowOwnsClickDespiteStaleGeometry() {
         #expect(

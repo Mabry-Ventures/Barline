@@ -234,20 +234,15 @@ extension HIDEventManager {
             return
         }
 
-        // Make sure clicking the Barline icon doesn't trigger rehide.
-        if let barlineIcon = appState.menuBarManager.controlItem(withName: .visible) {
-            guard !barlineIcon.ownsEventWindow(event.window) else {
-                return
-            }
-        }
-
-        // Only continue if the click is not inside the Barline Bar, at
-        // least one section is visible, and the mouse is not inside
-        // the menu bar.
-        guard
-            event.window !== appState.menuBarManager.barlineShelfPanel,
-            appState.menuBarManager.hasVisibleSection,
-            !isMouseInsideMenuBar(appState: appState, screen: screen, location: click.unflippedLocation)
+        let panel = appState.menuBarManager.barlineShelfPanel
+        let control = appState.menuBarManager.controlItem(withName: .visible)
+        guard MenuBarClickArbitrationPolicy.shouldScheduleSmartRehide(
+            hasVisibleSection: appState.menuBarManager.hasVisibleSection,
+            eventTargetsPrimaryControlItem: control?.ownsEventWindow(event.window) == true,
+            isInsidePrimaryControlItem: control?.containsEventLocation(click.unflippedLocation) == true,
+            isInsideShelf: event.window === panel || (panel.isVisible && panel.frame.contains(click.unflippedLocation)),
+            isInsideMenuBar: isMouseInsideMenuBar(appState: appState, screen: screen, location: click.unflippedLocation)
+        )
         else {
             return
         }
@@ -256,6 +251,7 @@ extension HIDEventManager {
         // by the time the asynchronous helper lookup completes.
         let clickLocation = click.location
         let lease = appState.menuBarManager.barlineShelfPanel.dismissalLease
+        Logger.default.notice("Smart rehide scheduled for outside click")
 
         Task {
             guard let initialEnvironment = try? await BarlineMenuService.Connection.shared.environment() else {
@@ -271,7 +267,7 @@ extension HIDEventManager {
             }
             if currentEnvironment.activeSpaceToken != initialEnvironment.activeSpaceToken {
                 for section in appState.menuBarManager.sections {
-                    section.hide(ifOwnedBy: lease)
+                    section.hide(ifOwnedBy: lease, reason: .smartSpaceChange)
                 }
                 return
             }
@@ -298,7 +294,7 @@ extension HIDEventManager {
 
             // All checks have passed, hide the sections.
             for section in appState.menuBarManager.sections {
-                section.hide(ifOwnedBy: lease)
+                section.hide(ifOwnedBy: lease, reason: .smartApplication)
             }
         }
     }
@@ -395,7 +391,7 @@ extension HIDEventManager {
                 else {
                     return
                 }
-                hiddenSection.hide(ifOwnedBy: lease)
+                hiddenSection.hide(ifOwnedBy: lease, reason: .hover)
             }
         }
     }
