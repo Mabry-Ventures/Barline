@@ -853,12 +853,14 @@ final class WindowServerClient: @unchecked Sendable {
             throw MenuBarBackendError.unavailableCapability("menu bar event synthesis")
         }
         let cursorLocation = CGEvent(source: nil)?.location
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(0))
+        let cursorHidden = CGDisplayHideCursor(CGMainDisplayID()) == .success
         defer {
             if let cursorLocation {
                 CGWarpMouseCursorPosition(cursorLocation)
             }
-            CGAssociateMouseAndMouseCursorPosition(boolean_t(1))
+            if cursorHidden {
+                CGDisplayShowCursor(CGMainDisplayID())
+            }
         }
         permitLocalEvents()
         for event in [down, up] {
@@ -873,9 +875,15 @@ final class WindowServerClient: @unchecked Sendable {
         do {
             try await deliverClick(down, to: pid)
             try await deliverClick(up, to: pid)
+            // The compatibility baseline releases twice to clear hosted
+            // status-item tracking state. This is the same up event, not a
+            // second down/up gesture. Target receipts must still show exactly
+            // one activation; transport acknowledgements cannot establish it.
+            try await deliverClick(up, to: pid)
         } catch {
             // Release a partially delivered press even after cancellation. Do
             // not replay mouse-down: a second click could toggle the menu shut.
+            up.post(tap: .cgSessionEventTap)
             up.post(tap: .cgSessionEventTap)
             throw error
         }
@@ -884,7 +892,8 @@ final class WindowServerClient: @unchecked Sendable {
 
     /// Hosted status items need WindowServer's session routing. A direct PID
     /// post can reach a passive process tap without dispatching the status item.
-    /// Post each real event once through the session, never replay it to a PID.
+    /// Post once per delivery through the session, never replay it to a PID.
+    /// The caller deliberately delivers the release twice, as the baseline does.
     /// Receipt is transport evidence only; activation still needs observation.
     private func deliverClick(_ event: CGEvent, to pid: pid_t) async throws {
         let delivery = HelperEventDelivery()
@@ -900,12 +909,15 @@ final class WindowServerClient: @unchecked Sendable {
         // are not clicks and never trigger another real mouse-down.
         let barrierTap = HelperEventTap(
             type: .null, location: .process(pid),
-            placement: .headInsertEventTap, options: .listenOnly
+            placement: .headInsertEventTap, options: .defaultTap
         ) { _, received in
             switch received.getIntegerValueField(.eventSourceUserData) {
             case marker:
                 delivery.dispatchOnceWhilePending { event.post(tap: .cgSessionEventTap) }
-            case -marker: delivery.finish()
+                return nil
+            case -marker:
+                delivery.finish()
+                return nil
             default: break
             }
             return received

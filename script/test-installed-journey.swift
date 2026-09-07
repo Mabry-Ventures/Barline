@@ -138,10 +138,10 @@ func click(_ rect: CGRect, right: Bool = false) throws {
     up.post(tap: .cghidEventTap)
 }
 
-func wait(_ reason: String, seconds: TimeInterval = 6, condition: () -> Bool) throws {
+func wait(_ reason: String, seconds: TimeInterval = 6, condition: () throws -> Bool) throws {
     let deadline = Date().addingTimeInterval(seconds)
     repeat {
-        if condition() {
+        if try condition() {
             return
         }
         Thread.sleep(forTimeInterval: 0.05)
@@ -384,6 +384,24 @@ do {
     guard let baseline = receipt(), !baseline.visible, let original = targetFrame(), !shelfVisible() else {
         throw JourneyError.failed("fixture_ready_and_closed_shelf_baseline_required")
     }
+    func checkedReceipt() throws -> Receipt? {
+        guard let current = receipt() else { return nil }
+        let counters = [
+            ("activation", current.activations, baseline.activations),
+            ("open", current.opens, baseline.opens),
+            ("action", current.actions, baseline.actions),
+            ("close", current.closes, baseline.closes),
+        ]
+        for (name, value, initial) in counters {
+            guard value >= initial else { throw JourneyError.failed("target_\(name)_counter_regressed") }
+            guard value - initial <= 1 else { throw JourneyError.failed("duplicate_target_\(name)_observed") }
+        }
+        return current
+    }
+    func exactlyOneCompletedJourney(_ current: Receipt) -> Bool {
+        current.activations - baseline.activations == 1 && current.opens - baseline.opens == 1 &&
+            current.actions - baseline.actions == 1 && current.closes - baseline.closes == 1 && !current.visible
+    }
     if let hostedAlias = verifiedHostedFixtureAlias(sourceFrame: original) {
         shelfLabels.append(hostedAlias)
     }
@@ -454,9 +472,10 @@ do {
         throw JourneyError.failed("synthetic_fixture_unresolved_after_scoped_shelf_hit_test")
     }
     try click(shelfFrame, right: right)
+    print("{\"stage\":\"shelf_target_clicked\"}")
     try wait("target_did_not_receive_click_and_open_interface") {
-        guard let current = receipt(), current.activations > baseline.activations,
-              current.opens > baseline.opens, current.visible,
+        guard let current = try checkedReceipt(), current.activations - baseline.activations == 1,
+              current.opens - baseline.opens == 1, current.visible,
               current.button == (right ? "right" : "left") else { return false }
         // The witness reports its delegate transition; independently require the
         // target's real actionable menu/popover control to be exposed by AppKit.
@@ -465,17 +484,24 @@ do {
     guard let action = targetAction(), let actionFrame = frame(action) else {
         throw JourneyError.failed("target_interface_action_unavailable")
     }
+    print("{\"stage\":\"visible_target_action_resolved\"}")
     guard !shelfVisible() else {
         throw JourneyError.failed("shelf_reopened_over_target_interface")
     }
+    _ = try checkedReceipt()
+    print("{\"stage\":\"before_target_action_click\"}")
     try click(actionFrame)
     try wait("target_action_or_close_not_observed") {
-        guard let current = receipt() else { return false }
-        return current.actions > baseline.actions && current.closes > baseline.closes && !current.visible
+        guard let current = try checkedReceipt() else { return false }
+        return exactlyOneCompletedJourney(current)
     }
     try wait("item_position_not_restored", seconds: 25) {
-        guard let restored = targetFrame() else { return false }
+        guard let current = try checkedReceipt(), exactlyOneCompletedJourney(current),
+              let restored = targetFrame() else { return false }
         return sameFrame(restored, original)
+    }
+    guard let completed = try checkedReceipt(), exactlyOneCompletedJourney(completed) else {
+        throw JourneyError.failed("exact_one_target_journey_not_observed")
     }
     guard !runningApp.isTerminated, !fixtureApp.isTerminated else { throw JourneyError.failed("process_changed") }
     let result: [String: Any] = try [
@@ -488,6 +514,7 @@ do {
         "targetInterfaceObserved": true, "targetActionObserved": true, "restorationObserved": true,
         "shelfStayedClosedDuringActivation": true,
         "targetActionRole": actionRole, "targetActionUniqueAndOnScreen": true,
+        "exactlyOneActivationOpenActionClose": true,
         "sourceSHA": required("BARLINE_SOURCE_SHA"),
         "executableSHA256": required("BARLINE_EXECUTABLE_SHA256"),
         "version": Bundle(url: runningApp.bundleURL!)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",

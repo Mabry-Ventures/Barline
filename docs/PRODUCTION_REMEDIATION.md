@@ -1,4 +1,4 @@
-# Production remediation — 1.0.8 (build 9)
+# Production remediation — 1.0.8 (build 10)
 
 Baseline: `b03645e432212aed10a827d3334ce278770fb74d` (1.0.6 build 7).
 The September 6 production audit is retained under `.artifacts/audit/2026-09-06-b03645e/`.
@@ -17,6 +17,11 @@ The installed journey additionally requires a unique, visible, fixture-owned
 target action of the expected role. Candidate logs retain failed attempts as
 well as successful native-menu and popover action/restoration witnesses; one
 successful attempt is not broad compatibility or full production readiness.
+Build 9's final popover attempt failed without a target activation. Build 10
+restores the baseline's paired releases, swallowed null-barrier signals, and
+balanced cursor hiding. The gate requires exactly one activation/open/action/
+close and rejects duplicates; these compatibility corrections require fresh
+candidate-bound runtime validation.
 
 | Finding | Change | Acceptance evidence |
 | --- | --- | --- |

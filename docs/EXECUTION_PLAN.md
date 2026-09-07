@@ -4,7 +4,7 @@ This is the live implementation ledger. A milestone is complete only when its
 code and evidence match the build specification; documentation alone is not a
 gate result.
 
-## Current checkpoint: shelf activation correction, 1.0.8 build 9
+## Current checkpoint: shelf activation correction, 1.0.8 build 10
 
 The installed 1.0.7 user journey exposed a real regression: a temporarily
 revealed native item remained in the shelf projection, and a no-interface
@@ -39,6 +39,16 @@ visible interval. The gate now requires a unique, enabled, on-screen,
 fixture-owned action with the expected menu-item or button role. This prevents
 stale or wrong-interface selection; it does not establish that as the cause of
 every earlier failure. The final source-bound package must rerun these journeys.
+
+The subsequent `05525e3` native journey passed after a fresh background launch,
+but its popover attempt produced no fixture activation. This remains a failed
+candidate, despite its passing fast/signature/notarization gates. Baseline
+comparison found two omitted protocol details: paired mouse-up releases and
+consumption of source-queue null barriers. Build 10 restores these and the
+baseline's balanced cursor hiding instead of drag-style cursor disassociation.
+No second mouse-down or full-gesture retry is introduced. The installed journey
+now fails on duplicate activations, opens, actions, or closes; exactly one of
+each is required. Source parity is a hypothesis to validate, not a runtime pass.
 
 The September 6 audit found 12 issues in `b03645e` (installed 1.0.6).
 The historical milestone table below is not qualification evidence for this
