@@ -14,6 +14,9 @@ BARLINE_DEVELOPER_ID_CERTIFICATE_SHA1 =
 BARLINE_URL_SCHEME_SEPARATOR = /$()/
 BARLINE_SPARKLE_FEED_URL = https:$(BARLINE_URL_SCHEME_SEPARATOR)github.com/Mabry-Ventures/Barline/releases/latest/download/appcast.xml
 BARLINE_SPARKLE_PUBLIC_KEY = FLCbqau7PBLbXZBmki4cLVfg7qrLROszQEulHX38htc=
+// Activate only after the user-owned canonical support site is live.
+// Empty means no donation affordance; it is never a feature entitlement.
+BARLINE_SUPPORT_URL =
 
 ARCHS = arm64
 EXCLUDED_ARCHS = x86_64 i386

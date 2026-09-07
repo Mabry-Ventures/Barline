@@ -132,6 +132,10 @@ struct AboutSettingsPane: View {
             }
             Link("Source", destination: URL(string: "https://github.com/Mabry-Ventures/Barline")!)
             Link("Report a Problem", destination: URL(string: "https://github.com/Mabry-Ventures/Barline/issues")!)
+            if let supportURL = Constants.supportURL {
+                Link("Support Barline", destination: supportURL)
+                    .help("Optional support for development. Every feature is already included.")
+            }
         }
         .padding(8)
         .buttonStyle(BottomBarButtonStyle())

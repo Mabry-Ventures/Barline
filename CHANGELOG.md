@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.10 (build 19) — candidate
+
+- Collapse and expand valid shelf groups without rearranging physical menu bar
+  items; preserve access when group membership is ambiguous.
+- Add local search favorites and aliases with bounded, private, atomic storage.
+- Guide saved layouts through native macOS Focus Filter setup and clarify
+  existing display-variant behavior.
+- Keep optional support confined to About and disabled until the canonical
+  site is live. No subscription, tracking, paid unlock, or payment reminders.
+
+This candidate is not yet qualified or published. Contextual auto-application
+and per-item global shortcuts remain future work, not release features.
+
 ## 1.0.9 (build 18)
 
 - Prevent delayed drag callbacks from posting after cancellation or timeout.

@@ -19,17 +19,15 @@ struct ProfilesSettingsPane: View {
     @State private var exportDocument: ProfileArchiveDocument?
     @State private var showsArchiveExporter = false
     @State private var showsArchiveImporter = false
+    @State private var focusLayoutID: UUID?
+
+    private var focusLayout: BarlineProfile? {
+        manager.profiles.first { $0.id == focusLayoutID }
+    }
 
     var body: some View {
         Form {
-            Section("macOS Focus") {
-                Text(
-                    "Apple keeps Focus modes in System Settings and does not share their names with apps. "
-                        + "Add Barline as a Focus Filter inside each Focus, then choose one of the menu bar layouts below."
-                )
-                .foregroundStyle(.secondary)
-                Link("Open Focus Settings", destination: Self.focusSettingsURL)
-            }
+            focusSetupSection
 
             Section("Menu Bar Layouts") {
                 if manager.profiles.isEmpty {
@@ -45,7 +43,14 @@ struct ProfilesSettingsPane: View {
                 } else {
                     ForEach(manager.profiles) { profile in
                         HStack {
-                            Label(profile.name, systemImage: profile.symbol ?? "menubar.rectangle")
+                            VStack(alignment: .leading, spacing: 3) {
+                                Label(profile.name, systemImage: profile.symbol ?? "menubar.rectangle")
+                                if !profile.displayOverrides.isEmpty {
+                                    Text("\(profile.displayOverrides.count) saved display variants · Review in Edit")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                             Spacer()
                             if manager.activeProfileID == profile.id {
                                 Text("Active").foregroundStyle(.secondary)
@@ -78,6 +83,8 @@ struct ProfilesSettingsPane: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            displayLayoutsSection
 
             Section("Import and Export") {
                 HStack {
@@ -188,6 +195,11 @@ struct ProfilesSettingsPane: View {
         }
         .formStyle(.grouped)
         .disabled(manager.isBusy)
+        .onChange(of: manager.profiles.map(\.id), initial: true) {
+            guard focusLayout == nil else { return }
+            focusLayoutID = manager.profiles.first { $0.id == manager.activeProfileID }?.id
+                ?? manager.profiles.first?.id
+        }
         .onChange(of: appState.navigationState.requestedProfileEditorID, initial: true) {
             guard let profileID = appState.navigationState.requestedProfileEditorID,
                   let profile = manager.profiles.first(where: { $0.id == profileID })
@@ -240,6 +252,91 @@ struct ProfilesSettingsPane: View {
                 manager.statusMessage = "The profile archive was not saved."
             }
         }
+    }
+
+    private var focusSetupSection: some View {
+        Section("Use a Layout with macOS Focus") {
+            Text("Focus modes stay in System Settings. Barline uses Apple's Focus Filters; it does not create or list your Focus modes.")
+                .foregroundStyle(.secondary)
+
+            FocusSetupStep(number: 1, title: "Choose a saved menu bar layout") {
+                if manager.profiles.isEmpty {
+                    Text("Arrange your menu bar, then use Capture Current Layout below. Give it a name you will recognize in Focus Settings.")
+                } else {
+                    Picker("Layout for setup", selection: $focusLayoutID) {
+                        Text("Choose a layout").tag(UUID?.none)
+                        ForEach(manager.profiles) { profile in
+                            Text(profile.name).tag(Optional(profile.id))
+                        }
+                    }
+                    .accessibilityIdentifier("focus-setup-layout")
+                    Text("This selection is a setup reference, not a Focus assignment.")
+                        .font(.caption)
+                }
+            }
+
+            FocusSetupStep(number: 2, title: "Open your Focus in System Settings") {
+                Text("Choose the Focus you want to configure, then find Focus Filters and add a filter.")
+                Link("Open Focus Settings", destination: Self.focusSettingsURL)
+                    .accessibilityIdentifier("open-native-focus-settings")
+            }
+
+            FocusSetupStep(number: 3, title: "Add Barline's Menu Bar Layout filter") {
+                if let focusLayout {
+                    Text("Choose Barline, set Menu Bar Layout to “\(focusLayout.name)”, then save the filter in System Settings.")
+                } else {
+                    Text("Save and choose a layout in step 1 first. Then select that layout in Barline's Menu Bar Layout filter.")
+                }
+                Text("Repeat these steps inside each Focus you want to use with Barline.")
+            }
+
+            DisclosureGroup("Verify your setup") {
+                Text("Turn that Focus on and check the menu bar layout. Turn it off and check that the previous workspace returns. If a change is blocked, review the status and Recovery sections below.")
+                    .foregroundStyle(.secondary)
+                Text("Barline cannot confirm the filter assignment from this screen. Opening Focus Settings or choosing a layout here does not complete the setup.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var displayLayoutsSection: some View {
+        Section("Layouts for Different Displays") {
+            Text("For a laptop and a desk setup, arrange each workspace and capture a separately named layout. Use Apply when you want to switch, or assign a saved layout through a native Focus Filter above.")
+                .foregroundStyle(.secondary)
+            Text("Connecting a display does not select a different saved layout. Display-specific variants already included in a layout archive can be reviewed in Edit; this editor does not create or change those variants.")
+                .foregroundStyle(.secondary)
+            if let activeID = manager.activeProfileID,
+               let activeProfile = manager.profiles.first(where: { $0.id == activeID }),
+               let presentation = manager.activePresentation
+            {
+                LabeledContent("Current presentation") {
+                    switch presentation.source {
+                    case .base:
+                        Text("\(activeProfile.name) · Base layout")
+                    case .displayOverride:
+                        Text("\(activeProfile.name) · Display variant")
+                    }
+                }
+                Button("Review Active Layout…") { editedProfile = activeProfile }
+            }
+        }
+    }
+}
+
+private struct FocusSetupStep<Content: View>: View {
+    let number: Int
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(number). \(title)")
+                .font(.headline)
+            content()
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 }
 

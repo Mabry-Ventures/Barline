@@ -5,6 +5,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=script/lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=script/lib/platform_lane.sh
+source "${SCRIPT_DIR}/lib/platform_lane.sh"
 
 MODE="${1:-}"
 [[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|nonfocus|full|release|xcode27|soak} [--installed] [--release] [--publish-status] [--xcode PATH]"
@@ -200,9 +202,11 @@ run_fast() {
     run_step "status-item-geometry" bash ./script/test-status-item-geometry.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
+        run_step "search-preferences-atomicity" bash ./script/test-search-preferences.sh
     fi
     run_step "installed-evidence-validator" bash ./script/test-installed-evidence.sh
     run_step "installed-evidence-writer" bash ./script/test-evidence-writer.sh
+    run_step "platform-lane-classification" bash ./script/test-platform-lane.sh
     run_step "repository-hygiene" ./script/ci/repo_hygiene.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "project-resolution" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \
@@ -304,9 +308,15 @@ case "$MODE" in
     xcode27)
         [[ -n "$XCODE_PATH" ]] || barline_die "xcode27 requires --xcode with an explicit Xcode 27 path"
         xcode_output="$(DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild -version)"
-        [[ "$xcode_output" == Xcode\ 27* ]] || barline_die "selected toolchain is not Xcode 27: $xcode_output"
+        barline_is_xcode27_toolchain "$xcode_output" || barline_die "selected toolchain is not Xcode 27: $xcode_output"
+        if "$PUBLISH_STATUS" && ! barline_is_macos27_runtime "$(sw_vers -productVersion)"; then
+            # A newer SDK on an older host cannot certify the OS runtime lane.
+            # Do not publish a green local/macos27-beta status for that case.
+            publish_commit_status failure "macOS 27 runtime host required; compilation is not runtime proof"
+            barline_die "macOS 27 runtime status requires a macOS 27 host"
+        fi
         run_full
-        if [[ "$(sw_vers -productVersion)" != 27.* ]]; then
+        if ! barline_is_macos27_runtime "$(sw_vers -productVersion)"; then
             printf 'macOS 27 runtime support NOT VERIFIED: this host is %s.\n' "$(sw_vers -productVersion)" | tee "$ARTIFACT_DIR/macos27-runtime-status.txt"
         fi
         ;;

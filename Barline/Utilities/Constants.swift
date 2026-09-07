@@ -3,9 +3,15 @@
 //  Barline
 //
 
+import BarlineCore
 import Foundation
 
 enum Constants {
+    /// An explicit user-opened website, never a payment or entitlement service.
+    static var supportURL: URL? {
+        SupportDestination.url(from: Bundle.main.object(forInfoDictionaryKey: "BarlineSupportURL") as? String)
+    }
+
     // swiftlint:disable force_unwrapping
 
     /// The version string in the app's bundle.

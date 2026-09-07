@@ -8,3 +8,4 @@ DerivedData/
 dist/
 *.xcresult
 .swiftpm/
+.wrangler/

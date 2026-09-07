@@ -15,6 +15,7 @@ final class MenuBarSearchModel: ObservableObject {
         case item(MenuBarItemID)
         case profileHeader
         case profile(UUID)
+        case favoritesHeader
     }
 
     enum CommandInterpretationState: Equatable {
@@ -33,6 +34,12 @@ final class MenuBarSearchModel: ObservableObject {
     @Published var selection: ItemID?
     @Published private(set) var averageColorInfo: MenuBarAverageColorInfo?
     @Published private(set) var commandInterpretationState: CommandInterpretationState = .idle
+    @Published private(set) var personalization = SearchItemPersonalization.empty
+    @Published private(set) var preferencesAvailable = false
+    @Published private(set) var isSavingPreferences = false
+    @Published private(set) var preferencesNotice: String?
+    @Published var aliasEditorItemID: MenuBarItemID?
+    @Published var aliasDraft = ""
 
     private var cancellables = Set<AnyCancellable>()
     private let commandInterpreter: any MenuBarCommandInterpreting
@@ -45,9 +52,78 @@ final class MenuBarSearchModel: ObservableObject {
     private let searchService = CachedSearchService()
     private var rankingTask: Task<Void, Never>?
     private var rankingSequence: UInt64 = 0
+    private let preferences = SearchItemPreferences()
+    private var hasRequestedPreferences = false
 
     init(commandInterpreter: any MenuBarCommandInterpreting = FoundationModelCommandInterpreter()) {
         self.commandInterpreter = commandInterpreter
+    }
+
+    var canSaveAlias: Bool {
+        guard preferencesAvailable, !isSavingPreferences, aliasEditorItemID != nil else { return false }
+        do {
+            _ = try SearchItemPersonalization.validatedAlias(aliasDraft)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func loadPreferences() async {
+        guard !hasRequestedPreferences else { return }
+        hasRequestedPreferences = true
+        do {
+            personalization = try await preferences.load()
+            preferencesAvailable = true
+        } catch {
+            preferencesNotice = "Saved favorites and aliases couldn’t be read. Existing data was left unchanged."
+        }
+    }
+
+    func toggleFavorite(_ itemID: MenuBarItemID) {
+        guard preferencesAvailable, !isSavingPreferences else { return }
+        let desired = !personalization.isFavorite(itemID)
+        isSavingPreferences = true
+        preferencesNotice = nil
+        Task {
+            defer { isSavingPreferences = false }
+            do {
+                personalization = try await preferences.setFavorite(desired, for: itemID)
+            } catch {
+                preferencesNotice = "Couldn’t save this favorite. Your saved preferences were not replaced."
+            }
+        }
+    }
+
+    func editAlias(for itemID: MenuBarItemID) {
+        guard preferencesAvailable, !isSavingPreferences else { return }
+        aliasDraft = personalization.alias(for: itemID) ?? ""
+        aliasEditorItemID = itemID
+        selection = nil
+    }
+
+    func cancelAliasEditing() {
+        aliasEditorItemID = nil
+        aliasDraft = ""
+        selection = displayedItems.first { $0.isSelectable }?.id
+    }
+
+    func saveAlias() {
+        guard canSaveAlias, let itemID = aliasEditorItemID else { return }
+        let draft = aliasDraft
+        isSavingPreferences = true
+        preferencesNotice = nil
+        Task {
+            defer { isSavingPreferences = false }
+            do {
+                personalization = try await preferences.setAlias(draft, for: itemID)
+                if aliasEditorItemID == itemID {
+                    cancelAliasEditing()
+                }
+            } catch {
+                preferencesNotice = "Couldn’t save this alias. Your saved preferences were not replaced."
+            }
+        }
     }
 
     func rankResults(

@@ -1,5 +1,48 @@
 # Barline execution plan
 
+## Fresh release qualification — September 7, 2026
+
+User authorized release only after a new qualification battery passes. Candidate
+1.0.10 build 19 includes the reviewed reliability-first app changes and retains
+the installed 1.0.9 build 18 until a signed replacement is available. No previous
+SHA's receipts qualify it. Run fast, full installed-candidate gates, signed
+packaging, real upgrade, and the changed-feature/manual acceptance matrix.
+Keep failures, exact source/binary hashes and runtime evidence under ignored
+artifacts. Public release is conditionally authorized, never authorized on a
+partial or bypassed gate. macOS 27 remains a separately unqualified OS lane.
+
+## Reliability-first direction — September 7, 2026
+
+The current forward plan is [RELIABILITY_FIRST.md](RELIABILITY_FIRST.md): core
+reliability/speed first, guided native Focus/display layouts, explainable rules,
+functional shelf groups, keyboard personalization, and a quiet donationware
+site on Cloudflare Pages. macOS 27 compatibility now requires rigorous runtime
+qualification; macOS 27-exclusive features are deliberately not day-one scope.
+Older milestone snapshots below are historical, not current certificates.
+Public release/update publication remains staged for final approval.
+
+Implementation checkpoint on `codex/reliability-first`: accessible collapsible
+shelf groups, local search favorites/aliases with atomic private persistence,
+guided native Focus setup and honest read-only display-variant descriptions,
+and a configuration-gated About support link are implemented but not installed
+or runtime-qualified. The contextual-rule evaluator is proposal-only; safe
+automatic application and per-item global shortcuts remain unfinished. Do not
+treat them as shipped features. The working installed 1.0.9 build 18 is untouched.
+
+Cloudflare Pages project `barline-site` now has an authorized `staging` preview.
+`usebarline.com` is the user-owned canonical domain, not yet activated. Stripe
+sandbox success/decline/abandonment are verified. Approved live one-time support
+is configured and linked from staging with real-payment disclosure; public
+domain/app release activation remains gated. BLN-9 records checkout evidence.
+Barline Linear team (BLN) owns the roadmap (BLN-1–14). GitHub issue/comment
+delivery to `#productsupport` and inbound Linear Triage sync passed a controlled
+test. Linear posting to `#barline` is authorized and verified with creation and
+comment receipts from BLN-16; roadmap/status/triage notifications are enabled. Ice credit moved
+to the deployed About page. Receipts: [SUPPORT_DELIVERY.md](SUPPORT_DELIVERY.md).
+Site delivery evidence is recorded
+in [site/QA.md](../site/QA.md). New source invalidates prior candidate certificates;
+the current checks are iteration evidence, not signed release qualification.
+
 ## Distribution refinement — 1.0.9 build 18 preparation
 
 Build 17 (`f7478cf`) passed fast, signing/notarization, semantic upgrade, and

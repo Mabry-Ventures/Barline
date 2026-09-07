@@ -92,6 +92,8 @@ struct ProfileEditorSheet: View {
                     }
                 }
 
+                displayVariantsSection
+
                 Section("Recovery") {
                     Button("Reset Profile from Current Workspace", role: .destructive) {
                         showsResetConfirmation = true
@@ -102,7 +104,7 @@ struct ProfileEditorSheet: View {
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle("Edit Profile")
+            .navigationTitle("Edit Layout")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -133,6 +135,38 @@ struct ProfileEditorSheet: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The current validated layout and supported workspace settings will replace this profile.")
+        }
+    }
+
+    private var displayVariantsSection: some View {
+        Section("Display Variants") {
+            Text("Groups and spacers edited above belong to the base layout. Renaming applies to the whole saved layout. Display variants are preserved when you save.")
+                .foregroundStyle(.secondary)
+            if profile.displayOverrides.isEmpty {
+                Label("No display variants in this layout", systemImage: "display")
+                    .foregroundStyle(.secondary)
+                Text("To keep distinct laptop and desk arrangements, capture a separate saved layout for each workspace, then Apply the one you need.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(profile.displayOverrides.enumerated()), id: \.element.displayID) { index, variant in
+                    DisclosureGroup("Display variant \(index + 1)") {
+                        LabeledContent("Visible items", value: "\(variant.layout.visible.count)")
+                        LabeledContent("Hidden items", value: "\(variant.layout.hidden.count)")
+                        LabeledContent("Always-hidden items", value: "\(variant.layout.alwaysHidden.count)")
+                        LabeledContent("Groups", value: "\(variant.groups.count)")
+                        LabeledContent("Spacers", value: "\(variant.spacers.count)")
+                        LabeledContent(
+                            "Display matching",
+                            value: variant.displayFingerprint == nil ? "Stored display identifier" : "Hardware identity available"
+                        )
+                        Text("Variant numbers identify entries in this archive, not physical monitor numbers.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("These variants are read-only here. Importing a layout archive can supply display-specific item arrangements; it does not create a rule that switches between saved layouts.")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

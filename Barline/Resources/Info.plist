@@ -14,6 +14,8 @@
 	<string>$(BARLINE_SPARKLE_FEED_URL)</string>
 	<key>BarlineSparklePublicKey</key>
 	<string>$(BARLINE_SPARKLE_PUBLIC_KEY)</string>
+	<key>BarlineSupportURL</key>
+	<string>$(BARLINE_SUPPORT_URL)</string>
 	<key>SUFeedURL</key>
 	<string>$(BARLINE_SPARKLE_FEED_URL)</string>
 	<key>SUPublicEDKey</key>

@@ -1,6 +1,6 @@
 # Barline
 
-**Your menu bar, in order.**
+**Your menu bar, organized. Your Mac, uninterrupted.**
 
 Barline is an Apple-native, privacy-first menu bar workspace manager for Apple
 Silicon Macs. It can organize visible, hidden, and always-hidden status items;

@@ -43,7 +43,11 @@ final class MenuBarSearchPanel: NSPanel {
         for: [.keyDown]
     ) { [weak self] event in
         if KeyCode(rawValue: Int(event.keyCode)) == .escape {
-            self?.close()
+            if self?.model.aliasEditorItemID != nil {
+                self?.model.cancelAliasEditing()
+            } else {
+                self?.close()
+            }
             return nil
         }
         return event
@@ -162,6 +166,7 @@ final class MenuBarSearchPanel: NSPanel {
 
     /// Dismisses the search panel.
     override func close() {
+        model.cancelAliasEditing()
         presentationSequence &+= 1
         presentationTask?.cancel()
         presentationTask = nil
@@ -216,6 +221,7 @@ private struct MenuBarSearchContentView: View {
     @EnvironmentObject var model: MenuBarSearchModel
     @EnvironmentObject var profileManager: ProfileManager
     @FocusState private var searchFieldIsFocused: Bool
+    @FocusState private var aliasFieldIsFocused: Bool
 
     let closePanel: () -> Void
 
@@ -234,6 +240,16 @@ private struct MenuBarSearchContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchField
+            if model.aliasEditorItemID != nil {
+                aliasEditor
+            }
+            if let notice = model.preferencesNotice {
+                Text(notice)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(8)
+                    .accessibilityIdentifier("Barline.Search.PreferencesNotice")
+            }
             if let notice = itemManager.activationNotice {
                 Label(notice, systemImage: "exclamationmark.triangle")
                     .font(.callout)
@@ -254,6 +270,7 @@ private struct MenuBarSearchContentView: View {
         .fixedSize()
         .task {
             searchFieldIsFocused = true
+            await model.loadPreferences()
         }
         .onChange(of: model.searchText, initial: true) {
             updateDisplayedItems()
@@ -271,10 +288,39 @@ private struct MenuBarSearchContentView: View {
                 selectFirstDisplayedItem()
             }
         }
+        .onChange(of: model.personalization) {
+            updateDisplayedItems()
+            if model.searchText.isEmpty {
+                selectFirstDisplayedItem()
+            }
+        }
+        .onChange(of: model.aliasEditorItemID) {
+            aliasFieldIsFocused = model.aliasEditorItemID != nil
+            searchFieldIsFocused = model.aliasEditorItemID == nil
+        }
         .onDisappear {
             model.cancelRanking()
             model.resetCommandInterpretation()
         }
+    }
+
+    private var aliasEditor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                TextField("Search alias", text: $model.aliasDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($aliasFieldIsFocused)
+                    .onSubmit { model.saveAlias() }
+                    .accessibilityIdentifier("Barline.Search.AliasField")
+                Button("Save") { model.saveAlias() }
+                    .disabled(!model.canSaveAlias)
+                Button("Cancel") { model.cancelAliasEditing() }
+            }
+            Text("Use up to 64 characters. Leave blank to remove the alias.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
     }
 
     @ViewBuilder
@@ -386,7 +432,7 @@ private struct MenuBarSearchContentView: View {
     @ViewBuilder
     private var mainContent: some View {
         if hasItems {
-            SectionedList(selection: $model.selection, items: $model.displayedItems)
+            SectionedList(selection: searchSelection, items: $model.displayedItems)
                 .contentPadding(8)
                 .scrollContentBackground(.hidden)
         } else {
@@ -397,6 +443,15 @@ private struct MenuBarSearchContentView: View {
                     .controlSize(.small)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var searchSelection: Binding<MenuBarSearchModel.ItemID?> {
+        Binding {
+            model.aliasEditorItemID == nil ? model.selection : nil
+        } set: { value in
+            guard model.aliasEditorItemID == nil else { return }
+            model.selection = value
         }
     }
 
@@ -414,6 +469,10 @@ private struct MenuBarSearchContentView: View {
                 let selection = model.selection,
                 let item = menuBarItem(for: selection)
             {
+                Menu("Item Actions") {
+                    itemPreferenceActions(for: item.stableID)
+                }
+                .accessibilityLabel("Actions for selected menu bar item")
                 ShowItemButton(item: item) {
                     performAction(for: item)
                 }
@@ -428,6 +487,7 @@ private struct MenuBarSearchContentView: View {
     }
 
     private func selectFirstDisplayedItem() {
+        guard model.aliasEditorItemID == nil else { return }
         model.selection = model.displayedItems.first { $0.isSelectable }?.id
     }
 
@@ -492,6 +552,15 @@ private struct MenuBarSearchContentView: View {
                     performAction(for: item)
                 } content: {
                     MenuBarSearchItemView(item: item)
+                        .contextMenu {
+                            itemPreferenceActions(for: item.stableID)
+                        }
+                        .accessibilityAction(named: Text(model.personalization.isFavorite(item.stableID) ? "Remove Favorite" : "Favorite")) {
+                            model.toggleFavorite(item.stableID)
+                        }
+                        .accessibilityAction(named: Text("Edit Search Alias")) {
+                            model.editAlias(for: item.stableID)
+                        }
                 }
                 let memberships = profileManager.profiles
                     .filter { $0.searchableItemIDs.contains(item.stableID) }
@@ -502,7 +571,7 @@ private struct MenuBarSearchContentView: View {
                     entity: .menuBarItem(item.stableID),
                     title: item.displayName,
                     bundleIdentifier: item.stableID.bundleIdentifier,
-                    aliases: [item.title, item.stableID.alias].compactMap(\.self),
+                    aliases: [item.title, item.stableID.alias, model.personalization.alias(for: item.stableID)].compactMap(\.self),
                     groups: profileManager.profiles.flatMap { profile in
                         profile.searchableGroupNames(containing: item.stableID)
                     },
@@ -517,7 +586,23 @@ private struct MenuBarSearchContentView: View {
 
         if model.searchText.isEmpty {
             model.cancelRanking()
-            model.displayedItems = searchItems.map(\.listItem)
+            let favorites = searchItems.filter { searchItem in
+                guard case let .menuBarItem(itemID)? = searchItem.document?.entity else { return false }
+                return model.personalization.isFavorite(itemID)
+            }
+            let favoriteIDs = Set(favorites.compactMap { $0.document?.id })
+            let otherItems = searchItems.filter { searchItem in
+                searchItem.document.map { !favoriteIDs.contains($0.id) } ?? true
+            }
+            if favorites.isEmpty {
+                model.displayedItems = searchItems.map(\.listItem)
+            } else {
+                let header = ListItem.header(id: .favoritesHeader) {
+                    Text("Favorites").fontWeight(.semibold).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
+                }
+                model.displayedItems = [header] + favorites.map(\.listItem) + otherItems.map(\.listItem)
+            }
             model.synchronizeSpotlightIfNeeded(with: documents)
             model.resetCommandInterpretation()
         } else {
@@ -547,9 +632,19 @@ private struct MenuBarSearchContentView: View {
         switch selection {
         case let .item(stableID):
             itemManager.itemCache.managedItems.first { $0.stableID == stableID }
-        case .header, .profileHeader, .profile:
+        case .header, .profileHeader, .profile, .favoritesHeader:
             nil
         }
+    }
+
+    @ViewBuilder
+    private func itemPreferenceActions(for itemID: MenuBarItemID) -> some View {
+        Button(model.personalization.isFavorite(itemID) ? "Remove Favorite" : "Favorite") {
+            model.toggleFavorite(itemID)
+        }
+        .disabled(!model.preferencesAvailable || model.isSavingPreferences)
+        Button("Edit Search Alias…") { model.editAlias(for: itemID) }
+            .disabled(!model.preferencesAvailable || model.isSavingPreferences)
     }
 
     private func performAction(for profile: BarlineProfile) {
@@ -883,11 +978,21 @@ private struct MenuBarSearchItemView: View {
     var body: some View {
         HStack {
             Label {
-                labelText
+                VStack(alignment: .leading, spacing: 2) {
+                    labelText
+                    if let alias = model.personalization.alias(for: item.stableID) {
+                        Text(alias).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
             } icon: {
                 labelIcon
             }
             Spacer()
+            if model.personalization.isFavorite(item.stableID) {
+                Image(systemName: "star.fill")
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Favorite")
+            }
             itemView
         }
         .padding(padding)
