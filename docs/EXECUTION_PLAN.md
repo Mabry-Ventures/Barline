@@ -1,6 +1,15 @@
 # Barline execution plan
 
-## Distribution refinement — 1.0.9 build 12
+## Distribution refinement — 1.0.9 build 13
+
+Build 12 passed signing/notarization and a localhost Sparkle upgrade, but failed
+its first installed hidden-item action gate. The new checkpoint required display
+ownership while the helper supplied physical intersection only, leaving hidden
+off-screen items unresolved. Build 13 separates logical WindowServer ownership
+from physical click visibility, including restoration destination selection.
+The working 1.0.8 install was restored while correcting this failure. All build
+12 artifacts remain rejected qualification evidence. Public release and update
+feed activation are staged for the user's final approval, not authorized now.
 
 The September 7 follow-up audit identified mutable-neighbor restoration and
 candidate-receipt enforcement gaps. Temporary reveals now carry a durable,

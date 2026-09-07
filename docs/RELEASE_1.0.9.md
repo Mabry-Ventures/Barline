@@ -1,5 +1,9 @@
 # Barline 1.0.9
 
+Candidate build 13 supersedes build 12, which failed installed qualification:
+physical screen intersection did not establish a hidden item's display owner.
+The failed candidate and its evidence remain retained, not distribution-ready.
+
 ## Refinements
 
 - Restore temporarily revealed menu bar items to their original section and

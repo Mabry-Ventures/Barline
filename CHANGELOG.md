@@ -1,9 +1,11 @@
 # Changelog
 
-## 1.0.9 (build 12)
+## 1.0.9 (build 13)
 
 - Restore temporarily revealed items to their original section/display even if
   neighboring icons disappear or move.
+- Resolve hidden items' logical display ownership independently of their
+  off-screen coordinates before activation or restoration.
 - Preserve interrupted restoration across restarts and expose Retry Item
   Restoration in Layouts & Focus. Pause after three unsuccessful attempts.
 - Keep pending restoration intact when a competing layout operation cannot

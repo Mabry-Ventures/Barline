@@ -1,4 +1,10 @@
-# Production remediation — 1.0.9 (build 12)
+# Production remediation — 1.0.9 (build 13)
+
+Build 12's signed installed journey rejected hidden-item activation before any
+target click because off-screen bounds produced no display identity. The helper
+now resolves logical WindowServer display ownership for both snapshots and move
+destinations; physical click visibility remains a separate safety check. Build
+12 is retained as failed qualification evidence, not silently replaced by a pass.
 
 September 7 refinement: original-section/display restoration uses stable anchor
 fallbacks and a durable bounded journal; unavailable topology or three failed

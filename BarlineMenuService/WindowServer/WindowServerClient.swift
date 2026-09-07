@@ -30,6 +30,9 @@ final class WindowServerClient: @unchecked Sendable {
         UnsafeMutablePointer<CGWindowLevel>
     ) -> Int32
     private typealias ActiveSpaceFunction = @convention(c) (ConnectionID) -> SpaceID
+    private typealias WindowDisplayFunction = @convention(c) (
+        ConnectionID, CGWindowID
+    ) -> Unmanaged<CFString>?
 
     private struct GenerationState {
         var value: UInt64 = 0
@@ -136,7 +139,7 @@ final class WindowServerClient: @unchecked Sendable {
                 id: itemID,
                 section: classified[index].section,
                 order: index,
-                displayID: displayID(containing: window.bounds),
+                displayID: displayID(for: window),
                 isSystemItem: ownership == .system,
                 sourceOwnership: ownership,
                 isBarlineControlItem: isControlItem,
@@ -207,7 +210,7 @@ final class WindowServerClient: @unchecked Sendable {
                 throw MenuBarBackendError.operationFailed("No destination item is available")
             }
             let requestedIndex = min(max(operation.index, 0), candidateIndices.count)
-            let sourceDisplayID = displayID(containing: item.bounds)
+            let sourceDisplayID = displayID(for: item)
             var insertionIndex = requestedIndex
             let sourcePosition = candidateIndices.firstIndex(of: sourceIndex)
             if let sourcePosition,
@@ -232,7 +235,7 @@ final class WindowServerClient: @unchecked Sendable {
             }
             let eligibleDestinations = destinationIndices.enumerated().filter { _, index in
                 operation.destinationDisplayID.map {
-                    displayID(containing: classified[index].window.bounds) == $0
+                    displayID(for: classified[index].window) == $0
                 } != false
             }
             guard !eligibleDestinations.isEmpty else {
@@ -1242,19 +1245,39 @@ final class WindowServerClient: @unchecked Sendable {
         return value > 0 ? value : nil
     }
 
-    private func displayID(containing bounds: CGRect) -> MenuBarDisplayID? {
-        let match = NSScreen.screens.compactMap { screen -> (CGDirectDisplayID, CGFloat)? in
+    private func displayID(for window: WindowRecord) -> MenuBarDisplayID? {
+        let displays = NSScreen.screens.compactMap { screen -> (MenuBarDisplayID, MenuBarRect)? in
             guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
                 return nil
             }
             let displayID = CGDirectDisplayID(number.uint32Value)
-            let intersection = CGDisplayBounds(displayID).intersection(bounds)
-            guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else {
-                return nil
+            let bounds = CGDisplayBounds(displayID)
+            return (stableDisplayID(displayID), MenuBarRect(
+                x: bounds.minX, y: bounds.minY, width: bounds.width, height: bounds.height
+            ))
+        }
+        // Hidden status items live outside physical display bounds. Their
+        // WindowServer-managed display is ownership; geometric visibility is not.
+        let membership: Set<MenuBarDisplayID>?
+        if let connection = resolver.resolve("CGSMainConnectionID", as: MainConnectionFunction.self),
+           let copyDisplay = resolver.resolve("CGSCopyManagedDisplayForWindow", as: WindowDisplayFunction.self)
+        {
+            if let display = copyDisplay(connection(), window.identifier)?.takeRetainedValue() {
+                membership = [MenuBarDisplayID(display as String)]
+            } else {
+                membership = []
             }
-            return (displayID, intersection.width * intersection.height)
-        }.max { $0.1 < $1.1 }
-        return match.map { stableDisplayID($0.0) }
+        } else {
+            membership = nil
+        }
+        return MenuBarDisplayOwnershipPolicy.resolve(
+            itemBounds: MenuBarRect(
+                x: window.bounds.minX, y: window.bounds.minY,
+                width: window.bounds.width, height: window.bounds.height
+            ),
+            displays: Dictionary(uniqueKeysWithValues: displays),
+            membershipDisplayIDs: membership
+        )
     }
 
     private func stableDisplayID(_ displayID: CGDirectDisplayID) -> MenuBarDisplayID {
