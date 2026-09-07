@@ -197,6 +197,7 @@ run_fast() {
     run_step "swiftlint" swiftlint lint --strict --config .swiftlint.yml
     run_step "core-build" swift build --package-path BarlineCore
     run_step "core-tests" swift test --package-path BarlineCore --enable-code-coverage
+    run_step "status-item-geometry" bash ./script/test-status-item-geometry.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
     fi

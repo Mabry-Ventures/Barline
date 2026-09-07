@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.9 (build 13)
+## 1.0.9 (build 14)
 
 - Restore temporarily revealed items to their original section/display even if
   neighboring icons disappear or move.
@@ -12,6 +12,8 @@
   proceed safely.
 - Require exact-candidate target-action, performance and helper-recovery receipts
   before installed qualification passes.
+- Match macOS-hosted status-item geometry consistently in performance probes,
+  with regression tests for the observed two-point source/host width difference.
 
 Barline has not published a binary release. Changes below describe the active
 development line and are not release certification.

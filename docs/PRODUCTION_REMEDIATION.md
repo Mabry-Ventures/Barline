@@ -1,4 +1,11 @@
-# Production remediation — 1.0.9 (build 13)
+# Production remediation — 1.0.9 (build 14)
+
+Build 14 corrects a measured test-harness mismatch: macOS hosts the source AX
+status button with identical center but two points of width difference. The
+installed journey already tolerated that layout; the performance probe did not.
+Eight shared-policy regressions cover this and reject unrelated/invalid geometry.
+The 250 ms performance budget is unchanged. XCUITest remains separately blocked
+by macOS requiring user authentication to enable UI Automation.
 
 Build 12's signed installed journey rejected hidden-item activation before any
 target click because off-screen bounds produced no display identity. The helper

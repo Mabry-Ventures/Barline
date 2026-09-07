@@ -12,6 +12,7 @@ PREFERENCE_KEY="UseBarlineShelf"
 ORIGINAL_PREFERENCE="__missing__"
 REUSE_RUNNING=false
 OUTPUT_PATH=""
+PERFORMANCE_SOURCE_DIR=""
 PROBE="${BARLINE_PERFORMANCE_PROBE:-runtime-smoke}"
 BUILD_CONFIGURATION="${BARLINE_BUILD_CONFIGURATION:-Debug}"
 
@@ -70,6 +71,10 @@ if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PR
 fi
 
 cleanup() {
+    if [[ -n "$PERFORMANCE_SOURCE_DIR" ]]; then
+        /bin/rm -f "$PERFORMANCE_SOURCE_DIR/main.swift"
+        /bin/rmdir "$PERFORMANCE_SOURCE_DIR"
+    fi
     # Reused candidates never changed this preference; do not overwrite a
     # user's concurrent choice during cleanup.
     if "$REUSE_RUNNING"; then return; fi
@@ -125,9 +130,14 @@ fi
     exit 1
 }
 mkdir -p "$MODULE_CACHE"
+# Swift permits top-level probe statements in main.swift when compiling the
+# shared, independently tested geometry policy alongside the probe.
+PERFORMANCE_SOURCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/barline-performance-source.XXXXXX")"
+cp "$ROOT/script/measure-barline-shelf-responsiveness.swift" "$PERFORMANCE_SOURCE_DIR/main.swift"
 xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     -framework AppKit -framework CoreGraphics \
-    "$ROOT/script/measure-barline-shelf-responsiveness.swift" -o "$BINARY"
+    "$ROOT/script/StatusItemFrameMatching.swift" \
+    "$PERFORMANCE_SOURCE_DIR/main.swift" -o "$BINARY"
 if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
     BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \
         BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" \

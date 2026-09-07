@@ -1,6 +1,16 @@
 # Barline execution plan
 
-## Distribution refinement — 1.0.9 build 13
+## Distribution refinement — 1.0.9 build 14
+
+Build 13 passed four consecutive installed target-action/restoration lanes and
+direct restart-recovery UI checks. Its full gate passed builds, analysis,
+Core/integration execution, fixture, semantic accessibility and privacy checks.
+XCUITest hit a distinct macOS authentication boundary: automation mode is
+disabled and requires user authentication, despite DevToolsSecurity being enabled.
+The performance harness also rejected a verified hosted icon's two-point width
+difference; build 14 fixes that comparison with eight regressions and keeps the
+250 ms budget unchanged. A focused real click then passed at 23.7 ms. That single
+sample is not the required 20-sample candidate performance certificate.
 
 Build 12 passed signing/notarization and a localhost Sparkle upgrade, but failed
 its first installed hidden-item action gate. The new checkpoint required display

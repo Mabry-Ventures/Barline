@@ -270,9 +270,7 @@ private func barlineIconCenter() throws -> CGPoint {
                   NSRunningApplication(processIdentifier: owner)?.bundleIdentifier == "com.apple.controlcenter"
             else { return false }
             return sourceStatusFrames(processIdentifier: expectedProcessIdentifier).contains {
-                abs($0.midX - candidate.bounds.midX) <= 1 &&
-                    abs($0.midY - candidate.bounds.midY) <= 1 &&
-                    abs($0.width - candidate.bounds.width) <= 1
+                StatusItemFrameMatching.matches(source: $0, hosted: candidate.bounds)
             }
         }) {
             return CGPoint(x: icon.bounds.midX, y: icon.bounds.midY)

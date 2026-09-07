@@ -1,8 +1,11 @@
 # Barline 1.0.9
 
-Candidate build 13 supersedes build 12, which failed installed qualification:
+Candidate build 14 supersedes build 12, which failed installed qualification:
 physical screen intersection did not establish a hidden item's display owner.
 The failed candidate and its evidence remain retained, not distribution-ready.
+Build 13's four installed click/restoration lanes passed; build 14 additionally
+corrects the performance harness's hosted-window matching. Full XCUITest still
+requires macOS UI Automation authentication; do not describe that gate as passed.
 
 ## Refinements
 
