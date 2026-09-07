@@ -473,6 +473,12 @@ final class ControlItem {
         return eventWindow === statusItem.button?.window || eventWindow === window
     }
 
+    /// Global hosted events may not expose an NSWindow. Resolve their captured
+    /// point against live button geometry before considering the cached frame.
+    func containsEventLocation(_ location: CGPoint) -> Bool {
+        (statusItem.button?.window?.frame ?? frame)?.contains(location) == true
+    }
+
     /// Performs the control item's action.
     @objc private func performAction() {
         guard

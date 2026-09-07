@@ -185,8 +185,10 @@ extension HIDEventManager {
             appState.settings.general.showOnClick,
             let click = event.cgEvent,
             isMouseInsideEmptyMenuBarSpace(
-                appState: appState, screen: screen,
-                appKitLocation: click.unflippedLocation, coreGraphicsLocation: click.location,
+                appState: appState,
+                screen: screen,
+                appKitLocation: click.unflippedLocation,
+                coreGraphicsLocation: click.location,
                 eventTargetsPrimaryControlItem: targetsPrimaryControl
             )
         else {
@@ -546,7 +548,8 @@ extension HIDEventManager {
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of an empty space in the menu bar.
     func isMouseInsideEmptyMenuBarSpace(
-        appState: AppState, screen: NSScreen,
+        appState: AppState,
+        screen: NSScreen,
         appKitLocation: CGPoint? = MouseHelpers.locationAppKit,
         coreGraphicsLocation: CGPoint? = MouseHelpers.locationCoreGraphics,
         eventTargetsPrimaryControlItem: Bool = false
@@ -585,12 +588,11 @@ extension HIDEventManager {
     ) -> Bool {
         guard
             let visibleSection = appState.menuBarManager.section(withName: .visible),
-            let barlineIconFrame = visibleSection.controlItem.frame,
             let mouseLocation = location
         else {
             return false
         }
-        return barlineIconFrame.contains(mouseLocation)
+        return visibleSection.controlItem.containsEventLocation(mouseLocation)
     }
 }
 

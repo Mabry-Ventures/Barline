@@ -7,7 +7,7 @@ tests, but its first installed shelf-open journey failed. The deferred-work
 lease does not prevent a second handler from toggling the same current click.
 Build 16 makes control-window target ownership authoritative even with stale
 geometry and uses the event's captured coordinates in click arbitration.
-Ownership checks read the live status button's window synchronously rather
+Ownership checks read the live status button's window and geometry synchronously rather
 than relying only on its queued published window after a button replacement.
 A Core regression covers a control-window event with all geometry claiming
 empty space. Installed runtime proof remains mandatory.
