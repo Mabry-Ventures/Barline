@@ -143,9 +143,10 @@ final class MenuBarManager: ObservableObject {
                     let screen = appState.hidEventManager.bestScreen(appState: appState),
                     !appState.hidEventManager.isMouseInsideMenuBar(appState: appState, screen: screen)
                 {
+                    let lease = barlineShelfPanel.dismissalLease
                     Task {
                         try await Task.sleep(for: .seconds(0.1))
-                        hiddenSection.hide()
+                        hiddenSection.hide(ifOwnedBy: lease)
                     }
                 }
             }

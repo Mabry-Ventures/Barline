@@ -1,6 +1,23 @@
 # Barline execution plan
 
-## Distribution refinement — 1.0.9 build 14
+## Distribution refinement — 1.0.9 build 15 preparation
+
+Build 14 passed signing/notarization, a semantic-preference-preserving signed
+upgrade, all four installed target lanes, 20 shelf opens (p95 47.3 ms), and one
+helper replacement with preserved app PID. The five-open follow-up failed one
+sample: generation 49 began and was immediately closed without another control
+action. All evidence remains under its source-bound artifact directory; the
+six passing receipts do not override the failed enclosing burst gate.
+
+Review found delayed smart-rehide work had no presentation ownership and read
+the later pointer location. Build 15 captures the original event location and
+binds smart, timed, hover, and focused-app delayed dismissals to a presentation epoch.
+Closing/reopening invalidates earlier dismissal leases. Four pure regression
+cases cover current, closed, reopened, and repeated presentation lifetimes.
+This closes a demonstrated code-level race consistent with the retained trace;
+the prior logs do not conclusively identify which dismissal caller fired.
+Fresh installed qualification is required. UI Automation authentication remains
+an independent external gate; public publication remains approval-gated.
 
 Build 13 passed four consecutive installed target-action/restoration lanes and
 direct restart-recovery UI checks. Its full gate passed builds, analysis,

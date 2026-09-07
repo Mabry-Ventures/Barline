@@ -238,6 +238,11 @@ extension HIDEventManager {
             return
         }
 
+        // The event's position is immutable; the live pointer may have moved
+        // by the time the asynchronous helper lookup completes.
+        guard let clickLocation = event.cgEvent?.location else { return }
+        let lease = appState.menuBarManager.barlineShelfPanel.dismissalLease
+
         Task {
             guard let initialEnvironment = try? await BarlineMenuService.Connection.shared.environment() else {
                 return
@@ -252,15 +257,14 @@ extension HIDEventManager {
             }
             if currentEnvironment.activeSpaceToken != initialEnvironment.activeSpaceToken {
                 for section in appState.menuBarManager.sections {
-                    section.hide()
+                    section.hide(ifOwnedBy: lease)
                 }
                 return
             }
 
             // Get the window that was clicked.
             guard
-                let mouseLocation = MouseHelpers.locationCoreGraphics,
-                let context = try? await BarlineMenuService.Connection.shared.pointContext(at: mouseLocation),
+                let context = try? await BarlineMenuService.Connection.shared.pointContext(at: clickLocation),
                 let bundleIdentifier = context.applicationBundleIdentifier
             else {
                 return
@@ -280,7 +284,7 @@ extension HIDEventManager {
 
             // All checks have passed, hide the sections.
             for section in appState.menuBarManager.sections {
-                section.hide()
+                section.hide(ifOwnedBy: lease)
             }
         }
     }
@@ -367,6 +371,7 @@ extension HIDEventManager {
             else {
                 return
             }
+            let lease = appState.menuBarManager.barlineShelfPanel.dismissalLease
             Task {
                 try await Task.sleep(for: .seconds(delay))
                 // Make sure the mouse is still outside.
@@ -376,7 +381,7 @@ extension HIDEventManager {
                 else {
                     return
                 }
-                hiddenSection.hide()
+                hiddenSection.hide(ifOwnedBy: lease)
             }
         }
     }

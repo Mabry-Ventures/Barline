@@ -1,6 +1,11 @@
 # Barline 1.0.9
 
-Candidate build 14 supersedes build 12, which failed installed qualification:
+Candidate build 15 adds ownership checks for delayed rehide work, so an older
+click or timer cannot dismiss a later shelf presentation. Build 14's required
+receipts passed but its follow-up burst had one timeout; the full gate did not
+pass. Build 15 requires fresh qualification before distribution.
+
+Candidate build 14 superseded build 12, which failed installed qualification:
 physical screen intersection did not establish a hidden item's display owner.
 The failed candidate and its evidence remain retained, not distribution-ready.
 Build 13's four installed click/restoration lanes passed; build 14 additionally

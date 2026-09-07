@@ -240,6 +240,14 @@ final class MenuBarSection {
     }
 
     /// Hides the section.
+    func hide(ifOwnedBy lease: PresentationEpoch.Lease) {
+        guard menuBarManager?.barlineShelfPanel.ownsDismissal(lease) == true else {
+            return
+        }
+        hide()
+    }
+
+    /// Hides the section immediately in response to current user intent.
     func hide() {
         guard let menuBarManager, !isHidden else {
             return
@@ -291,6 +299,7 @@ final class MenuBarSection {
             }
             if NSEvent.mouseLocation.y < screen.visibleFrame.maxY {
                 if rehideTimer == nil {
+                    let lease = appState.menuBarManager.barlineShelfPanel.dismissalLease
                     rehideTimer = .scheduledTimer(
                         withTimeInterval: appState.settings.general.rehideInterval,
                         repeats: false
@@ -303,7 +312,7 @@ final class MenuBarSection {
                         }
                         if NSEvent.mouseLocation.y < screen.visibleFrame.maxY {
                             Task {
-                                await self.hide()
+                                await self.hide(ifOwnedBy: lease)
                             }
                         } else {
                             Task {

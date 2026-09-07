@@ -64,7 +64,19 @@ final class BarlineShelfPanel: NSPanel {
     ///
     /// Cache updates in `show` suspend. Without an ownership token, an older
     /// show request can finish after `close` and reopen the panel.
-    private var presentationGeneration: UInt = 0
+    private var presentationEpoch = PresentationEpoch()
+
+    private var presentationGeneration: UInt {
+        presentationEpoch.generation
+    }
+
+    var dismissalLease: PresentationEpoch.Lease {
+        presentationEpoch.lease
+    }
+
+    func ownsDismissal(_ lease: PresentationEpoch.Lease) -> Bool {
+        presentationEpoch.owns(lease)
+    }
 
     /// The cache refresh associated with the active presentation.
     private var cacheRefreshTask: Task<Void, Never>?
@@ -247,7 +259,7 @@ final class BarlineShelfPanel: NSPanel {
 
         cacheRefreshTask?.cancel()
         cacheRefreshTask = nil
-        presentationGeneration &+= 1
+        presentationEpoch.advance()
         let request = PresentationRequest(
             section: section,
             generation: presentationGeneration,
@@ -534,7 +546,7 @@ final class BarlineShelfPanel: NSPanel {
         )
         cacheRefreshTask?.cancel()
         cacheRefreshTask = nil
-        presentationGeneration &+= 1
+        presentationEpoch.advance()
         currentSection = nil
         appState?.navigationState.isBarlineShelfPresented = false
         super.close()

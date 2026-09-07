@@ -1,4 +1,11 @@
-# Production remediation — 1.0.9 (build 14)
+# Production remediation — 1.0.9 (build 15 preparation)
+
+Build 14's required six receipts passed, but its enclosing burst gate failed
+one post-recovery open. Delayed dismissal tasks could outlive the presentation
+that scheduled them. Build 15 scopes smart/timed/hover/focused-app rehide to an epoch
+and captures the initiating click position before helper awaits. Four regression
+cases cover ownership invalidation. Installed proof must be regenerated; do not
+promote build 14 to distribution GO on its six receipts alone.
 
 Build 14 corrects a measured test-harness mismatch: macOS hosts the source AX
 status button with identical center but two points of width difference. The
