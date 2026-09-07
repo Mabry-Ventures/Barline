@@ -9,6 +9,174 @@ import Testing
 
 @Suite("Transactional state coordinator")
 struct StateCoordinatorTests {
+    @Test("Cancelled mutations compensate in a live task before a queued refresh can proceed")
+    func cancelledMutationCompensationIsSerialized() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(
+            snapshots: (1 ... 3).map { makeSnapshot(generation: UInt64($0), count: 2) },
+            mutationDelay: .seconds(10),
+            checksCancellationDuringCompensation: true
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let mutation = Task { try await coordinator.perform(.reveal(before.items[0].id)) }
+        await backend.waitUntilMutationStarted()
+        let refresh = Task { try await coordinator.refresh() }
+        mutation.cancel()
+        await #expect(throws: CancellationError.self) { try await mutation.value }
+        #expect(try await refresh.value.generation == 3)
+        #expect(await backend.restoredSnapshots.count == 1)
+        #expect(await backend.restoreIsActive == false)
+        #expect(await coordinator.currentSnapshot?.generation == 3)
+    }
+
+    @Test("Cancelled profile application restores both cancellation-sensitive workspace and layout")
+    func cancelledProfileCompensatesWorkspaceAndLayout() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let profile = BarlineProfile(name: "New layout", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let workspace = WorkspaceRecorder(initial: original)
+        let backend = FakeBackend(
+            snapshots: [before, makeSnapshot(generation: 2, count: 1)],
+            checksCancellationDuringCompensation: true,
+            cancelOnMove: true
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let activation = Task {
+            try await coordinator.activate(
+                profile: profile,
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() },
+                    apply: { value in
+                        try Task.checkCancellation()
+                        try await workspace.apply(value)
+                    }
+                )
+            )
+        }
+        await #expect(throws: CancellationError.self) { try await activation.value }
+        #expect(await workspace.capture() == original)
+        #expect(await workspace.values.count == 2)
+        #expect(await backend.restoredSnapshots == [before])
+        #expect(await coordinator.currentSnapshot?.generation == 2)
+    }
+
+    @Test("Compensation deadlines cancel and drain work instead of orphaning a rollback")
+    func compensationDeadlineDrainsBeforeRelease() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let backend = FakeBackend(
+            snapshots: [before, makeSnapshot(generation: 2, count: 1)],
+            revealFailure: .interrupted,
+            checksCancellationDuringCompensation: true,
+            restoreDelay: .seconds(10)
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend, compensationTimeout: .milliseconds(20))
+        _ = try await coordinator.refresh()
+        await #expect(throws: (any Error).self) {
+            try await coordinator.perform(.reveal(before.items[0].id))
+        }
+        #expect(await backend.restoreIsActive == false)
+        #expect(await coordinator.currentSnapshot == nil)
+        #expect(try await coordinator.refresh().generation == 2)
+    }
+
+    @Test("An interaction lease excludes profile, history and background refresh while allowing its own moves")
+    func interactionLeaseProtectsWholeJourney() async throws {
+        let before = makeSnapshot(generation: 1, count: 3)
+        let backend = FakeBackend(snapshots: (1 ... 4).map { makeSnapshot(generation: UInt64($0), count: 3) })
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let profile = BarlineProfile(name: "Concurrent Focus", layout: ProfileLayout(visible: before.items.map(\.id)))
+        let expiredToken = try await coordinator.withItemInteraction { token in
+            let blocked = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
+                group.addTask {
+                    do {
+                        _ = try await coordinator.activate(profile: profile)
+                        return false
+                    } catch MenuBarBackendError.unsafeMenuTracking {
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+                group.addTask {
+                    do {
+                        _ = try await coordinator.undo()
+                        return false
+                    } catch MenuBarBackendError.unsafeMenuTracking {
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+                group.addTask {
+                    do {
+                        _ = try await coordinator.refresh()
+                        return false
+                    } catch MenuBarBackendError.unsafeMenuTracking {
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+                var values = [Bool]()
+                for await value in group {
+                    values.append(value)
+                }
+                return values
+            }
+            #expect(blocked == [true, true, true])
+            #expect(await backend.snapshotCallCount == 0)
+            #expect(await backend.moveOperations.isEmpty)
+            await #expect(throws: MenuBarBackendError.unsafeMenuTracking) {
+                try await coordinator.withItemInteraction { _ in true }
+            }
+            await #expect(throws: MenuBarBackendError.unsafeMenuTracking) {
+                try await coordinator.refresh(interactionID: UUID())
+            }
+            let refreshed = try await coordinator.refresh(interactionID: token)
+            let authority = try await coordinator.refreshAuthority(
+                expectedGeneration: refreshed.generation, interactionID: token
+            )
+            let moved = try await coordinator.perform(
+                .transientMove(MenuBarMoveOperation(itemID: before.items[0].id, section: .visible, index: 0)),
+                expectedGeneration: authority.generation,
+                interactionID: token
+            )
+            #expect(moved.generation == 3)
+            return token
+        }
+        await #expect(throws: MenuBarBackendError.unsafeMenuTracking) {
+            try await coordinator.refresh(interactionID: expiredToken)
+        }
+        #expect(try await coordinator.refresh().generation == 4)
+    }
+
+    @Test("Throwing and cancelled interaction bodies always release their lease")
+    func interactionLeaseReleasesOnFailureAndCancellation() async throws {
+        let backend = FakeBackend(snapshots: [makeSnapshot(generation: 1, count: 2)])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            try await coordinator.withItemInteraction { _ -> Bool in
+                throw MenuBarBackendError.interrupted
+            }
+        }
+        let started = AsyncStream<Void>.makeStream()
+        let task = Task {
+            try await coordinator.withItemInteraction { _ in
+                started.continuation.yield(())
+                try await Task.sleep(for: .seconds(10))
+            }
+        }
+        for await _ in started.stream {
+            break
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        started.continuation.finish()
+        #expect(try await coordinator.refresh().generation == 1)
+        #expect(try await coordinator.withItemInteraction { _ in 42 } == 42)
+    }
+
     @Test("Refresh retries and keeps the first valid snapshot")
     func retryRefresh() async throws {
         let valid = makeSnapshot(generation: 1, count: 3)
@@ -271,17 +439,19 @@ struct StateCoordinatorTests {
         let snapshot = MenuBarSnapshot(
             generation: 1,
             capturedAt: Date(),
-            items: [MenuBarItemDescriptor(
-                id: itemID,
-                section: .visible,
-                order: 0,
-                displayID: display,
-                isSystemItem: true,
-                title: "Item-0",
-                isOnScreen: true,
-                isMovable: true,
-                canBeHidden: false
-            )],
+            items: [
+                MenuBarItemDescriptor(
+                    id: itemID,
+                    section: .visible,
+                    order: 0,
+                    displayID: display,
+                    isSystemItem: true,
+                    title: "Item-0",
+                    isOnScreen: true,
+                    isMovable: true,
+                    canBeHidden: false
+                ),
+            ],
             displayIDs: [display],
             activeSpaceIsValid: true
         )
@@ -2957,6 +3127,10 @@ private actor FakeBackend: MenuBarBackend {
     private var restoreFailuresRemaining: Int
     private let restoreFailureCallNumbers: Set<Int>
     private var restoreCallCount = 0
+    private let checksCancellationDuringCompensation: Bool
+    private let cancelOnMove: Bool
+    private let restoreDelay: Duration
+    private(set) var restoreIsActive = false
 
     init(
         snapshots: [MenuBarSnapshot],
@@ -2974,7 +3148,10 @@ private actor FakeBackend: MenuBarBackend {
         environment: MenuBarEnvironmentSnapshot? = nil,
         snapshotFailures: Int = 0,
         restoreFailures: Int = 0,
-        restoreFailureCallNumbers: Set<Int> = []
+        restoreFailureCallNumbers: Set<Int> = [],
+        checksCancellationDuringCompensation: Bool = false,
+        cancelOnMove: Bool = false,
+        restoreDelay: Duration = .zero
     ) {
         self.snapshots = snapshots
         self.capabilities = capabilities
@@ -2986,9 +3163,15 @@ private actor FakeBackend: MenuBarBackend {
         snapshotFailuresRemaining = max(0, snapshotFailures)
         restoreFailuresRemaining = max(0, restoreFailures)
         self.restoreFailureCallNumbers = restoreFailureCallNumbers
+        self.checksCancellationDuringCompensation = checksCancellationDuringCompensation
+        self.cancelOnMove = cancelOnMove
+        self.restoreDelay = restoreDelay
     }
 
     func snapshot() throws -> MenuBarSnapshot {
+        if checksCancellationDuringCompensation {
+            try Task.checkCancellation()
+        }
         snapshotCallCount += 1
         if snapshotFailuresRemaining > 0 {
             snapshotFailuresRemaining -= 1
@@ -3001,6 +3184,9 @@ private actor FakeBackend: MenuBarBackend {
     }
 
     func move(_ operation: MenuBarMoveOperation) throws -> MenuBarMutationResult {
+        if cancelOnMove {
+            withUnsafeCurrentTask { $0?.cancel() }
+        }
         moveOperations.append(operation)
         if moveOperations.count == failMoveAt {
             throw MenuBarBackendError.operationFailed("injected move failure")
@@ -3044,9 +3230,17 @@ private actor FakeBackend: MenuBarBackend {
         return environmentSnapshot
     }
 
-    func restore(_ snapshot: MenuBarSnapshot) throws -> MenuBarMutationResult {
+    func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
+        if checksCancellationDuringCompensation {
+            try Task.checkCancellation()
+        }
+        restoreIsActive = true
+        defer { restoreIsActive = false }
         restoreCallCount += 1
         restoredSnapshots.append(snapshot)
+        if restoreDelay > .zero {
+            try await Task.sleep(for: restoreDelay)
+        }
         if restoreFailureCallNumbers.contains(restoreCallCount) || restoreFailuresRemaining > 0 {
             restoreFailuresRemaining -= 1
             throw MenuBarBackendError.interrupted

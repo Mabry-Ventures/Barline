@@ -204,6 +204,7 @@ public actor MenuBarStateCoordinator {
     private let backend: any MenuBarBackend
     private let validator: SnapshotValidator
     private let retryPolicy: RetryPolicy
+    private let compensationTimeout: Duration
     private let historyLimit = 50
     private var mutationIsActive = false
     private var mutationWaiters = [CheckedContinuation<Void, Never>]()
@@ -211,21 +212,55 @@ public actor MenuBarStateCoordinator {
     private var redoCheckpoints = [HistoryCheckpoint]()
     private var backendGenerationOffset: UInt64 = 0
     private var lastKnownGoodProfileID: UUID?
+    private var activeItemInteractionID: UUID?
 
     public init(
         backend: any MenuBarBackend,
         validator: SnapshotValidator = SnapshotValidator(),
-        retryPolicy: RetryPolicy = RetryPolicy()
+        retryPolicy: RetryPolicy = RetryPolicy(),
+        compensationTimeout: Duration = .seconds(35)
     ) {
         self.backend = backend
         self.validator = validator
         self.retryPolicy = retryPolicy
+        self.compensationTimeout = max(.milliseconds(1), compensationTimeout)
+    }
+
+    /// Reserves authority across a reveal / activate / observe / restore journey
+    /// without holding the reentrant mutation turn across the caller's body.
+    /// Only refreshes and mutations carrying this lease can run until it ends.
+    public func withItemInteraction<Value: Sendable>(
+        _ body: @Sendable (UUID) async throws -> Value
+    ) async throws -> Value {
+        let interactionID = try await reserveItemInteraction()
+        defer { activeItemInteractionID = nil }
+        try Task.checkCancellation()
+        let value = try await body(interactionID)
+        try Task.checkCancellation()
+        return value
+    }
+
+    private func reserveItemInteraction() async throws -> UUID {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try Task.checkCancellation()
+        try requireItemInteraction(nil)
+        let interactionID = UUID()
+        activeItemInteractionID = interactionID
+        return interactionID
+    }
+
+    private func requireItemInteraction(_ interactionID: UUID?) throws {
+        guard activeItemInteractionID == interactionID else {
+            throw MenuBarBackendError.unsafeMenuTracking
+        }
     }
 
     @discardableResult
-    public func refresh(now: Date? = nil) async throws -> MenuBarSnapshot {
+    public func refresh(now: Date? = nil, interactionID: UUID? = nil) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(interactionID)
 
         return try await refreshAssumingMutationTurn(now: now)
     }
@@ -236,11 +271,12 @@ public actor MenuBarStateCoordinator {
     @discardableResult
     public func refreshAuthority(
         expectedGeneration: UInt64,
-        now: Date? = nil
+        now: Date? = nil,
+        interactionID: UUID? = nil
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
-
+        try requireItemInteraction(interactionID)
         try requireCurrentGeneration(expectedGeneration)
         return try await refreshAssumingMutationTurn(now: now)
     }
@@ -297,8 +333,12 @@ public actor MenuBarStateCoordinator {
     }
 
     @discardableResult
-    public func perform(_ mutation: MenuBarMutation, now: Date? = nil) async throws -> MenuBarSnapshot {
-        try await perform(mutation, expectedGeneration: nil, now: now)
+    public func perform(
+        _ mutation: MenuBarMutation,
+        now: Date? = nil,
+        interactionID: UUID? = nil
+    ) async throws -> MenuBarSnapshot {
+        try await perform(mutation, expectedGeneration: nil, now: now, interactionID: interactionID)
     }
 
     /// Executes only if the refreshed snapshot used by the caller is still
@@ -307,19 +347,21 @@ public actor MenuBarStateCoordinator {
     public func perform(
         _ mutation: MenuBarMutation,
         expectedGeneration: UInt64,
-        now: Date? = nil
+        now: Date? = nil,
+        interactionID: UUID? = nil
     ) async throws -> MenuBarSnapshot {
-        try await perform(mutation, expectedGeneration: expectedGeneration as UInt64?, now: now)
+        try await perform(mutation, expectedGeneration: expectedGeneration as UInt64?, now: now, interactionID: interactionID)
     }
 
     private func perform(
         _ mutation: MenuBarMutation,
         expectedGeneration: UInt64?,
-        now: Date?
+        now: Date?,
+        interactionID: UUID?
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
-
+        try requireItemInteraction(interactionID)
         try Task.checkCancellation()
         if let expectedGeneration {
             try requireCurrentGeneration(expectedGeneration)
@@ -401,8 +443,7 @@ public actor MenuBarStateCoordinator {
                 throw mutationError
             }
             do {
-                _ = try await backend.restore(before)
-                let rollbackCandidate = try await normalizedBackendSnapshot()
+                let rollbackCandidate = try await compensationSnapshot(restoring: before)
                 let rollbackSnapshot: MenuBarSnapshot
                 switch validator.validate(rollbackCandidate, previous: nil, now: now ?? Date()) {
                 case let .success(snapshot):
@@ -465,6 +506,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
 
         try Task.checkCancellation()
         if let expectedGeneration {
@@ -674,21 +716,20 @@ public actor MenuBarStateCoordinator {
             if let workspaceBefore, let workspaceTransaction {
                 do {
                     if let appliedWorkspaceRevision {
-                        let restoredRevision = try await workspaceTransaction.apply(
-                            workspaceBefore,
-                            ifCurrentRevision: appliedWorkspaceRevision
-                        )
+                        let restoredRevision = try await withCompensation {
+                            try await workspaceTransaction.apply(workspaceBefore, ifCurrentRevision: appliedWorkspaceRevision)
+                        }
                         if let restoredRevision {
                             rollbackWorkspaceRevision = restoredRevision
                         } else {
                             workspaceWasSuperseded = true
-                            rollbackWorkspaceRevision = try await workspaceTransaction.rollbackSuperseded(
-                                from: targetWorkspace,
-                                to: workspaceBefore
-                            )
+                            let appliedWorkspace = targetWorkspace
+                            rollbackWorkspaceRevision = try await withCompensation {
+                                try await workspaceTransaction.rollbackSuperseded(from: appliedWorkspace, to: workspaceBefore)
+                            }
                         }
                     } else {
-                        try await workspaceTransaction.apply(workspaceBefore)
+                        try await withCompensation { try await workspaceTransaction.apply(workspaceBefore) }
                         rollbackWorkspaceRevision = await workspaceTransaction.currentRevision()
                     }
                 } catch {
@@ -698,8 +739,7 @@ public actor MenuBarStateCoordinator {
             if didBeginLayoutMutation || didBeginWorkspaceMutation {
                 if await backend.capabilities.canRestore {
                     do {
-                        _ = try await backend.restore(before)
-                        let candidate = try await normalizedBackendSnapshot()
+                        let candidate = try await compensationSnapshot(restoring: before)
                         switch validator.validate(candidate, previous: nil, now: now ?? Date()) {
                         case let .success(snapshot):
                             try validateHistoryResult(snapshot, matches: before)
@@ -763,6 +803,7 @@ public actor MenuBarStateCoordinator {
     public func recover(now: Date? = nil) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
 
         let preservedCurrent = currentSnapshot
         let preservedLastKnownGood = lastKnownGoodSnapshot
@@ -840,6 +881,7 @@ public actor MenuBarStateCoordinator {
     public func clearActiveProfileAuthority() async {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        guard activeItemInteractionID == nil else { return }
         activeProfileID = nil
         lastKnownGoodProfileID = nil
     }
@@ -848,6 +890,7 @@ public actor MenuBarStateCoordinator {
     public func clearActiveProfileAuthority(ifMatches profileID: UUID) async -> Bool {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        guard activeItemInteractionID == nil else { return false }
         guard activeProfileID == profileID else { return false }
         activeProfileID = nil
         if lastKnownGoodProfileID == profileID {
@@ -868,6 +911,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> ResolvedProfilePresentation? {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
         try ProfileValidator().validate(profile)
         let snapshot = try await refreshAssumingMutationTurn(now: now)
         guard let resolvedPresentation = DisplayProfileOverrideResolver()
@@ -913,6 +957,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> PendingProfileActivationRecoveryResult {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
         try ProfileValidator().validate(profile)
         try ProfileValidator().validate(checkpoint.workspace)
         switch validator.validate(
@@ -995,6 +1040,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> MenuBarWorkspaceCheckpoint {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
         let snapshot = try await refreshAssumingMutationTurn(now: now)
         let workspace = try await workspaceTransaction.capture()
         let activeDisplayID: MenuBarDisplayID? = if let presentation = workspace.presentation {
@@ -1023,6 +1069,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
         try ProfileValidator().validate(checkpoint.workspace)
         switch validator.validate(
             checkpoint.snapshot,
@@ -1071,6 +1118,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> MenuBarConditionalRestoreResult {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
         try ProfileValidator().validate(checkpoint.workspace)
         try ProfileValidator().validate(expectedProfile)
         switch validator.validate(
@@ -1132,6 +1180,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
 
         guard let target = undoCheckpoints.last else {
             throw MenuBarBackendError.operationFailed("no layout undo checkpoint")
@@ -1159,6 +1208,7 @@ public actor MenuBarStateCoordinator {
     ) async throws -> MenuBarSnapshot {
         await acquireMutationTurn()
         defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
 
         guard let target = redoCheckpoints.last else {
             throw MenuBarBackendError.operationFailed("no layout redo checkpoint")
@@ -1268,24 +1318,22 @@ public actor MenuBarStateCoordinator {
             {
                 do {
                     if let appliedWorkspaceRevision {
-                        let restoredRevision = try await workspaceTransaction.apply(
-                            previousWorkspace,
-                            ifCurrentRevision: appliedWorkspaceRevision
-                        )
+                        let restoredRevision = try await withCompensation {
+                            try await workspaceTransaction.apply(previousWorkspace, ifCurrentRevision: appliedWorkspaceRevision)
+                        }
                         if let restoredRevision {
                             rollbackWorkspaceRevision = restoredRevision
                         } else {
                             workspaceWasSuperseded = true
-                            guard let mergedRevision = try await workspaceTransaction.rollbackSuperseded(
-                                from: targetWorkspace,
-                                to: previousWorkspace
-                            ) else {
+                            guard let mergedRevision = try await withCompensation({
+                                try await workspaceTransaction.rollbackSuperseded(from: targetWorkspace, to: previousWorkspace)
+                            }) else {
                                 throw MenuBarWorkspaceTransactionError.superseded
                             }
                             rollbackWorkspaceRevision = mergedRevision
                         }
                     } else if didBeginWorkspaceMutation {
-                        try await workspaceTransaction.apply(previousWorkspace)
+                        try await withCompensation { try await workspaceTransaction.apply(previousWorkspace) }
                         rollbackWorkspaceRevision = await workspaceTransaction.currentRevision()
                     }
                 } catch {
@@ -1296,8 +1344,7 @@ public actor MenuBarStateCoordinator {
             var rollbackSnapshot: MenuBarSnapshot?
             do {
                 if didBeginLayoutMutation {
-                    _ = try await backend.restore(previous.snapshot)
-                    let rollbackCandidate = try await normalizedBackendSnapshot()
+                    let rollbackCandidate = try await compensationSnapshot(restoring: previous.snapshot)
                     switch validator.validate(rollbackCandidate, previous: nil, now: now ?? Date()) {
                     case let .success(snapshot):
                         try validateHistoryResult(snapshot, matches: previous.snapshot)
@@ -1501,6 +1548,41 @@ public actor MenuBarStateCoordinator {
                 order: $0.order
             )
         })
+    }
+
+    /// Compensation must not inherit the cancellation that interrupted the
+    /// forward operation. The structured timeout cancels and drains its work;
+    /// the caller still holds the mutation turn until this awaited task ends.
+    /// Backends must honor cancellation/deadlines: we never abandon a live
+    /// rollback and allow a later user operation to race its side effects.
+    private func withCompensation<Value: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        let timeout = compensationTimeout
+        let compensation = Task.detached {
+            try await withThrowingTaskGroup(of: Value.self) { group in
+                group.addTask { try await operation() }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw MenuBarBackendError.timedOut
+                }
+                defer { group.cancelAll() }
+                guard let value = try await group.next() else {
+                    throw MenuBarBackendError.interrupted
+                }
+                return value
+            }
+        }
+        return try await compensation.value
+    }
+
+    private func compensationSnapshot(restoring target: MenuBarSnapshot) async throws -> MenuBarSnapshot {
+        let backend = backend
+        let snapshot = try await withCompensation {
+            _ = try await backend.restore(target)
+            return try await backend.snapshot()
+        }
+        return try normalizeGeneration(of: snapshot)
     }
 
     private func normalizedBackendSnapshot() async throws -> MenuBarSnapshot {

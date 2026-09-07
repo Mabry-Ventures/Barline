@@ -141,7 +141,6 @@ final class MenuBarItemImageCache: ObservableObject {
         let captures = await (try? BarlineMenuService.Connection.shared.capture(
             items.map(\.stableID)
         )) ?? []
-        let capturedIDs = Set(captures.map(\.itemID))
 
         for capture in captures {
             guard
@@ -154,7 +153,9 @@ final class MenuBarItemImageCache: ObservableObject {
             }
             result.images[item.stableID] = CapturedImage(cgImage: image, scale: scale)
         }
-        result.excluded = items.filter { !capturedIDs.contains($0.stableID) }
+        // A helper reply is not successful until its image decodes and passes
+        // transparency validation. Invalid replies must remain retryable.
+        result.excluded = items.filter { result.images[$0.stableID] == nil }
         return result
     }
 
@@ -203,6 +204,7 @@ final class MenuBarItemImageCache: ObservableObject {
         }
 
         let capturePermissionGeneration = permissionGeneration
+        guard let screenCaptureGeneration = ScreenCapture.grantedPermissionGeneration() else { return }
 
         guard
             let displayID = appState.itemManager.itemCache.displayID,
@@ -222,6 +224,7 @@ final class MenuBarItemImageCache: ObservableObject {
 
             let captureResult = await captureImages(of: items, scale: scale, appState: appState)
             guard appState.hasPermission(.screenRecording),
+                  ScreenCapture.canPublishCapture(from: screenCaptureGeneration),
                   capturePermissionGeneration == permissionGeneration
             else {
                 return
@@ -244,6 +247,7 @@ final class MenuBarItemImageCache: ObservableObject {
         var updatedImages = images.filter { validIDs.contains($0.key) }
         updatedImages.merge(newImages) { _, new in new }
         guard appState.hasPermission(.screenRecording),
+              ScreenCapture.canPublishCapture(from: screenCaptureGeneration),
               capturePermissionGeneration == permissionGeneration
         else {
             return

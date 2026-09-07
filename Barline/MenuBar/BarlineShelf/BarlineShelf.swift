@@ -873,23 +873,16 @@ private struct BarlineShelfItemView: View {
     }
 
     var body: some View {
-        Group {
-            if let image {
-                Image(nsImage: image).accessibilityHidden(true)
-            } else {
-                Image(systemName: "app.dashed")
-                    .frame(width: max(24, item.bounds.width), height: 24)
-                    .accessibilityHidden(true)
-            }
-        }
-        .contentShape(Rectangle())
-        .overlay {
-            BarlineShelfItemClickView(
-                item: item,
-                leftClickAction: leftClickAction,
-                rightClickAction: rightClickAction
-            )
-        }
+        BarlineShelfItemClickView(
+            item: item,
+            image: image ?? NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil),
+            leftClickAction: leftClickAction,
+            rightClickAction: rightClickAction
+        )
+        .frame(
+            width: image?.size.width ?? max(24, item.bounds.width),
+            height: image?.size.height ?? 24
+        )
     }
 }
 
@@ -902,6 +895,7 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
 
         init(
             item: MenuBarItem,
+            image: NSImage?,
             leftClickAction: @escaping () -> Void,
             rightClickAction: @escaping () -> Void
         ) {
@@ -910,11 +904,15 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
             super.init(frame: .zero)
             title = ""
             isBordered = false
+            self.image = image
+            imagePosition = .imageOnly
+            imageScaling = .scaleProportionallyDown
             setButtonType(.momentaryPushIn)
             target = self
             action = #selector(activateItem)
             toolTip = item.displayName
             setAccessibilityLabel(item.displayName)
+            setAccessibilityElement(true)
         }
 
         @available(*, unavailable)
@@ -966,6 +964,7 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
     }
 
     let item: MenuBarItem
+    let image: NSImage?
 
     let leftClickAction: () -> Void
     let rightClickAction: () -> Void
@@ -973,6 +972,7 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
     func makeNSView(context _: Context) -> NSView {
         Represented(
             item: item,
+            image: image,
             leftClickAction: leftClickAction,
             rightClickAction: rightClickAction
         )
@@ -982,6 +982,7 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
         guard let button = view as? Represented else { return }
         button.leftClickAction = leftClickAction
         button.rightClickAction = rightClickAction
+        button.image = image
         button.toolTip = item.displayName
         button.setAccessibilityLabel(item.displayName)
     }

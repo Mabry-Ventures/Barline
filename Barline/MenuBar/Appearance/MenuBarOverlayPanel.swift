@@ -285,6 +285,10 @@ final class MenuBarOverlayPanel: NSPanel {
         capture: ScreenCapture.MenuBarBackground,
         screen: NSScreen
     ) {
+        guard ScreenCapture.canPublishCapture(from: capture.permissionGeneration) else {
+            desktopWallpaper = nil
+            return
+        }
         if flags.contains(.applicationMenuFrame) {
             updateApplicationMenuFrame(for: screen)
         }

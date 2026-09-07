@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
 MODE="${1:-}"
-[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|nonfocus|full|release|xcode27|soak} [--release] [--publish-status] [--xcode PATH]"
+[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|nonfocus|full|release|xcode27|soak} [--installed] [--release] [--publish-status] [--xcode PATH]"
 shift
 
 PUBLISH_STATUS=false
@@ -311,6 +311,10 @@ esac
 if "$PUBLISH_STATUS"; then
     if [[ "$(git rev-parse HEAD)" != "$SHA" ]]; then
         printf 'HEAD changed during validation; refusing success status\n' | tee -a "$FAILURES_FILE" >&2
+        FAILURES=$((FAILURES + 1))
+    fi
+    if [[ -n "$(git status --porcelain=v1)" ]]; then
+        printf 'Worktree changed during validation; refusing success status\n' | tee -a "$FAILURES_FILE" >&2
         FAILURES=$((FAILURES + 1))
     fi
     if ((FAILURES)); then

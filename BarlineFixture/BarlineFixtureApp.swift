@@ -27,9 +27,11 @@ private final class BarlineFixtureAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         if ProcessInfo.processInfo.environment["BARLINE_FIXTURE_MODE"] == "journey" {
-            NSApp.setActivationPolicy(.accessory)
-            for window in NSApp.windows {
-                window.orderOut(nil)
+            if ProcessInfo.processInfo.environment["BARLINE_FIXTURE_QUALIFICATION_WINDOW"] != "1" {
+                NSApp.setActivationPolicy(.accessory)
+                for window in NSApp.windows {
+                    window.orderOut(nil)
+                }
             }
             return
         }
@@ -160,7 +162,10 @@ private final class FixtureJourneyController: NSObject, NSMenuDelegate, NSPopove
             .split(separator: ",").map(String.init) ?? ["Native", "Popover"]
         for (index, name) in configuredNames.filter({ allowedNames.contains($0) }).prefix(4).enumerated() {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            item.autosaveName = "BarlineFixture.Journey.\(name)"
+            // Fixture qualification uses a fresh position; installed journeys
+            // deliberately retain their position so reveal/restoration is real.
+            let positionScope = environment["BARLINE_FIXTURE_FRESH_POSITION"] == "1" ? ".\(receipt.session)" : ""
+            item.autosaveName = "BarlineFixture.Journey.\(name)\(positionScope)"
             item.button?.title = "BF \(name)"
             item.button?.window?.title = "BF \(name)"
             item.button?.setAccessibilityLabel("BF \(name)")

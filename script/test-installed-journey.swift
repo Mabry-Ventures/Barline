@@ -52,18 +52,29 @@ func matches(_ element: AXUIElement, _ name: String) -> Bool {
 
 /// Depth and count caps ensure an unexpected AX tree cannot become an unbounded
 /// process-inventory crawl. Only these two explicitly selected apps are queried.
-func find(_ root: AXUIElement, named name: String, depth: Int = 0) -> AXUIElement? {
-    guard depth < 12 else { return nil }
-    if matches(root, name) {
-        return root
-    }
-    let children = attribute(root, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    for child in children.prefix(100) {
-        if let found = find(child, named: name, depth: depth + 1) {
-            return found
+func find(_ root: AXUIElement, named name: String) -> AXUIElement? {
+    var remaining = 500
+    var visited = Set<CFHashCode>()
+    let deadline = Date().addingTimeInterval(1)
+    func visit(_ element: AXUIElement, depth: Int) -> AXUIElement? {
+        guard depth < 12, remaining > 0, Date() < deadline,
+              visited.insert(CFHash(element)).inserted else { return nil }
+        remaining -= 1
+        AXUIElementSetMessagingTimeout(element, 0.03)
+        if matches(element, name) {
+            return element
         }
+        for key in [kAXWindowsAttribute, kAXChildrenAttribute, kAXContentsAttribute] {
+            let children = attribute(element, key) as? [AXUIElement] ?? []
+            for child in children.prefix(100) {
+                if let found = visit(child, depth: depth + 1) {
+                    return found
+                }
+            }
+        }
+        return nil
     }
-    return nil
+    return visit(root, depth: 0)
 }
 
 func extras(_ app: AXUIElement) -> AXUIElement? {
@@ -149,6 +160,15 @@ do {
             $0[kCGWindowName as String] as? String == "Barline Bar"
         }
     }
+    func shelfRoot() -> AXUIElement? {
+        (attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).first {
+            matches($0, "Barline Bar")
+        }
+    }
+    func shelfTarget() -> AXUIElement? {
+        guard let shelf = shelfRoot() else { return nil }
+        return find(shelf, named: target)
+    }
     guard let baseline = receipt(), !baseline.visible, let original = targetFrame(), !shelfVisible() else {
         throw JourneyError.failed("fixture_ready_and_closed_shelf_baseline_required")
     }
@@ -175,7 +195,18 @@ do {
     }
     try click(control)
     try wait("shelf_did_not_open") { shelfVisible() }
-    guard let shelfItem = find(app, named: target), let shelfFrame = frame(shelfItem), shelfFrame.width > 0 else {
+    // Ordering the panel precedes the hosting view's accessible layout commit.
+    do {
+        try wait("synthetic_fixture_not_accessible_in_shelf") {
+            guard let element = shelfTarget(), let rect = frame(element) else { return false }
+            return rect.width > 0 && rect.height > 0
+        }
+    } catch {
+        let diagnostic = ["shelfWindowStillVisible": shelfVisible(), "shelfAXWindowPresent": shelfRoot() != nil]
+        try print(String(decoding: JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]), as: UTF8.self))
+        throw error
+    }
+    guard let shelfItem = shelfTarget(), let shelfFrame = frame(shelfItem), shelfFrame.width > 0 else {
         throw JourneyError.failed("synthetic_fixture_not_accessible_in_shelf")
     }
     try click(shelfFrame, right: right)

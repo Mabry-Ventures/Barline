@@ -80,10 +80,11 @@ extension MenuBarItem {
 
     static func getMenuBarItems(
         on display: CGDirectDisplayID? = nil,
-        option: ListOption
+        option: ListOption,
+        interactionID: UUID? = nil
     ) async -> [MenuBarItem] {
         do {
-            let snapshot = try await snapshotCoordinator.refresh()
+            let snapshot = try await snapshotCoordinator.refresh(interactionID: interactionID)
             let displayBounds = display.map(CGDisplayBounds)
             return snapshot.items
                 .filter { descriptor in

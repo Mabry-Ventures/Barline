@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import CoreGraphics
 import ImageIO
 import os
@@ -13,6 +14,7 @@ enum ScreenCapture {
     struct MenuBarBackground {
         let image: CGImage?
         let menuBarBounds: CGRect
+        let permissionGeneration: UInt64
     }
 
     static let permissionDidChangeNotification = Notification.Name("BarlineScreenCapturePermissionDidChange")
@@ -40,6 +42,27 @@ enum ScreenCapture {
         checkPermissions()
     }
 
+    static func grantedPermissionGeneration() -> UInt64? {
+        guard checkPermissions() else { return nil }
+        return permissionState.withLock { state in
+            state.decision == true ? state.generation : nil
+        }
+    }
+
+    /// Call at the final synchronous UI publication boundary, after all awaits
+    /// and decoding. A check inside the capture worker cannot cover a revocation
+    /// while that worker is waiting to resume on the main actor.
+    static func canPublishCapture(from generation: UInt64) -> Bool {
+        guard checkPermissions() else { return false }
+        return permissionState.withLock { state in
+            CapturePublicationPolicy.permitsPublication(
+                capturedGeneration: generation,
+                currentGeneration: state.generation,
+                permissionIsGranted: state.decision == true
+            )
+        }
+    }
+
     static func requestPermissions() {
         if #available(macOS 15.0, *) {
             SCShareableContent.getWithCompletionHandler { _, _ in }
@@ -53,14 +76,14 @@ enum ScreenCapture {
         sampleHeight: CGFloat? = nil
     ) async -> MenuBarBackground? {
         guard checkPermissions() else { return nil }
-        let generation = permissionState.withLock { $0.generation }
+        guard let generation = grantedPermissionGeneration() else { return nil }
         guard let capture = try? await BarlineMenuService.Connection.shared.captureBackground(
             displayID: displayID,
             sampleHeight: sampleHeight
         ) else {
             return nil
         }
-        guard checkPermissions(), generation == permissionState.withLock({ $0.generation }) else { return nil }
+        guard canPublishCapture(from: generation) else { return nil }
         let image = capture.pngData.flatMap { data -> CGImage? in
             guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
                 return nil
@@ -74,7 +97,8 @@ enum ScreenCapture {
                 y: capture.menuBarBounds.y,
                 width: capture.menuBarBounds.width,
                 height: capture.menuBarBounds.height
-            )
+            ),
+            permissionGeneration: generation
         )
     }
 }

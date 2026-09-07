@@ -11,7 +11,7 @@ This ledger distinguishes implementation from actual release qualification.
 | F03 distribution | Canonical source/support links; signed appcast publication | Pending live release/feed and upgrade |
 | F04 permissions | Contextual nonprompting authority; revoke/in-flight invalidation | Adapter transition test; actual TCC pending |
 | F05 privacy | Bounded reason codes, no item/title/ID dumps | Synthetic formatter and separate runtime-log gate |
-| F06 menu tracking | Helper-owned native/custom interface observation and synthesis exclusion | Core policy tests; candidate native/popover journey pending |
+| F06 menu tracking | Helper-owned native/custom interface observation, synthesis exclusion, and coordinator interaction leases across reveal/click/restore | Core policy and concurrent Focus/undo/refresh lease tests; candidate native/popover journey pending |
 | F07 release gates | Fixture target receipts, actual signed-app interaction harness | Pending candidate journey |
 | F08 keyboard | Native shelf buttons, default AX action, arrows/Return/Space/Escape and Control-click | Actual keyboard/AX pending |
 | F09 captures | Stable-ID image keys and always-present metadata fallback | Partial capture/duplicate identity pending |
@@ -20,3 +20,10 @@ This ledger distinguishes implementation from actual release qualification.
 | F12 UI work | Cancellable cached search actor; bounded normalized icon imports | Focused search/import tests |
 
 Release eligibility requires the corrected candidate's local gates and target-interface interaction, not shelf visibility alone. A new source SHA invalidates older package evidence. macOS 27 runtime and release-duration soak remain explicitly deferred by the user. No macOS or self-hosted GitHub Actions runners are permitted.
+
+Final review hardening: register restoration obligations before movement so a
+cancelled post-move verification cannot strand an item. Retain observations for
+already-visible custom interfaces until closure, without retaining mutation
+authority during user interaction. Fixture-only qualification and the installed
+hidden-item journey remain separate proof classes; failure of either is not a
+passing production interaction result.

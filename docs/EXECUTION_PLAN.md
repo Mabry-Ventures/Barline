@@ -21,6 +21,15 @@ journey must observe the target menu and receipt, not just shelf visibility.
 Repeated Settings-foregrounding gates have been replaced by bounded shelf and
 helper-recovery probes. macOS 27 and release-duration soak remain user-deferred.
 
+Final integration review added cancellation-independent serialized compensation,
+capture permission epochs checked at UI publication, initial/late-window
+auto-hide discovery, and image-owning native shelf buttons. The 219-test Core
+iteration and Debug build pass. New fixture event-receipt qualification remains
+red on this host (XCTest delivered no activation); the independent installed
+journey has opened the shelf but has not yet established target activation.
+These are explicit pending gates, not a production GO or permission to bypass
+the protected local check. Updated signing/install validation continues locally.
+
 | Milestone | Owner | Status | Dependencies | Evidence |
 | --- | --- | --- | --- | --- |
 | 0. Import and provenance | Lead; delegated audit | Complete | none | Exact history, remotes, ancestor proof, vendor tag, license/provenance records |
