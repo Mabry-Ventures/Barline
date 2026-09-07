@@ -466,6 +466,13 @@ final class ControlItem {
         ControlItemDefaults[.preferredPosition, autosaveName] = cached
     }
 
+    /// Synchronous event ownership must not depend on the published window,
+    /// which can lag a status-button replacement by a main-queue delivery.
+    func ownsEventWindow(_ eventWindow: NSWindow?) -> Bool {
+        guard let eventWindow else { return false }
+        return eventWindow === statusItem.button?.window || eventWindow === window
+    }
+
     /// Performs the control item's action.
     @objc private func performAction() {
         guard
@@ -481,8 +488,9 @@ final class ControlItem {
         case .rightMouseUp: "right-up"
         default: "other"
         }
+        let loggedSection = sectionName.logString
         logger.notice(
-            "Control action delivered for \(self.sectionName.logString, privacy: .public), phase=\(eventPhase, privacy: .public)"
+            "Control action delivered for \(loggedSection, privacy: .public), phase=\(eventPhase, privacy: .public)"
         )
 
         switch event.type {

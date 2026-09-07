@@ -1,6 +1,22 @@
 # Barline execution plan
 
-## Distribution refinement — 1.0.9 build 15 preparation
+## Distribution refinement — 1.0.9 build 16 preparation
+
+Build 15 passed signing/notarization, upgrade/preference checks, and 263 Core
+tests, but its first installed shelf-open journey failed. The deferred-work
+lease does not prevent a second handler from toggling the same current click.
+Build 16 makes control-window target ownership authoritative even with stale
+geometry and uses the event's captured coordinates in click arbitration.
+Ownership checks read the live status button's window synchronously rather
+than relying only on its queued published window after a button replacement.
+A Core regression covers a control-window event with all geometry claiming
+empty space. Installed runtime proof remains mandatory.
+
+User authentication now permits XCUITest execution. Its fixture-only status
+tests failed because the concurrently running Barline hid those fresh items;
+qualification must isolate that lane from the installed utility, then reopen
+the exact candidate once for installed runtime gates. This is separate from
+the observed first-click product failure. All failed attempts remain retained.
 
 Build 14 passed signing/notarization, a semantic-preference-preserving signed
 upgrade, all four installed target lanes, 20 shelf opens (p95 47.3 ms), and one

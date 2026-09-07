@@ -8,6 +8,20 @@ import Testing
 
 @Suite("Menu-bar click arbitration")
 struct MenuBarClickArbitrationPolicyTests {
+    @Test("Target-action ownership wins even if every geometry cache describes a gap")
+    func primaryWindowOwnsClickDespiteStaleGeometry() {
+        #expect(
+            !MenuBarClickArbitrationPolicy.isEmptyMenuBarSpace(
+                isInsideMenuBar: true,
+                isInsideApplicationMenu: false,
+                isInsidePrimaryControlItem: false,
+                isInsideCachedMenuBarItem: false,
+                isInsideNotch: false,
+                eventTargetsPrimaryControlItem: true
+            )
+        )
+    }
+
     @Test("A cold cache cannot classify the primary control item as empty space")
     func primaryControlItemWinsOverColdCache() {
         #expect(

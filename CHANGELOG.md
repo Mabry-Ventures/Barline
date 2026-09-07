@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.0.9 (build 14)
+## 1.0.9 (build 16)
+
+- Bind delayed rehide work to its originating presentation, so an old click,
+  hover, or timer cannot dismiss a newer shelf.
+- Give the primary control window exclusive ownership of its clicks and use
+  captured event coordinates for empty-space click arbitration.
 
 - Restore temporarily revealed items to their original section/display even if
   neighboring icons disappear or move.

@@ -1,4 +1,11 @@
-# Production remediation — 1.0.9 (build 15 preparation)
+# Production remediation — 1.0.9 (build 16 preparation)
+
+Build 15's first installed shelf-open failed despite the deferred-dismissal
+guard. Build 16 also enforces primary-window ownership of click events and
+uses immutable event coordinates rather than later cursor snapshots for global
+empty-space arbitration. A stale-geometry ownership regression was added.
+The XCUITest authentication boundary was cleared for execution; fixture-only
+tests require isolation from the running utility's intentional item hiding.
 
 Build 14's required six receipts passed, but its enclosing burst gate failed
 one post-recovery open. Delayed dismissal tasks could outlive the presentation

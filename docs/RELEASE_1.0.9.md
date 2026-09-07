@@ -1,6 +1,11 @@
 # Barline 1.0.9
 
-Candidate build 15 adds ownership checks for delayed rehide work, so an older
+Candidate build 16 additionally gives the primary control window exclusive
+ownership of its click and uses captured event coordinates in empty-space
+arbitration. Build 15's first installed shelf-open still failed, so it is not
+eligible for distribution. Build 16 requires fresh qualification.
+
+Candidate build 15 added ownership checks for delayed rehide work, so an older
 click or timer cannot dismiss a later shelf presentation. Build 14's required
 receipts passed but its follow-up burst had one timeout; the full gate did not
 pass. Build 15 requires fresh qualification before distribution.
