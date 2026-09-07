@@ -1,8 +1,18 @@
-# Production remediation — 1.0.7 (build 8)
+# Production remediation — 1.0.8 (build 9)
 
 Baseline: `b03645e432212aed10a827d3334ce278770fb74d` (1.0.6 build 7).
 The September 6 production audit is retained under `.artifacts/audit/2026-09-06-b03645e/`.
 This ledger distinguishes implementation from actual release qualification.
+
+1.0.7 installed feedback confirmed F01 remains open: direct-PID click delivery
+can acknowledge transport without status-item dispatch, and the shelf can
+reappear during a temporary reveal. 1.0.8 restores baseline-shaped session
+click routing and separates confirmed/unconfirmed/failed outcomes. The shelf
+excludes items with outstanding native restoration obligations and does not
+present during activation/restoration. These are implementation changes until
+the signed candidate's target-receipt journey passes. The journey's bounded
+AX hit-test diagnostic fallback explicitly retains a failed AX traversal lane;
+it cannot promote pointer interaction evidence into an accessibility pass.
 
 | Finding | Change | Acceptance evidence |
 | --- | --- | --- |

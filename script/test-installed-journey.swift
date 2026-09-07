@@ -98,6 +98,10 @@ func click(_ rect: CGRect, right: Bool = false) throws {
         let up = CGEvent(mouseEventSource: nil, mouseType: right ? .rightMouseUp : .leftMouseUp,
                          mouseCursorPosition: point, mouseButton: right ? .right : .left)
     else { throw JourneyError.failed("event_creation") }
+    // Event locations alone do not update the real pointer used by smart rehide.
+    guard CGWarpMouseCursorPosition(point) == .success else {
+        throw JourneyError.failed("pointer_positioning_failed")
+    }
     down.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.08)
     up.post(tap: .cghidEventTap)
@@ -118,6 +122,7 @@ func sameFrame(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
     abs(lhs.midX - rhs.midX) <= 2 && abs(lhs.midY - rhs.midY) <= 2 && abs(lhs.width - rhs.width) <= 2
 }
 
+var journeyExitCode: Int32 = 0
 do {
     guard AXIsProcessTrusted(), CGPreflightScreenCaptureAccess() else {
         throw JourneyError.failed("harness_accessibility_and_screen_recording_required_no_prompt")
@@ -169,6 +174,133 @@ do {
         guard let shelf = shelfRoot() else { return nil }
         return find(shelf, named: target)
     }
+    func shelfWindowFrame() -> CGRect? {
+        let shelves = windows().filter {
+            ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == appPID &&
+                ($0[kCGWindowName as String] as? String) == "Barline Bar"
+        }
+        guard shelves.count == 1 else { return nil }
+        return shelves.first.flatMap(bounds)
+    }
+    func validatedShelfButton(_ element: AXUIElement) -> AXUIElement? {
+        var current = element
+        for _ in 0 ..< 6 {
+            AXUIElementSetMessagingTimeout(current, 0.02)
+            var owner: pid_t = 0
+            guard AXUIElementGetPid(current, &owner) == .success, owner == appPID else { return nil }
+            let exactLabel = matches(current, target) || (attribute(current, kAXHelpAttribute) as? String) == target
+            if exactLabel,
+               (attribute(current, kAXRoleAttribute) as? String) == kAXButtonRole,
+               let rect = frame(current), let shelf = shelfWindowFrame(),
+               rect.width > 0, rect.height > 0,
+               shelf.contains(CGPoint(x: rect.midX, y: rect.midY))
+            {
+                return current
+            }
+            guard let parent = attribute(current, kAXParentAttribute),
+                  CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+            current = unsafeDowncast(parent, to: AXUIElement.self)
+        }
+        return nil
+    }
+    /// Read-only fallback, not a guessed click. Probe points only inside the
+    /// positively identified shelf, then require its exact synthetic NSButton,
+    /// owning PID and current on-shelf geometry before returning a click target.
+    func hitTestShelfTarget() -> AXUIElement? {
+        guard let shelf = shelfWindowFrame(), shelf.width > 0, shelf.height > 0 else { return nil }
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.02)
+        let count = min(256, max(1, Int(ceil(shelf.width / 8))))
+        let deadline = Date().addingTimeInterval(3)
+        for index in 0 ..< count {
+            guard Date() < deadline else { return nil }
+            let x = shelf.minX + (Double(index) + 0.5) * shelf.width / Double(count)
+            var hit: AXUIElement?
+            guard AXUIElementCopyElementAtPosition(system, Float(x), Float(shelf.midY), &hit) == .success,
+                  let hit, let button = validatedShelfButton(hit) else { continue }
+            return button
+        }
+        return nil
+    }
+    func diagnoseShelfAX() -> [String: Any] {
+        guard shelfWindowFrame() != nil, let root = shelfRoot() else {
+            return ["subtreeAvailable": false]
+        }
+        var remaining = 160
+        var visited = Set<CFHashCode>()
+        var roles = [String: Int]()
+        var syntheticMatches = ["BF Native": 0, "BF Popover": 0, "BF Delayed": 0]
+        var syntheticMatchKeys = [String: Int]()
+        var genericItemTitles = 0
+        var buttonsWithFrame = 0
+        let deadline = Date().addingTimeInterval(2)
+        let permittedRoles = Set([kAXWindowRole, kAXGroupRole, kAXScrollAreaRole, kAXButtonRole, kAXImageRole, kAXStaticTextRole])
+        func visit(_ element: AXUIElement, depth: Int) {
+            guard depth < 12, remaining > 0, Date() < deadline,
+                  visited.insert(CFHash(element)).inserted else { return }
+            var owner: pid_t = 0
+            guard AXUIElementGetPid(element, &owner) == .success, owner == appPID else { return }
+            remaining -= 1
+            AXUIElementSetMessagingTimeout(element, 0.01)
+            let role = attribute(element, kAXRoleAttribute) as? String ?? "other"
+            roles[permittedRoles.contains(role) ? role : "other", default: 0] += 1
+            if role == kAXButtonRole, let rect = frame(element), rect.width > 0, rect.height > 0 {
+                buttonsWithFrame += 1
+            }
+            for key in [kAXTitleAttribute, kAXDescriptionAttribute, "AXIdentifier", kAXHelpAttribute] {
+                guard let text = attribute(element, key) as? String else { continue }
+                if syntheticMatches[text] != nil {
+                    syntheticMatches[text, default: 0] += 1
+                    syntheticMatchKeys[key, default: 0] += 1
+                }
+                if key == kAXTitleAttribute, text.hasPrefix("Item-") {
+                    genericItemTitles += 1
+                }
+            }
+            for key in [kAXChildrenAttribute, kAXContentsAttribute, "AXVisibleChildren"] {
+                for child in (attribute(element, key) as? [AXUIElement] ?? []).prefix(80) {
+                    visit(child, depth: depth + 1)
+                }
+            }
+        }
+        visit(root, depth: 0)
+        return [
+            "subtreeAvailable": true, "visitedNodes": 160 - remaining,
+            "budgetExhausted": remaining == 0 || Date() >= deadline,
+            "roleCounts": roles, "buttonsWithNonemptyFrame": buttonsWithFrame,
+            "exactSyntheticMatches": syntheticMatches, "exactSyntheticMatchKeys": syntheticMatchKeys,
+            "genericItemTitleCount": genericItemTitles,
+        ]
+    }
+    func captureShelfDiagnostic() -> Bool {
+        guard let requestedPath = environment["BARLINE_JOURNEY_SCREENSHOT"], requestedPath.hasPrefix("/") else { return false }
+        let permittedRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".artifacts/runtime", isDirectory: true).resolvingSymlinksInPath()
+        let output = URL(fileURLWithPath: requestedPath).resolvingSymlinksInPath()
+        guard output.path.hasPrefix(permittedRoot.path + "/"), output.pathExtension == "png",
+              !FileManager.default.fileExists(atPath: output.path) else { return false }
+        let shelves = windows().filter {
+            ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == appPID &&
+                ($0[kCGWindowName as String] as? String) == "Barline Bar"
+        }
+        guard shelves.count == 1,
+              let windowNumber = (shelves[0][kCGWindowNumber as String] as? NSNumber)?.uint32Value else { return false }
+        do {
+            try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let capture = Process()
+            capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            capture.arguments = ["-x", "-o", "-l", String(windowNumber), output.path]
+            capture.standardOutput = FileHandle.nullDevice
+            capture.standardError = FileHandle.nullDevice
+            try capture.run()
+            let deadline = Date().addingTimeInterval(3)
+            while capture.isRunning, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            guard !capture.isRunning else { capture.terminate(); return false }
+            return capture.terminationStatus == 0 && FileManager.default.fileExists(atPath: output.path)
+        } catch { return false }
+    }
     guard let baseline = receipt(), !baseline.visible, let original = targetFrame(), !shelfVisible() else {
         throw JourneyError.failed("fixture_ready_and_closed_shelf_baseline_required")
     }
@@ -193,21 +325,49 @@ do {
     guard verifiedControls.count == 1, let control = verifiedControls.first.flatMap(bounds) else {
         throw JourneyError.failed("status_control_source_host_relationship_unverified")
     }
+    guard let originalPointer = CGEvent(source: nil)?.location else {
+        throw JourneyError.failed("original_pointer_unavailable")
+    }
+    defer {
+        let restored = CGWarpMouseCursorPosition(originalPointer) == .success
+        print("{\"originalPointerRestored\":\(restored)}")
+        if !restored {
+            journeyExitCode = 1
+        }
+    }
     try click(control)
     try wait("shelf_did_not_open") { shelfVisible() }
+    guard let observedShelf = shelfWindowFrame(),
+          CGWarpMouseCursorPosition(CGPoint(x: observedShelf.midX, y: observedShelf.midY)) == .success
+    else {
+        throw JourneyError.failed("shelf_pointer_positioning_failed")
+    }
+    // Keep the physical pointer inside the actual panel during discovery, and
+    // preserve its initial state before a long AX timeout can permit rehide.
+    Thread.sleep(forTimeInterval: 0.1)
+    print("{\"stage\":\"shelf_initial_observation\"}")
+    if environment["BARLINE_JOURNEY_SCREENSHOT"] != nil {
+        print("{\"shelfOnlyScreenshotSaved\":\(captureShelfDiagnostic())}")
+    }
+    try print(String(decoding: JSONSerialization.data(withJSONObject: diagnoseShelfAX(), options: [.sortedKeys]), as: UTF8.self))
     // Ordering the panel precedes the hosting view's accessible layout commit.
+    var shelfItem: AXUIElement?
+    var shelfAXTraversalPassed = false
     do {
         try wait("synthetic_fixture_not_accessible_in_shelf") {
-            guard let element = shelfTarget(), let rect = frame(element) else { return false }
-            return rect.width > 0 && rect.height > 0
+            guard let element = shelfTarget(), let button = validatedShelfButton(element) else { return false }
+            shelfItem = button
+            return true
         }
+        shelfAXTraversalPassed = true
     } catch {
         let diagnostic = ["shelfWindowStillVisible": shelfVisible(), "shelfAXWindowPresent": shelfRoot() != nil]
         try print(String(decoding: JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]), as: UTF8.self))
-        throw error
+        print("{\"stage\":\"shelf_ax_traversal\",\"verdict\":\"FAIL\",\"fallback\":\"bounded_shelf_hit_test\"}")
+        shelfItem = hitTestShelfTarget()
     }
-    guard let shelfItem = shelfTarget(), let shelfFrame = frame(shelfItem), shelfFrame.width > 0 else {
-        throw JourneyError.failed("synthetic_fixture_not_accessible_in_shelf")
+    guard let shelfItem, let verifiedItem = validatedShelfButton(shelfItem), let shelfFrame = frame(verifiedItem) else {
+        throw JourneyError.failed("synthetic_fixture_unresolved_after_scoped_shelf_hit_test")
     }
     try click(shelfFrame, right: right)
     try wait("target_did_not_receive_click_and_open_interface") {
@@ -232,7 +392,10 @@ do {
     }
     guard !runningApp.isTerminated, !fixtureApp.isTerminated else { throw JourneyError.failed("process_changed") }
     let result: [String: Any] = try [
-        "schema": 1, "verdict": "PASS", "target": target, "button": right ? "right" : "left",
+        "schema": 1, "verdict": shelfAXTraversalPassed ? "PASS" : "FAIL",
+        "interactionVerdict": "PASS", "shelfAXTraversalPassed": shelfAXTraversalPassed,
+        "targetResolution": shelfAXTraversalPassed ? "shelf_ax_tree" : "scoped_shelf_ax_hit_test",
+        "target": target, "button": right ? "right" : "left",
         "physicalEventPath": true, "shelfObserved": true, "targetReceiptObserved": true,
         "targetInterfaceObserved": true, "targetActionObserved": true, "restorationObserved": true,
         "sourceSHA": required("BARLINE_SOURCE_SHA"),
@@ -241,6 +404,10 @@ do {
         "hostOS": ProcessInfo.processInfo.operatingSystemVersionString,
     ]
     try print(String(decoding: JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]), as: UTF8.self))
+    // Completing the pointer journey must not silently clear the failed AX lane.
+    if !shelfAXTraversalPassed {
+        journeyExitCode = 1
+    }
 } catch {
     // Failure reasons are controlled tokens, never AX tree contents or app titles.
     let reason: String = if case let JourneyError.failed(code) = error {
@@ -252,5 +419,8 @@ do {
     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]) {
         print(String(decoding: data, as: UTF8.self))
     }
-    exit(1)
+    journeyExitCode = 1
 }
+
+// Exit only after the do-scope's pointer-restoration defer has run.
+exit(journeyExitCode)

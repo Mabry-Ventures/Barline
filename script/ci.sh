@@ -197,6 +197,9 @@ run_fast() {
     run_step "swiftlint" swiftlint lint --strict --config .swiftlint.yml
     run_step "core-build" swift build --package-path BarlineCore
     run_step "core-tests" swift test --package-path BarlineCore --enable-code-coverage
+    if [[ "$(uname -s)" == Darwin ]]; then
+        run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
+    fi
     run_step "repository-hygiene" ./script/ci/repo_hygiene.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "project-resolution" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \

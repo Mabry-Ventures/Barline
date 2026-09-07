@@ -848,8 +848,7 @@ final class WindowServerClient: @unchecked Sendable {
         guard
             let source = CGEventSource(stateID: .hidSystemState),
             let down = CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: point, mouseButton: mouseButton),
-            let up = CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: mouseButton),
-            let windowField = CGEventField(rawValue: 0x33)
+            let up = CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: mouseButton)
         else {
             throw MenuBarBackendError.unavailableCapability("menu bar event synthesis")
         }
@@ -863,52 +862,74 @@ final class WindowServerClient: @unchecked Sendable {
         }
         permitLocalEvents()
         for event in [down, up] {
+            event.flags = []
             event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-            event.setIntegerValueField(windowField, value: Int64(item.identifier))
             event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(item.identifier))
             event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(item.identifier))
             event.setIntegerValueField(.eventSourceUserData, value: Int64.random(in: 1 ... Int64.max))
-            event.setIntegerValueField(.mouseEventClickState, value: 1)
         }
+        down.setIntegerValueField(.mouseEventClickState, value: 1)
+        up.setIntegerValueField(.mouseEventClickState, value: 0)
         do {
             try await deliverClick(down, to: pid)
             try await deliverClick(up, to: pid)
         } catch {
             // Release a partially delivered press even after cancellation. Do
             // not replay mouse-down: a second click could toggle the menu shut.
-            up.postToPid(pid)
+            up.post(tap: .cgSessionEventTap)
             throw error
         }
         try Task.checkCancellation()
     }
 
-    /// A click is posted exactly once to its source process. Unlike a drag it
-    /// must not also be replayed through the session stream: that can toggle an
-    /// interface twice. Receipt is transport evidence; the app separately waits
-    /// for the target's menu/popover before reporting activation success.
+    /// Hosted status items need WindowServer's session routing. A direct PID
+    /// post can reach a passive process tap without dispatching the status item.
+    /// Post each real event once through the session, never replay it to a PID.
+    /// Receipt is transport evidence only; activation still needs observation.
     private func deliverClick(_ event: CGEvent, to pid: pid_t) async throws {
         let delivery = HelperEventDelivery()
+        guard let entry = CGEvent(source: nil), let exit = CGEvent(source: nil) else {
+            throw MenuBarBackendError.unavailableCapability("click ordering barrier")
+        }
+        entry.type = .null
+        exit.type = .null
+        let marker = Int64.random(in: 1 ..< Int64.max)
+        entry.setIntegerValueField(.eventSourceUserData, value: marker)
+        exit.setIntegerValueField(.eventSourceUserData, value: -marker)
+        // Null signals order the source queue around session dispatch. They
+        // are not clicks and never trigger another real mouse-down.
+        let barrierTap = HelperEventTap(
+            type: .null, location: .process(pid),
+            placement: .headInsertEventTap, options: .listenOnly
+        ) { _, received in
+            switch received.getIntegerValueField(.eventSourceUserData) {
+            case marker:
+                delivery.dispatchOnceWhilePending { event.post(tap: .cgSessionEventTap) }
+            case -marker: delivery.finish()
+            default: break
+            }
+            return received
+        }
         let fields: [CGEventField] = [
             .eventSourceUserData,
-            .eventTargetUnixProcessID,
             .mouseEventWindowUnderMousePointer,
             .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
         ]
-        let processTap = HelperEventTap(
+        let sessionTap = HelperEventTap(
             type: event.type,
-            location: .process(pid),
-            placement: .headInsertEventTap,
+            location: .session,
+            placement: .tailAppendEventTap,
             options: .listenOnly
         ) { tap, received in
             if self.event(received, matches: event, fields: fields) {
                 tap.disable()
-                delivery.finish()
+                exit.postToPid(pid)
             }
             return received
         }
         do {
-            try await delivery.run(taps: [processTap], timeout: .milliseconds(500)) {
-                event.postToPid(pid)
+            try await delivery.run(taps: [barrierTap, sessionTap], timeout: .milliseconds(500)) {
+                entry.postToPid(pid)
             }
         } catch is CancellationError {
             throw CancellationError()

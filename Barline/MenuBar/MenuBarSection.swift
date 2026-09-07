@@ -158,6 +158,7 @@ final class MenuBarSection {
 
     /// Shows the section.
     func show(useShelf: Bool? = nil, keyboardFocus: Bool = false) {
+        guard appState?.itemManager.allowsPickerPresentation == true else { return }
         menuBarManager?.refreshSystemMenuBarConfiguration()
         guard let menuBarManager, isHidden else {
             return

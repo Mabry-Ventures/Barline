@@ -16,6 +16,12 @@ final class MenuBarItemManager: ObservableObject {
 
     @Published private(set) var activationNotice: String?
     @Published private(set) var isActivatingItem = false
+    @Published private(set) var temporarilyRevealedItemIDs = Set<MenuBarItemID>()
+
+    var allowsPickerPresentation: Bool {
+        MenuBarPresentationPolicy.allowsPresentation(activating: isActivatingItem, restoring: isRestoringItems)
+    }
+
     private var isRestoringItems = false
     private var visibleInterfaceTasks = [MenuBarRevealObservationToken: Task<Void, Never>]()
 
@@ -275,7 +281,10 @@ extension MenuBarItemManager {
     /// section, even though the user cannot see or click them. Include those
     /// items in the hidden Barline Bar without permanently changing their layout.
     func itemsForBarlineShelf(in section: MenuBarSection.Name, on screen: NSScreen) -> [MenuBarItem] {
-        let sectionItems = itemCache[section]
+        let allowedIDs = Set(MenuBarPresentationPolicy.shelfItemIDs(
+            itemCache[section].map(\.stableID), temporarilyRevealed: temporarilyRevealedItemIDs
+        ))
+        let sectionItems = itemCache[section].filter { allowedIDs.contains($0.stableID) }
 
         guard section == .hidden else {
             return sectionItems
@@ -293,7 +302,7 @@ extension MenuBarItemManager {
         let existingItemIDs = Set(sectionItems.map(\.stableID))
         let obscuredItems = obscuredIndices
             .map { visibleItems[$0] }
-            .filter { !existingItemIDs.contains($0.stableID) }
+            .filter { !existingItemIDs.contains($0.stableID) && !temporarilyRevealedItemIDs.contains($0.stableID) }
 
         return sectionItems + obscuredItems
     }
@@ -400,7 +409,7 @@ extension MenuBarItemManager {
                 // throttles negative lookups and retries after its TTL.
             }
 
-            if let temp = temporarilyShownItemContexts.first(where: { $0.tag == item.tag }) {
+            if let temp = temporarilyShownItemContexts.first(where: { $0.itemID == item.stableID }) {
                 // Cache temporarily shown items as if they were in their original locations.
                 // Keep track of them separately and use their return destinations to insert
                 // them into the cache once all other items have been handled.
@@ -800,8 +809,8 @@ extension MenuBarItemManager {
 extension MenuBarItemManager {
     /// Cached views supply identity only; visibility and mutation authority are fresh.
     @discardableResult
-    func activateItem(_ itemID: MenuBarItemID, with button: CGMouseButton) async -> Bool {
-        guard !isActivatingItem, !isRestoringItems, let appState else { return false }
+    func activateItem(_ itemID: MenuBarItemID, with button: CGMouseButton) async -> MenuBarItemActivationOutcome {
+        guard !isActivatingItem, !isRestoringItems, let appState else { return .failed }
         isActivatingItem = true
         activationNotice = nil
         defer { isActivatingItem = false }
@@ -812,7 +821,7 @@ extension MenuBarItemManager {
         } catch {
             activationNotice = "Couldn’t open this item. Close any open menu and try again."
             logger.error("Item activation did not complete: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
-            return false
+            return .failed
         }
     }
 
@@ -820,7 +829,7 @@ extension MenuBarItemManager {
         _ itemID: MenuBarItemID,
         with button: CGMouseButton,
         interactionID: UUID
-    ) async throws -> Bool {
+    ) async throws -> MenuBarItemActivationOutcome {
         guard let appState else { throw EventError.cannotComplete }
         let snapshot = try await appState.compatibilityCoordinator.refresh(interactionID: interactionID)
         guard !snapshot.menuTrackingIsActive else {
@@ -852,12 +861,14 @@ extension MenuBarItemManager {
             interfaceObserved = try await temporarilyShow(item: item, clickingWith: button, interactionID: interactionID)
         }
         guard interfaceObserved else {
-            activationNotice = "No menu appeared. The app may have performed a direct action; you can try again."
+            activationNotice = "Couldn’t confirm this item opened. It may have performed an action without showing a menu."
             logger.notice("Activation completed without an observed interface")
-            return false
+            // No observed menu is inconclusive (some items perform a direct
+            // action). Do not reopen a picker over a delayed target interface.
+            return .interfaceNotObserved
         }
         logger.notice("Activation target interface observed")
-        return true
+        return .interfaceObserved
     }
 
     /// Keep custom normal-layer interfaces protected after the click lease ends.
@@ -1018,6 +1029,7 @@ extension MenuBarItemManager {
         // arrive after the helper moves but before coordinator verification.
         let context = TemporarilyShownItemContext(item: item, returnDestination: destination)
         temporarilyShownItemContexts.append(context)
+        temporarilyRevealedItemIDs.insert(item.stableID)
         rehideTimer?.invalidate()
         defer { runRehideTimer() }
 
@@ -1129,6 +1141,7 @@ extension MenuBarItemManager {
 
         while let context = currentContexts.popLast() {
             guard let item = items.first(where: { $0.stableID == context.itemID }) else {
+                temporarilyRevealedItemIDs.remove(context.itemID)
                 if let token = context.revealObservation {
                     await BarlineMenuService.Connection.shared.endRevealObservation(token)
                 }
@@ -1141,6 +1154,7 @@ extension MenuBarItemManager {
                     recordsHistory: false,
                     interactionID: interactionID
                 )
+                temporarilyRevealedItemIDs.remove(context.itemID)
                 if let token = context.revealObservation {
                     await BarlineMenuService.Connection.shared.endRevealObservation(token)
                 }
@@ -1189,6 +1203,7 @@ extension MenuBarItemManager {
                 """
             )
             let context = temporarilyShownItemContexts.remove(at: index)
+            temporarilyRevealedItemIDs.remove(context.itemID)
             if let token = context.revealObservation {
                 Task {
                     await BarlineMenuService.Connection.shared.endRevealObservation(token)

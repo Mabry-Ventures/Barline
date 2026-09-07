@@ -5,6 +5,15 @@ development line and are not release certification.
 
 ## Unreleased
 
+### 1.0.8 local candidate corrections
+
+- Route shelf-item clicks through the macOS session event stream with ordered
+  source-queue barriers; do not mistake direct-process receipt for activation.
+- Keep temporarily revealed native items out of the shelf until restoration,
+  without changing saved layout positions.
+- Prevent picker presentation during reveal/restore and avoid automatically
+  reopening it over an unconfirmed or delayed target interface.
+
 ### Added
 
 - Barline product identity, original temporary icon sources, centralized build

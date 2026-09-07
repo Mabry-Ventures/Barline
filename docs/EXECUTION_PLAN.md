@@ -4,7 +4,27 @@ This is the live implementation ledger. A milestone is complete only when its
 code and evidence match the build specification; documentation alone is not a
 gate result.
 
-## Current checkpoint: production audit remediation, 1.0.7 build 8
+## Current checkpoint: shelf activation correction, 1.0.8 build 9
+
+The installed 1.0.7 user journey exposed a real regression: a temporarily
+revealed native item remained in the shelf projection, and a no-interface
+timeout reopened the picker. Logs also captured presentation during an active
+click. The corrected candidate blocks picker presentation during activation
+and restoration, excludes outstanding temporary reveals from shelf rendering
+without changing saved layout authority, and keeps an unconfirmed click distinct
+from a failed operation. Unconfirmed clicks no longer reopen the picker over a
+possibly delayed target interface.
+
+The helper click path now follows the exact vendor baseline's session dispatch
+with source-queue null barriers, cleared modifiers, and down/up click states
+1/0. Real clicks are not directly reposted to the source PID; passive delivery
+acknowledgement is still not target activation proof. The synthetic journey must
+observe the target menu/action and restoration on the signed installed candidate.
+Current iteration: 221 Core tests and three production event-delivery ordering
+tests pass. A shelf-only screenshot proved fixture items rendered while their
+representable wrappers exposed no actionable AX buttons; explicit SwiftUI
+accessibility semantics now wrap the native pointer controls. Compilation and
+signed runtime qualification continue. No public release or production GO is implied.
 
 The September 6 audit found 12 issues in `b03645e` (installed 1.0.6).
 The historical milestone table below is not qualification evidence for this

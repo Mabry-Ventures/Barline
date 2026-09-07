@@ -115,10 +115,21 @@ final class HelperEventDelivery: @unchecked Sendable {
         var taps = [HelperEventTap]()
         var completed = false
         var terminalError: (any Error)?
+        var dispatched = false
     }
 
     private let state = NSLock()
     private var storage = State()
+
+    /// Order a single real-event post against cancellation/timeout completion.
+    /// A late barrier callback must never enqueue down after cleanup enqueues up.
+    func dispatchOnceWhilePending(_ post: () -> Void) {
+        state.lock()
+        defer { state.unlock() }
+        guard !storage.completed, !storage.dispatched else { return }
+        storage.dispatched = true
+        post()
+    }
 
     func run(
         taps: [HelperEventTap],

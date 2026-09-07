@@ -844,7 +844,7 @@ private struct BarlineShelfItemView: View {
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
-                if await !itemManager.activateItem(item.stableID, with: .left) {
+                if await itemManager.activateItem(item.stableID, with: .left) == .failed {
                     menuBarManager.section(withName: section)?.show()
                 }
             }
@@ -858,7 +858,7 @@ private struct BarlineShelfItemView: View {
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
-                if await !itemManager.activateItem(item.stableID, with: .right) {
+                if await itemManager.activateItem(item.stableID, with: .right) == .failed {
                     menuBarManager.section(withName: section)?.show()
                 }
             }
@@ -883,6 +883,14 @@ private struct BarlineShelfItemView: View {
             width: image?.size.width ?? max(24, item.bounds.width),
             height: image?.size.height ?? 24
         )
+        // SwiftUI's representable wrapper can expose a layout-only AX node
+        // instead of forwarding the image-only NSButton's semantics. Own one
+        // accessible control here while AppKit retains native pointer tracking.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.displayName)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { leftClickAction() }
+        .accessibilityAction(named: Text("Open context menu")) { rightClickAction() }
     }
 }
 

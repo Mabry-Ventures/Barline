@@ -107,7 +107,7 @@ final class MenuBarSearchPanel: NSPanel {
 
     /// Shows the search panel on the given screen.
     func show(on screen: NSScreen? = nil) {
-        guard let appState else {
+        guard let appState, appState.itemManager.allowsPickerPresentation else {
             return
         }
 
@@ -126,6 +126,10 @@ final class MenuBarSearchPanel: NSPanel {
             guard let self, !Task.isCancelled, sequence == presentationSequence,
                   appState.navigationState.isSearchPresented
             else { return }
+            guard appState.itemManager.allowsPickerPresentation else {
+                appState.navigationState.isSearchPresented = false
+                return
+            }
 
             let hostingView = MenuBarSearchHostingView(appState: appState, model: model, displayID: screen.displayID, panel: self)
             hostingView.setFrameSize(hostingView.intrinsicContentSize)
@@ -560,7 +564,7 @@ private struct MenuBarSearchContentView: View {
         guard requireAccessibilityForAction() else { return }
         closePanel()
         Task {
-            if await !itemManager.activateItem(item.stableID, with: .left) {
+            if await itemManager.activateItem(item.stableID, with: .left) == .failed {
                 appState.menuBarManager.searchPanel.show()
             }
         }
