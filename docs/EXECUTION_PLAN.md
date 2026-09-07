@@ -24,7 +24,12 @@ Current iteration: 221 Core tests and three production event-delivery ordering
 tests pass. A shelf-only screenshot proved fixture items rendered while their
 representable wrappers exposed no actionable AX buttons; explicit SwiftUI
 accessibility semantics now wrap the native pointer controls. Compilation and
-signed runtime qualification continue. No public release or production GO is implied.
+signed runtime qualification continue. The first signed iteration has passed
+the installed synthetic native-menu and custom-popover journeys, including
+target actions and position restoration. The harness now verifies the fixture's
+hosted autosave-name alias instead of assuming its rendered text is its AX label.
+These results must be rebound after this gate correction changes the source SHA.
+No public release or production GO is implied.
 
 The September 6 audit found 12 issues in `b03645e` (installed 1.0.6).
 The historical milestone table below is not qualification evidence for this

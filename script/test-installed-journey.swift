@@ -52,7 +52,7 @@ func matches(_ element: AXUIElement, _ name: String) -> Bool {
 
 /// Depth and count caps ensure an unexpected AX tree cannot become an unbounded
 /// process-inventory crawl. Only these two explicitly selected apps are queried.
-func find(_ root: AXUIElement, named name: String) -> AXUIElement? {
+func find(_ root: AXUIElement, named name: String, aliases: [String] = []) -> AXUIElement? {
     var remaining = 500
     var visited = Set<CFHashCode>()
     let deadline = Date().addingTimeInterval(1)
@@ -61,7 +61,7 @@ func find(_ root: AXUIElement, named name: String) -> AXUIElement? {
               visited.insert(CFHash(element)).inserted else { return nil }
         remaining -= 1
         AXUIElementSetMessagingTimeout(element, 0.03)
-        if matches(element, name) {
+        if matches(element, name) || aliases.contains(where: { matches(element, $0) }) {
             return element
         }
         for key in [kAXWindowsAttribute, kAXChildrenAttribute, kAXContentsAttribute] {
@@ -102,6 +102,15 @@ func click(_ rect: CGRect, right: Bool = false) throws {
     guard CGWarpMouseCursorPosition(point) == .success else {
         throw JourneyError.failed("pointer_positioning_failed")
     }
+    // Warping updates the physical cursor without delivering the normal hover
+    // transition. Send the move before down/up, as a real pointer journey does.
+    guard let moved = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                              mouseCursorPosition: point, mouseButton: .left)
+    else {
+        throw JourneyError.failed("pointer_move_creation")
+    }
+    moved.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.05)
     down.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.08)
     up.post(tap: .cghidEventTap)
@@ -160,6 +169,29 @@ do {
         guard let bar = extras(fixture), let element = find(bar, named: target) else { return nil }
         return frame(element)
     }
+    var shelfLabels = [target]
+    func verifiedHostedFixtureAlias(sourceFrame: CGRect) -> String? {
+        let knownTitles = [
+            "BF Native": "BarlineFixture.Journey.Native",
+            "BF Popover": "BarlineFixture.Journey.Popover",
+            "BF Delayed": "BarlineFixture.Journey.Delayed",
+        ]
+        guard let expected = knownTitles[target] else { return nil }
+        let records = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let matched = records.filter { row in
+            guard let owner = (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  owner == fixturePID || NSRunningApplication(processIdentifier: owner)?.bundleIdentifier == "com.apple.controlcenter",
+                  let rect = bounds(row), rect.width > 0, rect.height > 0, rect.height < 80 else { return false }
+            // On macOS 26 the hosted window is 2pt narrower and 9pt taller
+            // than its source AX button; center correspondence remains exact.
+            return abs(rect.midX - sourceFrame.midX) <= 1 &&
+                abs(rect.midY - sourceFrame.midY) <= 1 &&
+                abs(rect.width - sourceFrame.width) <= 2
+        }
+        guard matched.count == 1,
+              (matched[0][kCGWindowName as String] as? String) == expected else { return nil }
+        return expected
+    }
     func shelfVisible() -> Bool {
         windows().contains { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == appPID &&
             $0[kCGWindowName as String] as? String == "Barline Bar"
@@ -172,7 +204,7 @@ do {
     }
     func shelfTarget() -> AXUIElement? {
         guard let shelf = shelfRoot() else { return nil }
-        return find(shelf, named: target)
+        return find(shelf, named: target, aliases: Array(shelfLabels.dropFirst()))
     }
     func shelfWindowFrame() -> CGRect? {
         let shelves = windows().filter {
@@ -188,7 +220,9 @@ do {
             AXUIElementSetMessagingTimeout(current, 0.02)
             var owner: pid_t = 0
             guard AXUIElementGetPid(current, &owner) == .success, owner == appPID else { return nil }
-            let exactLabel = matches(current, target) || (attribute(current, kAXHelpAttribute) as? String) == target
+            let exactLabel = shelfLabels.contains { label in
+                matches(current, label) || (attribute(current, kAXHelpAttribute) as? String) == label
+            }
             if exactLabel,
                (attribute(current, kAXRoleAttribute) as? String) == kAXButtonRole,
                let rect = frame(current), let shelf = shelfWindowFrame(),
@@ -229,7 +263,11 @@ do {
         var remaining = 160
         var visited = Set<CFHashCode>()
         var roles = [String: Int]()
-        var syntheticMatches = ["BF Native": 0, "BF Popover": 0, "BF Delayed": 0]
+        var syntheticMatches = [
+            "BF Native": 0, "BF Popover": 0, "BF Delayed": 0,
+            "BarlineFixture.Journey.Native": 0, "BarlineFixture.Journey.Popover": 0,
+            "BarlineFixture.Journey.Delayed": 0,
+        ]
         var syntheticMatchKeys = [String: Int]()
         var genericItemTitles = 0
         var buttonsWithFrame = 0
@@ -304,6 +342,10 @@ do {
     guard let baseline = receipt(), !baseline.visible, let original = targetFrame(), !shelfVisible() else {
         throw JourneyError.failed("fixture_ready_and_closed_shelf_baseline_required")
     }
+    if let hostedAlias = verifiedHostedFixtureAlias(sourceFrame: original) {
+        shelfLabels.append(hostedAlias)
+    }
+    print("{\"fixtureHostedAliasVerified\":\(shelfLabels.count == 2)}")
     // The chosen fixture must actually be hidden; a visible-item click is not
     // evidence that reveal/activation/restore works. Do not move user items here.
     let displays = NSScreen.screens.compactMap { screen -> CGRect? in
@@ -381,6 +423,9 @@ do {
     guard let action = find(fixture, named: "Fixture Receipt Action"), let actionFrame = frame(action) else {
         throw JourneyError.failed("target_interface_action_unavailable")
     }
+    guard !shelfVisible() else {
+        throw JourneyError.failed("shelf_reopened_over_target_interface")
+    }
     try click(actionFrame)
     try wait("target_action_or_close_not_observed") {
         guard let current = receipt() else { return false }
@@ -394,10 +439,12 @@ do {
     let result: [String: Any] = try [
         "schema": 1, "verdict": shelfAXTraversalPassed ? "PASS" : "FAIL",
         "interactionVerdict": "PASS", "shelfAXTraversalPassed": shelfAXTraversalPassed,
+        "fixtureHostedAliasVerified": shelfLabels.count == 2,
         "targetResolution": shelfAXTraversalPassed ? "shelf_ax_tree" : "scoped_shelf_ax_hit_test",
         "target": target, "button": right ? "right" : "left",
         "physicalEventPath": true, "shelfObserved": true, "targetReceiptObserved": true,
         "targetInterfaceObserved": true, "targetActionObserved": true, "restorationObserved": true,
+        "shelfStayedClosedDuringActivation": true,
         "sourceSHA": required("BARLINE_SOURCE_SHA"),
         "executableSHA256": required("BARLINE_EXECUTABLE_SHA256"),
         "version": Bundle(url: runningApp.bundleURL!)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",

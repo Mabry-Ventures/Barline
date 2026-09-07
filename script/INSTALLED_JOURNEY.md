@@ -38,6 +38,17 @@ A PASS requires all of these, not just successful event posting:
 
 The JSON result binds the runtime observations to the source SHA, installed executable SHA-256, app version, and host OS. A failure must remain a failed gate. If the host blocks synthetic pointer delivery, use Computer Use or the user's physical clicks for a separately recorded equivalent journey; do not substitute an AXPress, Debug notification, or fixture-only test and call this gate passed.
 
+Hosted fixtures have two names: their source AX button says `BF Native` (or
+Popover/Delayed), while the Control Center window uses the fixture's autosave
+name, such as `BarlineFixture.Journey.Native`. The harness accepts that exact
+synthetic alias only after verifying one source/host center match (within 1pt,
+width difference at most 2pt, expected owner). It never uses a fuzzy name or an
+unverified coordinate. Pointer movement precedes down/up, the original cursor
+is restored on exit, and the shelf must remain closed over the opened interface.
+The optional `BARLINE_JOURNEY_SCREENSHOT` is an absolute, previously unused PNG
+path under the repository's `.artifacts/runtime/`; only the identified shelf
+window is captured. AX fallback diagnostics cannot clear a failed AX lane.
+
 Run the same matrix after cold launch, after the real updater installs the candidate, and after a bounded helper interruption. Separately exercise failed activation recovery, open-menu mutation deferral, keyboard/VoiceOver, permission transitions, and available physical display/system-state lanes. This gate does not certify those lanes, macOS 27, or soak duration.
 
 `BarlineUITests` now qualifies native menu, custom popover, and right-click receipt behavior within the fixture. Those tests are intentionally labeled **fixture qualification**, not production integration proof. Run that qualification with menu-bar managers closed: newly created macOS status items can land behind an existing hidden-item barrier even with a fresh autosave name. The tests reject off-screen geometry and do not alter any user's layout. Because macOS-hosted StatusItem can report `isHittable=false` despite an on-screen frame, qualification uses the exact AX-identified element's center coordinate, then independently requires a target-process receipt before examining its menu. A missing receipt is a failed event-delivery gate, never a fixture or production pass. Synthetic receipt JSON is retained as an xcresult attachment on success and failure. Qualification alone uses a visible regular fixture window to avoid hidden-accessory activation ambiguity; the installed journey's background mode is unchanged. Conversely, keep Barline running and the fixture target hidden for the installed production journey.
