@@ -207,6 +207,17 @@ final class MenuBarOverlayPanel: NSPanel {
             .store(in: &c)
 
         if let appState {
+            appState.permissions.screenRecording.$hasPermission
+                .removeDuplicates()
+                .sink { [weak self] isGranted in
+                    guard let self else { return }
+                    desktopWallpaper = nil
+                    if isGranted {
+                        insertUpdateFlag(.desktopWallpaper)
+                    }
+                }
+                .store(in: &c)
+
             appState.menuBarManager.$isMenuBarHiddenBySystem
                 .sink { [weak self] isHidden in
                     self?.alphaValue = isHidden ? 0 : 1
@@ -289,7 +300,7 @@ final class MenuBarOverlayPanel: NSPanel {
         }
 
         guard appState.appearanceManager.overlayPanels.contains(self) else {
-            MenuBarOverlayPanel.logger.warning("Overlay panel \(self) not retained")
+            MenuBarOverlayPanel.logger.warning("Overlay panel not retained")
             return
         }
 

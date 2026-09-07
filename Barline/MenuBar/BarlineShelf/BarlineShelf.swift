@@ -11,6 +11,36 @@ import SwiftUI
 // MARK: - BarlineShelfPanel
 
 final class BarlineShelfPanel: NSPanel {
+    private var keyboardNavigationRequested = false
+
+    override var canBecomeKey: Bool {
+        true
+    }
+
+    override func cancelOperation(_: Any?) {
+        hide()
+    }
+
+    /// Only an explicit keyboard command claims keyboard focus, never hover or scroll.
+    func focusItemsForKeyboard() {
+        keyboardNavigationRequested = true
+        makeKey()
+        func buttons(in view: NSView) -> [NSButton] {
+            if let button = view as? NSButton {
+                return [button]
+            }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        guard let contentView else { return }
+        let controls = buttons(in: contentView)
+        for index in controls.indices {
+            controls[index].nextKeyView = controls[(index + 1) % controls.count]
+        }
+        if let first = controls.first {
+            makeFirstResponder(first)
+        }
+    }
+
     /// A token that identifies one request to present the Barline Bar.
     struct PresentationRequest {
         fileprivate let section: MenuBarSection.Name
@@ -228,9 +258,9 @@ final class BarlineShelfPanel: NSPanel {
         // before updating the caches.
         appState.navigationState.isBarlineShelfPresented = true
         currentSection = section
-        // swiftformat:disable:next redundantSelf
+        let loggedGeneration = presentationGeneration
         logger.notice(
-            "Shelf presentation began generation=\(self.presentationGeneration, privacy: .public)"
+            "Shelf presentation began generation=\(loggedGeneration, privacy: .public)"
         )
 
         return request
@@ -245,9 +275,9 @@ final class BarlineShelfPanel: NSPanel {
             return false
         }
         guard request.generation == presentationGeneration else {
-            // swiftformat:disable:next redundantSelf
+            let loggedGeneration = presentationGeneration
             logger.notice(
-                "Shelf presentation rejected: stale generation request=\(request.generation, privacy: .public) current=\(self.presentationGeneration, privacy: .public)"
+                "Shelf presentation rejected: stale generation request=\(request.generation, privacy: .public) current=\(loggedGeneration, privacy: .public)"
             )
             return false
         }
@@ -461,7 +491,7 @@ final class BarlineShelfPanel: NSPanel {
         } catch is CancellationError {
             return
         } catch {
-            Logger.default.error("Cache update failed when showing BarlineShelfPanel - \(error)")
+            Logger.default.error("Cache update failed when showing BarlineShelfPanel - \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
 
         guard
@@ -477,11 +507,17 @@ final class BarlineShelfPanel: NSPanel {
             hostingView.finishPreparing()
         }
 
+        if keyboardNavigationRequested {
+            contentView?.layoutSubtreeIfNeeded()
+            focusItemsForKeyboard()
+        }
+
         cacheRefreshTask = nil
     }
 
     /// Hides the panel.
     func hide() {
+        keyboardNavigationRequested = false
         if
             let name = currentSection,
             let section = appState?.menuBarManager.section(withName: name)
@@ -492,9 +528,9 @@ final class BarlineShelfPanel: NSPanel {
     }
 
     override func close() {
-        // swiftformat:disable:next redundantSelf
+        let loggedGeneration = presentationGeneration
         logger.notice(
-            "Shelf close requested generation=\(self.presentationGeneration, privacy: .public)"
+            "Shelf close requested generation=\(loggedGeneration, privacy: .public)"
         )
         cacheRefreshTask?.cancel()
         cacheRefreshTask = nil
@@ -675,7 +711,7 @@ private struct BarlineShelfContentView: View {
             switch element {
             case let .item(itemID):
                 if let item = itemByID[itemID] {
-                    width += imageCache.images[item.tag]?.scaledSize.width ?? 0
+                    width += imageCache.images[item.stableID]?.scaledSize.width ?? max(24, item.bounds.width)
                 }
             case let .spacer(_, spacerWidth):
                 width += spacerWidth
@@ -738,12 +774,15 @@ private struct BarlineShelfContentView: View {
             }
             .frame(minWidth: cachedContentWidth)
             .padding(.horizontal, 10)
-        } else if imageCache.cacheFailed(for: section) {
-            Text("Unable to display menu bar items")
-                .padding(.horizontal, 10)
         } else {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
+                    if let notice = itemManager.activationNotice {
+                        Text(notice)
+                            .font(.caption)
+                            .frame(maxWidth: 220)
+                            .padding(.horizontal, 8)
+                    }
                     ForEach(presentationElements) { element in
                         switch element {
                         case let .item(itemID):
@@ -805,11 +844,8 @@ private struct BarlineShelfItemView: View {
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
-                try await Task.sleep(for: .milliseconds(25))
-                if item.isOnScreen {
-                    try await itemManager.click(item: item, with: .left)
-                } else {
-                    await itemManager.temporarilyShow(item: item, clickingWith: .left)
+                if await !itemManager.activateItem(item.stableID, with: .left) {
+                    menuBarManager.section(withName: section)?.show()
                 }
             }
         }
@@ -822,37 +858,37 @@ private struct BarlineShelfItemView: View {
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
-                try await Task.sleep(for: .milliseconds(25))
-                if item.isOnScreen {
-                    try await itemManager.click(item: item, with: .right)
-                } else {
-                    await itemManager.temporarilyShow(item: item, clickingWith: .right)
+                if await !itemManager.activateItem(item.stableID, with: .right) {
+                    menuBarManager.section(withName: section)?.show()
                 }
             }
         }
     }
 
     private var image: NSImage? {
-        guard let cachedImage = imageCache.images[item.tag] else {
+        guard let cachedImage = imageCache.images[item.stableID] else {
             return nil
         }
         return cachedImage.nsImage
     }
 
     var body: some View {
-        if let image {
-            Image(nsImage: image)
-                .contentShape(Rectangle())
-                .overlay {
-                    BarlineShelfItemClickView(
-                        item: item,
-                        leftClickAction: leftClickAction,
-                        rightClickAction: rightClickAction
-                    )
-                }
-                .accessibilityLabel(item.displayName)
-                .accessibilityAction(named: "left click", leftClickAction)
-                .accessibilityAction(named: "right click", rightClickAction)
+        Group {
+            if let image {
+                Image(nsImage: image).accessibilityHidden(true)
+            } else {
+                Image(systemName: "app.dashed")
+                    .frame(width: max(24, item.bounds.width), height: 24)
+                    .accessibilityHidden(true)
+            }
+        }
+        .contentShape(Rectangle())
+        .overlay {
+            BarlineShelfItemClickView(
+                item: item,
+                leftClickAction: leftClickAction,
+                rightClickAction: rightClickAction
+            )
         }
     }
 }
@@ -860,28 +896,25 @@ private struct BarlineShelfItemView: View {
 // MARK: - BarlineShelfItemClickView
 
 private struct BarlineShelfItemClickView: NSViewRepresentable {
-    private final class Represented: NSView {
-        let item: MenuBarItem
-
-        let leftClickAction: () -> Void
-        let rightClickAction: () -> Void
-
-        private var lastLeftMouseDownDate = Date.now
-        private var lastRightMouseDownDate = Date.now
-
-        private var lastLeftMouseDownLocation = CGPoint.zero
-        private var lastRightMouseDownLocation = CGPoint.zero
+    private final class Represented: NSButton {
+        var leftClickAction: () -> Void
+        var rightClickAction: () -> Void
 
         init(
             item: MenuBarItem,
             leftClickAction: @escaping () -> Void,
             rightClickAction: @escaping () -> Void
         ) {
-            self.item = item
             self.leftClickAction = leftClickAction
             self.rightClickAction = rightClickAction
             super.init(frame: .zero)
+            title = ""
+            isBordered = false
+            setButtonType(.momentaryPushIn)
+            target = self
+            action = #selector(activateItem)
             toolTip = item.displayName
+            setAccessibilityLabel(item.displayName)
         }
 
         @available(*, unavailable)
@@ -889,37 +922,45 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
             fatalError("init(coder:) has not been implemented")
         }
 
-        override func mouseDown(with event: NSEvent) {
-            super.mouseDown(with: event)
-            lastLeftMouseDownDate = .now
-            lastLeftMouseDownLocation = NSEvent.mouseLocation
-        }
-
-        override func rightMouseDown(with event: NSEvent) {
-            super.rightMouseDown(with: event)
-            lastRightMouseDownDate = .now
-            lastRightMouseDownLocation = NSEvent.mouseLocation
-        }
-
-        override func mouseUp(with event: NSEvent) {
-            super.mouseUp(with: event)
-            guard
-                Date.now.timeIntervalSince(lastLeftMouseDownDate) < 0.5,
-                lastLeftMouseDownLocation.distance(to: NSEvent.mouseLocation) < 5
-            else {
-                return
-            }
+        @objc private func activateItem() {
             leftClickAction()
         }
 
-        override func rightMouseUp(with event: NSEvent) {
-            super.rightMouseUp(with: event)
-            guard
-                Date.now.timeIntervalSince(lastRightMouseDownDate) < 0.5,
-                lastRightMouseDownLocation.distance(to: NSEvent.mouseLocation) < 5
-            else {
-                return
+        override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+            true
+        }
+
+        override var acceptsFirstResponder: Bool {
+            true
+        }
+
+        override func keyDown(with event: NSEvent) {
+            switch event.keyCode {
+            case 53: window?.cancelOperation(nil)
+            case 123, 126: window?.selectPreviousKeyView(self)
+            case 124, 125: window?.selectNextKeyView(self)
+            case 36, 49:
+                if event.modifierFlags.contains(.control) {
+                    rightClickAction()
+                } else {
+                    performClick(self)
+                }
+            default: super.keyDown(with: event)
             }
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                rightClickAction()
+            } else {
+                super.mouseDown(with: event)
+            }
+        }
+
+        override func rightMouseDown(with _: NSEvent) {}
+
+        override func rightMouseUp(with event: NSEvent) {
+            guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
             rightClickAction()
         }
     }
@@ -937,5 +978,11 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
         )
     }
 
-    func updateNSView(_: NSView, context _: Context) {}
+    func updateNSView(_ view: NSView, context _: Context) {
+        guard let button = view as? Represented else { return }
+        button.leftClickAction = leftClickAction
+        button.rightClickAction = rightClickAction
+        button.toolTip = item.displayName
+        button.setAccessibilityLabel(item.displayName)
+    }
 }

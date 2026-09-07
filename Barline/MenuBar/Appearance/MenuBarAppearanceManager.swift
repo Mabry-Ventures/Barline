@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
 import Combine
 import OSLog
@@ -32,7 +33,11 @@ final class MenuBarAppearanceManager: ObservableObject {
     private(set) var overlayPanels = Set<MenuBarOverlayPanel>()
 
     /// The amount to inset the menu bar if called for by the configuration.
-    let menuBarInsetAmount: CGFloat = if #available(macOS 26.0, *) { 3.5 } else { 5 }
+    let menuBarInsetAmount: CGFloat = if #available(macOS 26.0, *) {
+        3.5
+    } else {
+        5
+    }
 
     /// Performs initial setup of the manager.
     func performSetup(with appState: AppState) {
@@ -48,7 +53,7 @@ final class MenuBarAppearanceManager: ObservableObject {
                 configuration = try decoder.decode(MenuBarAppearanceConfigurationV2.self, from: data)
             }
         } catch {
-            Logger.serialization.error("Error decoding menu bar appearance configuration: \(error)")
+            Logger.serialization.error("Error decoding menu bar appearance configuration: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
     }
 
@@ -66,7 +71,7 @@ final class MenuBarAppearanceManager: ObservableObject {
                 while let panel = overlayPanels.popFirst() {
                     panel.orderOut(self)
                 }
-                if Set(overlayPanels.map { $0.owningScreen }) != Set(NSScreen.screens) {
+                if Set(overlayPanels.map(\.owningScreen)) != Set(NSScreen.screens) {
                     configureOverlayPanels(with: configuration)
                 }
             }
@@ -76,8 +81,8 @@ final class MenuBarAppearanceManager: ObservableObject {
             .encode(encoder: encoder)
             .receive(on: DispatchQueue.main)
             .sink { completion in
-                if case .failure(let error) = completion {
-                    Logger.serialization.error("Error encoding menu bar appearance configuration: \(error)")
+                if case let .failure(error) = completion {
+                    Logger.serialization.error("Error encoding menu bar appearance configuration: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 }
             } receiveValue: { data in
                 Defaults.set(data, forKey: .menuBarAppearanceConfigurationV2)

@@ -141,12 +141,37 @@ public struct MenuBarRect: Codable, Hashable, Sendable {
     }
 }
 
+/// The source application is distinct from the WindowServer host. On macOS 26,
+/// Control Center hosts third-party items; an unresolved host is not a system item.
+public enum MenuBarSourceOwnership: String, Codable, Hashable, Sendable {
+    case unknown
+    case system
+    case application
+}
+
+/// Keep unknown observation fail-closed without requiring AppKit in the domain.
+public enum MenuBarTrackingPolicy {
+    public static func isTransientInterface(role: String?, subrole: String?) -> Bool {
+        role == "AXMenu" || role == "AXPopover" || subrole == "AXPopover"
+    }
+
+    public static func blocksMutation(
+        sceneIsAvailable: Bool,
+        nativeMenuIsVisible: Bool,
+        sourceInterfaceIsVisible: Bool
+    ) -> Bool {
+        !sceneIsAvailable || nativeMenuIsVisible || sourceInterfaceIsVisible
+    }
+}
+
 public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
     public let id: MenuBarItemID
     public let section: MenuBarSection
     public let order: Int
     public let displayID: MenuBarDisplayID?
     public let isSystemItem: Bool
+    /// Optional for decoding archives written before ownership was explicit.
+    public let sourceOwnership: MenuBarSourceOwnership?
     public let isBarlineControlItem: Bool
     public let tagNamespace: String?
     public let title: String?
@@ -167,6 +192,7 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         order: Int,
         displayID: MenuBarDisplayID? = nil,
         isSystemItem: Bool = false,
+        sourceOwnership: MenuBarSourceOwnership? = nil,
         isBarlineControlItem: Bool = false,
         tagNamespace: String? = nil,
         title: String? = nil,
@@ -186,6 +212,7 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         self.order = order
         self.displayID = displayID
         self.isSystemItem = isSystemItem
+        self.sourceOwnership = sourceOwnership
         self.isBarlineControlItem = isBarlineControlItem
         self.tagNamespace = tagNamespace
         self.title = title
@@ -199,6 +226,10 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         self.isBentoBox = isBentoBox
         self.isSystemClone = isSystemClone
         self.isResponsive = isResponsive
+    }
+
+    public var isConfirmedSystemItem: Bool {
+        sourceOwnership.map { $0 == .system } ?? isSystemItem
     }
 }
 
@@ -231,6 +262,28 @@ public struct MenuBarSnapshot: Codable, Hashable, Sendable {
 
     public func displayIdentity(for runtimeID: MenuBarDisplayID) -> MenuBarDisplayIdentity? {
         displayIdentities?.first { $0.runtimeID == runtimeID }
+    }
+
+    /// Resolves pre-hosted-identity profiles without guessing among duplicate
+    /// items. Source bundle, title and semantic fingerprint must all agree;
+    /// occurrence aliases are not evidence of identity after process relaunch.
+    public func resolvedItemID(for storedID: MenuBarItemID) -> MenuBarItemID? {
+        if items.contains(where: { $0.id == storedID }) {
+            return storedID
+        }
+        guard let title = storedID.title,
+              let fingerprint = storedID.fallbackFingerprint
+        else { return nil }
+        let matches = items.filter { item in
+            guard item.id.bundleIdentifier == "barline.hosted-menu-item",
+                  item.id.title == title,
+                  item.id.fallbackFingerprint == fingerprint
+            else { return false }
+            let resolvedSource = item.tagNamespace?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return resolvedSource == storedID.bundleIdentifier ||
+                storedID.bundleIdentifier == "com.apple.controlcenter"
+        }
+        return matches.count == 1 ? matches[0].id : nil
     }
 }
 

@@ -14,6 +14,8 @@ struct GeneralSettingsPane: View {
     @State private var presentedError: LocalizedErrorWrapper?
     @State private var isApplyingItemSpacingOffset = false
     @State private var tempItemSpacingOffset: CGFloat = 0
+    @State private var iconImportTask: Task<Void, Never>?
+    @State private var iconImportSequence: UInt64 = 0
 
     private var itemSpacingOffsetKey: LocalizedStringKey {
         switch tempItemSpacingOffset {
@@ -53,6 +55,11 @@ struct GeneralSettingsPane: View {
             BarlineSection {
                 spacingOptions
             }
+        }
+        .onDisappear {
+            iconImportSequence &+= 1
+            iconImportTask?.cancel()
+            iconImportTask = nil
         }
     }
 
@@ -119,16 +126,24 @@ struct GeneralSettingsPane: View {
             isPresented: $isImportingCustomBarlineIcon,
             allowedContentTypes: [.image]
         ) { result in
-            do {
-                let url = try result.get()
-                if url.startAccessingSecurityScopedResource() {
-                    defer { url.stopAccessingSecurityScopedResource() }
-                    let data = try Data(contentsOf: url)
+            iconImportTask?.cancel()
+            iconImportSequence &+= 1
+            let sequence = iconImportSequence
+            iconImportTask = Task {
+                do {
+                    let url = try result.get()
+                    let data = try await BoundedIconImporter.shared.load(from: url)
+                    guard !Task.isCancelled, sequence == iconImportSequence else { return }
                     settings.barlineIcon = ControlItemImageSet(name: .custom, image: .data(data))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled, sequence == iconImportSequence else { return }
+                    // Avoid surfacing system error strings containing full paths.
+                    let displayError = error as? BoundedIconImporter.ImportError ?? .unsupportedImage
+                    presentedError = LocalizedErrorWrapper(displayError)
+                    isPresentingError = true
                 }
-            } catch {
-                presentedError = LocalizedErrorWrapper(error)
-                isPresentingError = true
             }
         }
         .alert(isPresented: $isPresentingError, error: presentedError) {
@@ -182,7 +197,10 @@ struct GeneralSettingsPane: View {
 
     private var useBarlineShelf: some View {
         Toggle("Use Barline Bar", isOn: $settings.useBarlineShelf)
-            .annotation("Show hidden menu bar items in a separate bar below the menu bar.")
+            .annotation {
+                Text("Show hidden menu bar items in a separate bar below the menu bar.")
+                Text("When macOS automatically hides the menu bar, Barline reveals items directly in the system menu bar instead. The Barline Bar and drag layout editor require an always-visible menu bar.")
+            }
     }
 
     private var barlineShelfLocationPicker: some View {

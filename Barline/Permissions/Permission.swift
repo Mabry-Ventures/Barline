@@ -68,21 +68,39 @@ class Permission: ObservableObject, Identifiable {
 
     /// Sets up the internal observers for the permission.
     private func configureCancellables() {
-        timerCancellable = NotificationCenter.default
+        let activation = NotificationCenter.default
             .publisher(for: NSApplication.didBecomeActiveNotification)
-            .map { _ in Date.now }
-            .merge(with: Just(.now))
+            .map { _ in () }
+        let workspace = NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification))
+            .map { _ in () }
+        let screenCapture = NotificationCenter.default
+            .publisher(for: ScreenCapture.permissionDidChangeNotification)
+            .map { _ in () }
+        timerCancellable = Publishers.Merge3(activation, workspace, screenCapture)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                guard let self else {
-                    return
-                }
-                hasPermission = check()
+                self?.refresh()
             }
+    }
+
+    /// Performs a nonprompting preflight at an interaction boundary. Workspace
+    /// activation also catches returning from Settings while Barline remains
+    /// an accessory app and never becomes the active application itself.
+    @discardableResult
+    func refresh() -> Bool {
+        let current = check()
+        if hasPermission != current {
+            hasPermission = current
+        }
+        return current
     }
 
     /// Performs the request and opens the System Settings app to the appropriate pane.
     func performRequest() {
         request()
+        refresh()
         if let settingsURL {
             NSWorkspace.shared.open(settingsURL)
         }

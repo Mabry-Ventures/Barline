@@ -373,7 +373,7 @@ extension BarlineMenuService {
                 let remainsCurrent = state.withLock { $0.generation == generation }
                 return remainsCurrent ? response : nil
             } catch {
-                logger.error("Session failed with error \(error)")
+                logger.error("Session failed with error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 cancel(reason: "Send failed: \(error.localizedDescription)")
                 return nil
             }
@@ -391,7 +391,7 @@ extension BarlineMenuService {
             }
             let session = try XPCSession(xpcService: name, options: .inactive) { [weak self] error in
                 guard let self else { return }
-                logger.warning("Session was cancelled with error \(error.localizedDescription)")
+                logger.warning("Session was cancelled with error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 state.withLock { state in
                     guard state.generation == generation else { return }
                     state.generation &+= 1

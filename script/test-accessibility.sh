@@ -16,9 +16,10 @@ cleanup() {
 trap cleanup EXIT
 
 # Source-level regression assertions for the custom, icon-driven controls.
-rg -q '\.accessibilityLabel\(item\.displayName\)' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
-rg -q '\.accessibilityAction\(named: "left click"' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
-rg -q '\.accessibilityAction\(named: "right click"' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
+rg -q 'Represented: NSButton' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
+rg -q 'setAccessibilityLabel\(item\.displayName\)' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
+rg -q 'override func keyDown' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
+rg -q 'rightClickAction\(\)' "$ROOT/Barline/MenuBar/BarlineShelf/BarlineShelf.swift"
 rg -q '\.accessibilityLabel\(label\)' "$ROOT/Barline/UI/Views/HotkeyRecorder.swift"
 rg -q 'appState\.performSetup\(\)' "$ROOT/Barline/Main/AppDelegate.swift"
 if rg -q 'performSetup\(hasPermissions:' "$ROOT/Barline"; then
@@ -37,7 +38,7 @@ rg -q 'accessibilityIdentifier\("degraded-mode-banner"\)' "$ROOT/Barline/Setting
 # Background sampling must preflight permission without invoking any request API.
 screen_capture_body="$(sed -n '/static func captureMenuBarBackground(/,/^    }/p' \
     "$ROOT/Barline/Utilities/ScreenCapture.swift")"
-guard_line="$(printf '%s\n' "$screen_capture_body" | rg -n 'guard checkPermissions\(\)' | cut -d: -f1)"
+guard_line="$(printf '%s\n' "$screen_capture_body" | rg -n 'guard checkPermissions\(\)' | head -1 | cut -d: -f1)"
 request_line="$(printf '%s\n' "$screen_capture_body" | rg -n 'Connection\.shared\.captureBackground' | cut -d: -f1)"
 [[ -n "$guard_line" && -n "$request_line" && "$guard_line" -lt "$request_line" ]] || {
     printf 'error: background capture must preflight Screen Recording before XPC\n' >&2

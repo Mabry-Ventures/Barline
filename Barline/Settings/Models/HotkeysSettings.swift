@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Combine
 import Foundation
 import OSLog
@@ -57,7 +58,7 @@ final class HotkeysSettings: ObservableObject {
                     hotkey.keyCombination = keyCombination
                 }
             } catch {
-                Logger.serialization.error("Error decoding hotkey: \(error, privacy: .public)")
+                Logger.serialization.error("Error decoding hotkey: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             }
         }
     }
@@ -71,8 +72,8 @@ final class HotkeysSettings: ObservableObject {
                 .encode(encoder: encoder)
                 .receive(on: DispatchQueue.main)
                 .sink { completion in
-                    if case .failure(let error) = completion {
-                        Logger.serialization.error("Error encoding hotkey: \(error, privacy: .public)")
+                    if case let .failure(error) = completion {
+                        Logger.serialization.error("Error encoding hotkey: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                     }
                 } receiveValue: { data in
                     withMutableCopy(of: Defaults.dictionary(forKey: .hotkeys) ?? [:]) { dictionary in

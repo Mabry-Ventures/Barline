@@ -15,21 +15,29 @@ enum ScreenCapture {
         let menuBarBounds: CGRect
     }
 
-    private static let permissionCache = OSAllocatedUnfairLock<Bool?>(initialState: nil)
+    static let permissionDidChangeNotification = Notification.Name("BarlineScreenCapturePermissionDidChange")
+    private static let permissionState = OSAllocatedUnfairLock<(decision: Bool?, generation: UInt64)>(
+        initialState: (nil, 0)
+    )
 
     static func checkPermissions() -> Bool {
-        CGPreflightScreenCaptureAccess()
+        let result = CGPreflightScreenCaptureAccess()
+        let changed = permissionState.withLock { state in
+            guard state.decision != result else { return false }
+            state.decision = result
+            state.generation &+= 1
+            return true
+        }
+        if changed {
+            NotificationCenter.default.post(name: permissionDidChangeNotification, object: nil)
+        }
+        return result
     }
 
-    static func cachedCheckPermissions(reset: Bool = false) -> Bool {
-        permissionCache.withLock { cachedResult in
-            if !reset, let cachedResult {
-                return cachedResult
-            }
-            let result = checkPermissions()
-            cachedResult = result
-            return result
-        }
+    static func cachedCheckPermissions() -> Bool {
+        // Compatibility spelling for existing presentation callers. A TCC
+        // decision must never be cached for the lifetime of an accessory app.
+        checkPermissions()
     }
 
     static func requestPermissions() {
@@ -45,12 +53,14 @@ enum ScreenCapture {
         sampleHeight: CGFloat? = nil
     ) async -> MenuBarBackground? {
         guard checkPermissions() else { return nil }
+        let generation = permissionState.withLock { $0.generation }
         guard let capture = try? await BarlineMenuService.Connection.shared.captureBackground(
             displayID: displayID,
             sampleHeight: sampleHeight
         ) else {
             return nil
         }
+        guard checkPermissions(), generation == permissionState.withLock({ $0.generation }) else { return nil }
         let image = capture.pngData.flatMap { data -> CGImage? in
             guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
                 return nil

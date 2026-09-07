@@ -4,6 +4,23 @@ This is the live implementation ledger. A milestone is complete only when its
 code and evidence match the build specification; documentation alone is not a
 gate result.
 
+## Current checkpoint: production audit remediation, 1.0.7 build 8
+
+The September 6 audit found 12 issues in `b03645e` (installed 1.0.6).
+The historical milestone table below is not qualification evidence for this
+replacement. Follow [the finding ledger](PRODUCTION_REMEDIATION.md) for current
+implementation and candidate-bound gates. Scope includes activation and return
+transactions, ownership continuity and legacy layout identity migration, real
+menu tracking, permission reconciliation, runtime-log privacy, Sparkle 2.9.6,
+native shelf accessibility, image fallback, bounded off-main search/icon work,
+and an explicit [auto-hide support boundary](SUPPORTED_CONFIGURATIONS.md).
+
+Release validation is in progress. Local builds and focused tests are iteration
+evidence only until rebound to the final clean source SHA. The installed-target
+journey must observe the target menu and receipt, not just shelf visibility.
+Repeated Settings-foregrounding gates have been replaced by bounded shelf and
+helper-recovery probes. macOS 27 and release-duration soak remain user-deferred.
+
 | Milestone | Owner | Status | Dependencies | Evidence |
 | --- | --- | --- | --- | --- |
 | 0. Import and provenance | Lead; delegated audit | Complete | none | Exact history, remotes, ancestor proof, vendor tag, license/provenance records |

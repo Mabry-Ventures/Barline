@@ -20,6 +20,7 @@ public struct DeterministicSearchIndex: Sendable {
     ) throws {
         self.synonymMap = synonymMap
         for document in documents {
+            try Task.checkCancellation()
             guard records[document.id] == nil else {
                 throw SearchIndexError.duplicateIdentifier(document.id)
             }
@@ -81,7 +82,9 @@ public struct DeterministicSearchIndex: Sendable {
         guard !normalizedQuery.isEmpty, !terms.isEmpty, limit > 0 else { return [] }
 
         var similarityCache = [SimilarityKey: Double]()
-        return records.values.compactMap { record -> ScoredResult? in
+        var scoredResults = [ScoredResult]()
+        for record in records.values {
+            guard !Task.isCancelled else { return [] }
             guard let result = score(
                 record,
                 normalizedQuery: normalizedQuery,
@@ -89,11 +92,11 @@ public struct DeterministicSearchIndex: Sendable {
                 now: now,
                 similarityCache: &similarityCache
             ) else {
-                return nil
+                continue
             }
-            return ScoredResult(result: result, normalizedTitle: record.title)
+            scoredResults.append(ScoredResult(result: result, normalizedTitle: record.title))
         }
-        .sorted { lhs, rhs in
+        return scoredResults.sorted { lhs, rhs in
             if lhs.result.score != rhs.result.score {
                 return lhs.result.score > rhs.result.score
             }

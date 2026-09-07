@@ -12,7 +12,7 @@ RECOVERY_PROBE="runtime-smoke"
 APP_PID=""
 
 usage() {
-    printf 'usage: %s [--reuse-running] [--recovery-probe runtime-smoke|apple-event-reopen]\n' "$0"
+    printf 'usage: %s [--reuse-running] [--recovery-probe runtime-smoke|status-item-click|apple-event-reopen]\n' "$0"
 }
 
 while (($#)); do
@@ -29,7 +29,7 @@ while (($#)); do
     shift
 done
 
-[[ "$RECOVERY_PROBE" == runtime-smoke || "$RECOVERY_PROBE" == apple-event-reopen ]] || { usage >&2; exit 2; }
+[[ "$RECOVERY_PROBE" == runtime-smoke || "$RECOVERY_PROBE" == status-item-click || "$RECOVERY_PROBE" == apple-event-reopen ]] || { usage >&2; exit 2; }
 
 cleanup() {
     if ! "$REUSE_RUNNING"; then
@@ -75,9 +75,9 @@ fi
 }
 
 if "$REUSE_RUNNING"; then
-    if [[ "$RECOVERY_PROBE" == apple-event-reopen ]]; then
+    if [[ "$RECOVERY_PROBE" == apple-event-reopen || "$RECOVERY_PROBE" == status-item-click ]]; then
         BARLINE_PERFORMANCE_CYCLES=1 BARLINE_PERFORMANCE_WARMUPS=1 \
-            "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe apple-event-reopen
+            "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe "$RECOVERY_PROBE"
     else
         # Exercise the DEBUG-only user path in the development interruption gate.
         APP_BUNDLE_ID="$(barline_resolve_app_bundle_identifier "$ROOT" Debug)"

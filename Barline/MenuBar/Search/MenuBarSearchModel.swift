@@ -12,7 +12,7 @@ import OSLog
 final class MenuBarSearchModel: ObservableObject {
     enum ItemID: Hashable {
         case header(MenuBarSection.Name)
-        case item(MenuBarItemTag)
+        case item(MenuBarItemID)
         case profileHeader
         case profile(UUID)
     }
@@ -42,24 +42,49 @@ final class MenuBarSearchModel: ObservableObject {
     private var commandInterpretationSequence: UInt64 = 0
     private var spotlightDocuments = [SearchDocument]()
     private var spotlightSynchronizationTask: Task<Void, Never>?
+    private let searchService = CachedSearchService()
+    private var rankingTask: Task<Void, Never>?
+    private var rankingSequence: UInt64 = 0
 
     init(commandInterpreter: any MenuBarCommandInterpreting = FoundationModelCommandInterpreter()) {
         self.commandInterpreter = commandInterpreter
     }
 
-    func rankedResults(for query: String, documents: [SearchDocument]) -> [SearchResult] {
-        do {
-            let index = try DeterministicSearchIndex(documents: documents)
-            synchronizeSpotlightIfNeeded(with: documents)
-            return index.search(query, limit: documents.count)
-        } catch {
-            Logger(category: "Search").error("Search index synchronization failed")
-            return []
+    func rankResults(
+        for query: String,
+        documents: [SearchDocument],
+        publish: @escaping @MainActor ([SearchResult]) -> Void
+    ) {
+        cancelRanking()
+        resetCommandInterpretation()
+        displayedItems = []
+        selection = nil
+        let sequence = rankingSequence
+        let service = searchService
+        synchronizeSpotlightIfNeeded(with: documents)
+        rankingTask = Task { [weak self] in
+            do {
+                // Coalesce rapid input without delaying unrelated UI events.
+                try await Task.sleep(for: .milliseconds(60))
+                let results = try await service.search(query, documents: documents)
+                guard let self, !Task.isCancelled,
+                      sequence == rankingSequence, searchText == query
+                else { return }
+                publish(results)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, sequence == rankingSequence, searchText == query else { return }
+                Logger(category: "Search").error("Search index synchronization failed")
+                publish([])
+            }
         }
     }
 
-    func rankedDocumentIDs(for query: String, documents: [SearchDocument]) -> [SearchDocumentID] {
-        rankedResults(for: query, documents: documents).map(\.document.id)
+    func cancelRanking() {
+        rankingSequence &+= 1
+        rankingTask?.cancel()
+        rankingTask = nil
     }
 
     func considerCommandInterpretation(

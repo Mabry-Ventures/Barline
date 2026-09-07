@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
 import Combine
 import OSLog
@@ -23,12 +24,12 @@ final class LayoutBarPaddingView: NSView {
     ///   - appState: The shared app state instance.
     ///   - section: The section whose items are represented.
     init(appState: AppState, section: MenuBarSection.Name) {
-        self.container = LayoutBarContainer(appState: appState, section: section)
+        container = LayoutBarContainer(appState: appState, section: section)
 
         super.init(frame: .zero)
 
         addSubview(container)
-        self.translatesAutoresizingMaskIntoConstraints = false
+        translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
             container.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -40,7 +41,7 @@ final class LayoutBarPaddingView: NSView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
+    required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
@@ -114,7 +115,7 @@ final class LayoutBarPaddingView: NSView {
                 try await appState.itemManager.move(item: item, to: destination)
                 appState.itemManager.removeTemporarilyShownItemFromCache(with: item.tag)
             } catch {
-                Logger.default.error("Error moving menu bar item: \(error, privacy: .public)")
+                Logger.default.error("Error moving menu bar item: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 let alert = NSAlert(error: error)
                 alert.runModal()
             }

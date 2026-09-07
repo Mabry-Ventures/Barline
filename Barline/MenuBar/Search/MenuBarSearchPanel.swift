@@ -18,6 +18,8 @@ final class MenuBarSearchPanel: NSPanel {
 
     /// Model for menu bar item search.
     private let model = MenuBarSearchModel()
+    private var presentationTask: Task<Void, Never>?
+    private var presentationSequence: UInt64 = 0
 
     /// Monitor for mouse down events.
     private lazy var mouseDownMonitor = EventMonitor.universal(
@@ -116,9 +118,14 @@ final class MenuBarSearchPanel: NSPanel {
 
         // Important that we set the navigation state before updating the cache.
         appState.navigationState.isSearchPresented = true
-
-        Task {
+        presentationTask?.cancel()
+        presentationSequence &+= 1
+        let sequence = presentationSequence
+        presentationTask = Task { [weak self] in
             await appState.imageCache.updateCache()
+            guard let self, !Task.isCancelled, sequence == presentationSequence,
+                  appState.navigationState.isSearchPresented
+            else { return }
 
             let hostingView = MenuBarSearchHostingView(appState: appState, model: model, displayID: screen.displayID, panel: self)
             hostingView.setFrameSize(hostingView.intrinsicContentSize)
@@ -151,6 +158,10 @@ final class MenuBarSearchPanel: NSPanel {
 
     /// Dismisses the search panel.
     override func close() {
+        presentationSequence &+= 1
+        presentationTask?.cancel()
+        presentationTask = nil
+        model.cancelRanking()
         model.resetCommandInterpretation()
         super.close()
         contentView = nil
@@ -219,6 +230,14 @@ private struct MenuBarSearchContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             searchField
+            if let notice = itemManager.activationNotice {
+                Label(notice, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("Barline.Search.ActivationNotice")
+            }
             mainContent
             commandStatus
             bottomBar
@@ -247,6 +266,10 @@ private struct MenuBarSearchContentView: View {
             if model.selection == nil {
                 selectFirstDisplayedItem()
             }
+        }
+        .onDisappear {
+            model.cancelRanking()
+            model.resetCommandInterpretation()
         }
     }
 
@@ -461,7 +484,7 @@ private struct MenuBarSearchContentView: View {
             searchItems.append(SearchItem(headerItem, nil))
 
             for item in itemManager.itemCache.managedItems(for: name).reversed() {
-                let listItem = ListItem.item(id: .item(item.tag)) {
+                let listItem = ListItem.item(id: .item(item.stableID)) {
                     performAction(for: item)
                 } content: {
                     MenuBarSearchItemView(item: item)
@@ -489,6 +512,7 @@ private struct MenuBarSearchContentView: View {
         let documents = searchItems.compactMap(\.document)
 
         if model.searchText.isEmpty {
+            model.cancelRanking()
             model.displayedItems = searchItems.map(\.listItem)
             model.synchronizeSpotlightIfNeeded(with: documents)
             model.resetCommandInterpretation()
@@ -496,26 +520,29 @@ private struct MenuBarSearchContentView: View {
             let itemsByDocumentID = Dictionary(uniqueKeysWithValues: searchItems.compactMap { searchItem in
                 searchItem.document.map { ($0.id, searchItem.listItem) }
             })
-            let results = model.rankedResults(for: model.searchText, documents: documents)
-            model.displayedItems = results
-                .map(\.document.id)
-                .compactMap { itemsByDocumentID[$0] }
-            model.considerCommandInterpretation(
-                query: model.searchText,
-                documents: documents,
-                deterministicResults: results,
-                coordinator: appState.compatibilityCoordinator,
-                availableProfileIDs: Set(
-                    profileManager.profiles.map { ProfileID($0.id.uuidString) }
+            let query = model.searchText
+            model.rankResults(for: query, documents: documents) { results in
+                model.displayedItems = results
+                    .map(\.document.id)
+                    .compactMap { itemsByDocumentID[$0] }
+                selectFirstDisplayedItem()
+                model.considerCommandInterpretation(
+                    query: query,
+                    documents: documents,
+                    deterministicResults: results,
+                    coordinator: appState.compatibilityCoordinator,
+                    availableProfileIDs: Set(
+                        profileManager.profiles.map { ProfileID($0.id.uuidString) }
+                    )
                 )
-            )
+            }
         }
     }
 
     private func menuBarItem(for selection: MenuBarSearchModel.ItemID) -> MenuBarItem? {
         switch selection {
-        case let .item(tag):
-            itemManager.itemCache.managedItems.first(matching: tag)
+        case let .item(stableID):
+            itemManager.itemCache.managedItems.first { $0.stableID == stableID }
         case .header, .profileHeader, .profile:
             nil
         }
@@ -533,11 +560,8 @@ private struct MenuBarSearchContentView: View {
         guard requireAccessibilityForAction() else { return }
         closePanel()
         Task {
-            try await Task.sleep(for: .milliseconds(25))
-            if item.isOnScreen {
-                try await itemManager.click(item: item, with: .left)
-            } else {
-                await itemManager.temporarilyShow(item: item, clickingWith: .left)
+            if await !itemManager.activateItem(item.stableID, with: .left) {
+                appState.menuBarManager.searchPanel.show()
             }
         }
     }
@@ -804,7 +828,7 @@ private struct MenuBarSearchItemView: View {
 
     private var itemImage: NSImage {
         guard
-            let cached = imageCache.images[item.tag],
+            let cached = imageCache.images[item.stableID],
             let trimmed = cached.cgImage.trimmingTransparency(around: [.minXEdge, .maxXEdge])
         else {
             return NSImage()

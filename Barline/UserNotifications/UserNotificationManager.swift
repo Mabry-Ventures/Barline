@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import OSLog
 import UserNotifications
 
@@ -45,7 +46,7 @@ final class UserNotificationManager: NSObject {
                 }
                 try await notificationCenter.add(request)
             } catch {
-                Logger.default.error("Failed to authorize or schedule a notification: \(error)")
+                Logger.default.error("Failed to authorize or schedule a notification: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             }
         }
     }

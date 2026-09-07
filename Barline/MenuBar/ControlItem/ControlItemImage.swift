@@ -6,7 +6,7 @@
 import Cocoa
 
 /// A Codable image for a control item.
-enum ControlItemImage: Codable, Hashable {
+enum ControlItemImage: Codable, Hashable, Sendable {
     /// An image created from drawing code built into the app.
     case builtin(_ name: ImageBuiltinName)
     /// A system symbol image.
@@ -20,16 +20,16 @@ enum ControlItemImage: Codable, Hashable {
     @MainActor
     func nsImage(for appState: AppState) -> NSImage? {
         switch self {
-        case .builtin(let name):
+        case let .builtin(name):
             return switch name {
             case .chevronLarge: StaticBuiltins.Chevron.large
             case .chevronSmall: StaticBuiltins.Chevron.small
             }
-        case .symbol(let name):
+        case let .symbol(name):
             let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
             image?.isTemplate = true
             return image
-        case .catalog(let name):
+        case let .catalog(name):
             guard let originalImage = NSImage(named: name) else {
                 return nil
             }
@@ -38,7 +38,7 @@ enum ControlItemImage: Codable, Hashable {
             let ratio = max(originalWidth / 25, originalHeight / 17)
             let newSize = CGSize(width: originalWidth / ratio, height: originalHeight / ratio)
             return originalImage.resized(to: newSize)
-        case .data(let data):
+        case let .data(data):
             let image = NSImage(data: data)
             image?.isTemplate = appState.settings.general.customBarlineIconIsTemplate
             return image
@@ -48,7 +48,7 @@ enum ControlItemImage: Codable, Hashable {
 
 extension ControlItemImage {
     /// A name for an image that is created from drawing code in the app.
-    enum ImageBuiltinName: Codable, Hashable {
+    enum ImageBuiltinName: Codable, Hashable, Sendable {
         /// A large chevron.
         case chevronLarge
         /// A small chevron.

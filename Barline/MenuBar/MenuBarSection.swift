@@ -57,7 +57,14 @@ final class MenuBarSection {
 
     /// A Boolean value that indicates whether the Barline Bar should be used.
     private var useBarlineShelf: Bool {
-        appState?.settings.general.useBarlineShelf ?? false
+        guard let appState else { return false }
+        // The shelf cannot reliably position/capture against an auto-hidden
+        // system bar. Keep the preference, but use native section reveal in
+        // this configuration so existing hidden items remain accessible.
+        return MenuBarPresentationPolicy.usesShelf(
+            requestedShelf: appState.settings.general.useBarlineShelf,
+            systemAutoHideEnabled: appState.menuBarManager.isMenuBarHiddenBySystemUserDefaults
+        )
     }
 
     /// A weak reference to the menu bar manager.
@@ -150,7 +157,7 @@ final class MenuBarSection {
     }
 
     /// Shows the section.
-    func show() {
+    func show(useShelf: Bool? = nil, keyboardFocus: Bool = false) {
         guard let menuBarManager, isHidden else {
             return
         }
@@ -160,7 +167,10 @@ final class MenuBarSection {
             return
         }
 
-        if useBarlineShelf {
+        if MenuBarPresentationPolicy.usesShelf(
+            requestedShelf: useShelf ?? useBarlineShelf,
+            systemAutoHideEnabled: menuBarManager.isMenuBarHiddenBySystemUserDefaults
+        ) {
             guard let screen = screenForBarlineShelf else {
                 return
             }
@@ -192,6 +202,9 @@ final class MenuBarSection {
             Task {
                 let didShow = await panel.show(presentation, on: screen)
                 if didShow {
+                    if keyboardFocus {
+                        panel.focusItemsForKeyboard()
+                    }
                     startRehideChecks()
                 }
             }
@@ -217,6 +230,13 @@ final class MenuBarSection {
         startRehideChecks()
     }
 
+    /// User-selected recovery route that does not change the saved shelf or
+    /// macOS auto-hide preference. macOS still owns showing the system bar.
+    func showInMenuBar() {
+        hide()
+        show(useShelf: false)
+    }
+
     /// Hides the section.
     func hide() {
         guard let menuBarManager, !isHidden else {
@@ -239,8 +259,12 @@ final class MenuBarSection {
     }
 
     /// Toggles the visibility of the section.
-    func toggle() {
-        if isHidden { show() } else { hide() }
+    func toggle(keyboardFocus: Bool = false) {
+        if isHidden {
+            show(keyboardFocus: keyboardFocus)
+        } else {
+            hide()
+        }
     }
 
     /// Starts running checks to determine when to rehide the section.

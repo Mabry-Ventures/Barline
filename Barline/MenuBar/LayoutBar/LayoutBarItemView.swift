@@ -37,7 +37,7 @@ final class LayoutBarItemView: NSView {
             if let image = cachedImage {
                 setFrameSize(image.scaledSize)
             } else {
-                setFrameSize(.zero)
+                setFrameSize(NSSize(width: max(24, item.bounds.width), height: 24))
             }
             needsDisplay = true
         }
@@ -85,10 +85,8 @@ final class LayoutBarItemView: NSView {
         if let appState {
             appState.imageCache.$images
                 .sink { [weak self] images in
-                    guard let self, let cachedImage = images[item.tag] else {
-                        return
-                    }
-                    self.cachedImage = cachedImage
+                    guard let self else { return }
+                    cachedImage = images[item.stableID]
                 }
                 .store(in: &c)
         }
@@ -113,7 +111,10 @@ final class LayoutBarItemView: NSView {
 
     override func draw(_: NSRect) {
         if !isDraggingPlaceholder {
-            cachedImage?.nsImage.draw(
+            let image = cachedImage?.nsImage ?? NSImage(
+                systemSymbolName: "app.dashed", accessibilityDescription: item.displayName
+            )
+            image?.draw(
                 in: bounds,
                 from: .zero,
                 operation: .sourceOver,

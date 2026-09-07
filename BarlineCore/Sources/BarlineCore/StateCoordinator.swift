@@ -524,7 +524,8 @@ public actor MenuBarStateCoordinator {
         // A base profile can contain items from every display. Only a matching
         // display override is scoped and retargeted to the active display;
         // applying the base layout preserves each item's source display.
-        let presentation = profile.resolvedPresentation(using: matchingDisplayOverride)
+        let presentation = try profile.resolvedPresentation(using: matchingDisplayOverride)
+            .resolvingItemIdentities(in: before)
         let profileDisplayID = presentation.destinationDisplayID
         let layout = presentation.layout
         let knownItemIDs = Set(before.items.map(\.id))

@@ -48,7 +48,7 @@ final class AppState: ObservableObject {
     let updatesManager = UpdatesManager()
 
     /// Serialized authority for validated compatibility snapshots and recovery.
-    let compatibilityCoordinator = MenuBarStateCoordinator(backend: XPCMenuBarBackend())
+    let compatibilityCoordinator = MenuBarItem.snapshotCoordinator
 
     /// Persistence and transactional activation for menu bar profiles.
     let profileManager = ProfileManager()
@@ -77,7 +77,7 @@ final class AppState: ObservableObject {
             do {
                 _ = try await compatibilityCoordinator.refresh()
             } catch {
-                logger.warning("Compatibility snapshot unavailable during setup: \(error.localizedDescription)")
+                logger.warning("Compatibility snapshot unavailable during setup: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             }
         }
 
@@ -186,6 +186,39 @@ final class AppState: ObservableObject {
             }
             .store(in: &c)
 
+        permissions.screenRecording.$hasPermission
+            .removeDuplicates()
+            .sink { [weak self] isGranted in
+                self?.imageCache.permissionDidChange(isGranted)
+            }
+            .store(in: &c)
+
+        // TCC has no public change notification. While pixels or permission
+        // controls are visible, a low-frequency nonprompting preflight also
+        // notices changes made while System Settings stays frontmost. Stop the
+        // timer completely when Barline has no visible UI.
+        Publishers.CombineLatest3(
+            navigationState.$isBarlineShelfPresented,
+            navigationState.$isSearchPresented,
+            navigationState.$isSettingsPresented
+        )
+        .map { $0 || $1 || $2 }
+        .removeDuplicates()
+        .map { isVisible -> AnyPublisher<Void, Never> in
+            guard isVisible else { return Empty().eraseToAnyPublisher() }
+            return Timer.publish(every: 1, tolerance: 0.25, on: .main, in: .common)
+                .autoconnect()
+                .map { _ in () }
+                .prepend(())
+                .eraseToAnyPublisher()
+        }
+        .switchToLatest()
+        .sink { [weak self] in
+            self?.permissions.accessibility.refresh()
+            self?.permissions.screenRecording.refresh()
+        }
+        .store(in: &c)
+
         Publishers.CombineLatest(
             navigationState.$isAppFrontmost,
             navigationState.$isSettingsPresented
@@ -263,9 +296,9 @@ final class AppState: ObservableObject {
     func hasPermission(_ key: AppPermissions.PermissionKey) -> Bool {
         switch key {
         case .accessibility:
-            permissions.accessibility.hasPermission
+            permissions.accessibility.refresh()
         case .screenRecording:
-            permissions.screenRecording.hasPermission
+            permissions.screenRecording.refresh()
         }
     }
 

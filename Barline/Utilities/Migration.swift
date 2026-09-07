@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
 import OSLog
 
@@ -32,7 +33,7 @@ extension MigrationManager {
         } catch let error as MigrationError {
             results.append(.failureAndLogError(error))
         } catch {
-            logger.error("Migration failed with unknown error \(error)")
+            logger.error("Migration failed with unknown error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
 
         results += [
@@ -46,10 +47,10 @@ extension MigrationManager {
             switch result {
             case .success:
                 continue
-            case .successButShowAlert(let alert):
+            case let .successButShowAlert(alert):
                 alert.runModal()
-            case .failureAndLogError(let error):
-                logger.error("Migration failed with error \(error, privacy: .public)")
+            case let .failureAndLogError(error):
+                logger.error("Migration failed with error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             }
         }
     }
@@ -247,9 +248,9 @@ extension MigrationManager {
 
             let alert = NSAlert()
             alert.messageText = """
-                Due to a bug in a previous version of the app, the data for \
-                Barline’s menu bar sections was corrupted and had to be reset.
-                """
+            Due to a bug in a previous version of the app, the data for \
+            Barline’s menu bar sections was corrupted and had to be reset.
+            """
 
             return .successButShowAlert(alert)
         }
@@ -396,7 +397,7 @@ extension MigrationManager {
             Result(catching: block)
         }
         let errors = results.compactMap { result in
-            if case .failure(let error) = result {
+            if case let .failure(error) = result {
                 return error
             }
             return nil
@@ -442,15 +443,15 @@ extension MigrationManager {
 
         var description: String {
             switch self {
-            case .invalidMenuBarSectionsJSONObject(let object):
+            case let .invalidMenuBarSectionsJSONObject(object):
                 "Invalid menu bar sections JSON object: \(object)"
-            case .hotkeyMigrationError(let error):
+            case let .hotkeyMigrationError(error):
                 "Error migrating hotkeys: \(error)"
-            case .controlItemMigrationError(let error):
+            case let .controlItemMigrationError(error):
                 "Error migrating control items: \(error)"
-            case .appearanceConfigurationMigrationError(let error):
+            case let .appearanceConfigurationMigrationError(error):
                 "Error migrating menu bar appearance configuration: \(error)"
-            case .combinedError(let errors):
+            case let .combinedError(errors):
                 "The following errors occurred: \(errors)"
             }
         }

@@ -250,18 +250,65 @@ private func barlineIconCenter() throws -> CGPoint {
     let start = ContinuousClock.now
     let expectedProcessIdentifier = ProcessInfo.processInfo.environment["BARLINE_EXPECTED_PID"]
         .flatMap(pid_t.init)
+    guard let expectedProcessIdentifier,
+          NSRunningApplication(processIdentifier: expectedProcessIdentifier)?.bundleIdentifier == Configuration.appBundleIdentifier
+    else { throw ProbeError.applicationNotRunning }
     while start.duration(to: .now) < Configuration.iconTimeout {
-        if let icon = windowSnapshots().first(where: {
+        let candidates = windowSnapshots().filter {
             $0.windowName == "Barline.ControlItem.Visible" &&
-                (expectedProcessIdentifier == nil || $0.ownerProcessIdentifier == expectedProcessIdentifier) &&
                 $0.bounds.width > 0 &&
                 $0.bounds.width < 100
+        }
+        if let icon = candidates.first(where: { candidate in
+            if candidate.ownerProcessIdentifier == expectedProcessIdentifier {
+                return true
+            }
+            // macOS 26 hosts status windows in Control Center. Never trust only a
+            // title: prove an AX extras-bar child of the exact Barline process has
+            // the same geometry, and require the known system hosting process.
+            guard let owner = candidate.ownerProcessIdentifier,
+                  NSRunningApplication(processIdentifier: owner)?.bundleIdentifier == "com.apple.controlcenter"
+            else { return false }
+            return sourceStatusFrames(processIdentifier: expectedProcessIdentifier).contains {
+                abs($0.midX - candidate.bounds.midX) <= 1 &&
+                    abs($0.midY - candidate.bounds.midY) <= 1 &&
+                    abs($0.width - candidate.bounds.width) <= 1
+            }
         }) {
             return CGPoint(x: icon.bounds.midX, y: icon.bounds.midY)
         }
         usleep(Configuration.pollingIntervalMicroseconds)
     }
     throw ProbeError.barlineIconNotFound
+}
+
+private func sourceStatusFrames(processIdentifier: pid_t) -> [CGRect] {
+    let application = AXUIElementCreateApplication(processIdentifier)
+    AXUIElementSetMessagingTimeout(application, 0.2)
+    var rawBar: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(application, "AXExtrasMenuBar" as CFString, &rawBar) == .success,
+          let rawBar, CFGetTypeID(rawBar) == AXUIElementGetTypeID()
+    else { return [] }
+    let bar = unsafeDowncast(rawBar, to: AXUIElement.self)
+    var rawChildren: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(bar, kAXChildrenAttribute as CFString, &rawChildren) == .success,
+          let children = rawChildren as? [AXUIElement]
+    else { return [] }
+    return children.compactMap { child in
+        var rawPosition: CFTypeRef?
+        var rawSize: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(child, kAXPositionAttribute as CFString, &rawPosition) == .success,
+              AXUIElementCopyAttributeValue(child, kAXSizeAttribute as CFString, &rawSize) == .success,
+              let rawPosition, let rawSize,
+              CFGetTypeID(rawPosition) == AXValueGetTypeID(), CFGetTypeID(rawSize) == AXValueGetTypeID()
+        else { return nil }
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(unsafeDowncast(rawPosition, to: AXValue.self), .cgPoint, &point),
+              AXValueGetValue(unsafeDowncast(rawSize, to: AXValue.self), .cgSize, &size)
+        else { return nil }
+        return CGRect(origin: point, size: size)
+    }
 }
 
 private func isBarlineShelfVisible() -> Bool {

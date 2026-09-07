@@ -6,8 +6,8 @@
 /// A named set of images that are used by control items.
 ///
 /// An image set contains images for a control item in both the hidden and visible states.
-struct ControlItemImageSet: Codable, Hashable, Identifiable {
-    enum Name: String, Codable, Hashable {
+struct ControlItemImageSet: Codable, Hashable, Identifiable, Sendable {
+    enum Name: String, Codable, Hashable, Sendable {
         case arrow = "Arrow"
         case chevron = "Chevron"
         case door = "Door"
@@ -22,7 +22,9 @@ struct ControlItemImageSet: Codable, Hashable, Identifiable {
     let hidden: ControlItemImage
     let visible: ControlItemImage
 
-    var id: Int { hashValue }
+    var id: Int {
+        hashValue
+    }
 
     init(name: Name, hidden: ControlItemImage, visible: ControlItemImage) {
         self.name = name

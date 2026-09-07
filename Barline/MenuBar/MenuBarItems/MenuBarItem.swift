@@ -12,6 +12,8 @@ import Cocoa
 /// Geometry and process metadata are observational snapshot values and are
 /// refreshed before helper-side operations.
 struct MenuBarItem: CustomStringConvertible, Equatable, Hashable {
+    /// Presentation and mutation share the same validated, last-known-good authority.
+    static let snapshotCoordinator = MenuBarStateCoordinator(backend: XPCMenuBarBackend())
     let stableID: MenuBarItemID
     let tag: MenuBarItemTag
     let ownerPID: pid_t
@@ -42,7 +44,7 @@ struct MenuBarItem: CustomStringConvertible, Equatable, Hashable {
     }
 
     var logString: String {
-        "<\(tag) (stableID: \(stableID))>"
+        "menu_bar_item"
     }
 
     init(descriptor: MenuBarItemDescriptor) {
@@ -81,7 +83,7 @@ extension MenuBarItem {
         option: ListOption
     ) async -> [MenuBarItem] {
         do {
-            let snapshot = try await BarlineMenuService.Connection.shared.snapshot()
+            let snapshot = try await snapshotCoordinator.refresh()
             let displayBounds = display.map(CGDisplayBounds)
             return snapshot.items
                 .filter { descriptor in

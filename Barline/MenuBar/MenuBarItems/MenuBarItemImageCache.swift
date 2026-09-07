@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
 import Combine
 import ImageIO
@@ -36,14 +37,14 @@ final class MenuBarItemImageCache: ObservableObject {
     /// The result of an image capture operation.
     private struct CaptureResult {
         /// The successfully captured images.
-        var images = [MenuBarItemTag: CapturedImage]()
+        var images = [MenuBarItemID: CapturedImage]()
 
         /// The menu bar items excluded from the capture.
         var excluded = [MenuBarItem]()
     }
 
-    /// The cached item images, keyed by their corresponding tags.
-    @Published private(set) var images = [MenuBarItemTag: CapturedImage]()
+    /// Stable identities distinguish items that share a display title or legacy tag.
+    @Published private(set) var images = [MenuBarItemID: CapturedImage]()
 
     /// Logger for the menu bar item image cache.
     private let logger = Logger(category: "MenuBarItemImageCache")
@@ -56,6 +57,18 @@ final class MenuBarItemImageCache: ObservableObject {
 
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
+
+    /// In-flight replies from an earlier permission epoch must not republish
+    /// captured pixels after revocation (even when access was quickly restored).
+    private var permissionGeneration: UInt64 = 0
+
+    func permissionDidChange(_ isGranted: Bool) {
+        permissionGeneration &+= 1
+        images.removeAll()
+        if isGranted {
+            Task { await updateCache() }
+        }
+    }
 
     // MARK: Setup
 
@@ -139,7 +152,7 @@ final class MenuBarItemImageCache: ObservableObject {
             else {
                 continue
             }
-            result.images[item.tag] = CapturedImage(cgImage: image, scale: scale)
+            result.images[item.stableID] = CapturedImage(cgImage: image, scale: scale)
         }
         result.excluded = items.filter { !capturedIDs.contains($0.stableID) }
         return result
@@ -163,7 +176,7 @@ final class MenuBarItemImageCache: ObservableObject {
         logger.notice(
             """
             Some items were excluded from composite capture. Attempting to capture \
-            excluded items individually: \(compositeResult.excluded, privacy: .public)
+            excluded item count: \(compositeResult.excluded.count, privacy: .public)
             """
         )
 
@@ -185,8 +198,11 @@ final class MenuBarItemImageCache: ObservableObject {
             let appState,
             appState.hasPermission(.screenRecording)
         else {
+            permissionDidChange(false)
             return
         }
+
+        let capturePermissionGeneration = permissionGeneration
 
         guard
             let displayID = appState.itemManager.itemCache.displayID,
@@ -196,7 +212,7 @@ final class MenuBarItemImageCache: ObservableObject {
         }
 
         let scale = screen.backingScaleFactor
-        var newImages = [MenuBarItemTag: CapturedImage]()
+        var newImages = [MenuBarItemID: CapturedImage]()
 
         for section in sections {
             let items = appState.itemManager.itemsForBarlineShelf(in: section, on: screen)
@@ -205,8 +221,13 @@ final class MenuBarItemImageCache: ObservableObject {
             }
 
             let captureResult = await captureImages(of: items, scale: scale, appState: appState)
+            guard appState.hasPermission(.screenRecording),
+                  capturePermissionGeneration == permissionGeneration
+            else {
+                return
+            }
             if !captureResult.excluded.isEmpty {
-                logger.error("Some items failed capture: \(captureResult.excluded, privacy: .public)")
+                logger.error("Item capture failed count=\(captureResult.excluded.count, privacy: .public)")
             }
             let sectionImages = captureResult.images
 
@@ -218,10 +239,15 @@ final class MenuBarItemImageCache: ObservableObject {
             newImages.merge(sectionImages) { _, new in new }
         }
 
-        let validTags = Set(appState.itemManager.itemCache.managedItems.map(\.tag))
+        let validIDs = Set(appState.itemManager.itemCache.managedItems.map(\.stableID))
 
-        var updatedImages = images.filter { validTags.contains($0.key) }
+        var updatedImages = images.filter { validIDs.contains($0.key) }
         updatedImages.merge(newImages) { _, new in new }
+        guard appState.hasPermission(.screenRecording),
+              capturePermissionGeneration == permissionGeneration
+        else {
+            return
+        }
         images = updatedImages
     }
 
@@ -300,9 +326,6 @@ final class MenuBarItemImageCache: ObservableObject {
             return false
         }
         let keys = Set(images.keys)
-        for item in items where keys.contains(item.tag) {
-            return false
-        }
-        return true
+        return items.contains { !keys.contains($0.stableID) }
     }
 }
