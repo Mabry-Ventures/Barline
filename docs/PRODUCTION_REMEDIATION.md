@@ -1,4 +1,17 @@
-# Production remediation — 1.0.8 (build 11)
+# Production remediation — 1.0.9 (build 12)
+
+September 7 refinement: original-section/display restoration uses stable anchor
+fallbacks and a durable bounded journal; unavailable topology or three failed
+attempts pause for explicit recovery. Restarted entries are not auto-applied.
+Manual/profile/history changes cannot erase pending reveal intent before success:
+they wait for restoration. A Retry Item Restoration control is in Layouts & Focus.
+
+Installed qualification now requires four target-interface lanes plus measured
+performance and helper-recovery receipts bound to both source and executable.
+The historical reopen gate already ran performance/recovery indirectly; the
+actual gap was mandatory retained evidence, not total absence of those calls.
+No public feed/upgrade or new candidate qualification is claimed until its
+release artifact directory records that evidence.
 
 Baseline: `b03645e432212aed10a827d3334ce278770fb74d` (1.0.6 build 7).
 The September 6 production audit is retained under `.artifacts/audit/2026-09-06-b03645e/`.

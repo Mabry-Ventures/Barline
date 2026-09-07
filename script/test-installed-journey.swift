@@ -515,6 +515,7 @@ do {
         "shelfStayedClosedDuringActivation": true,
         "targetActionRole": actionRole, "targetActionUniqueAndOnScreen": true,
         "exactlyOneActivationOpenActionClose": true,
+        "priorTargetActivations": baseline.activations,
         "sourceSHA": required("BARLINE_SOURCE_SHA"),
         "executableSHA256": required("BARLINE_EXECUTABLE_SHA256"),
         "version": Bundle(url: runningApp.bundleURL!)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",

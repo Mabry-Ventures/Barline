@@ -4,7 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEVELOPER_PATH="${DEVELOPER_DIR:-$(xcode-select -p)}"
-RESULT_ROOT="$ROOT/.artifacts/xcode-ui"
+mkdir -p "$ROOT/.artifacts/xcode-ui"
+RESULT_ROOT="$(mktemp -d "$ROOT/.artifacts/xcode-ui/run.XXXXXX")"
 DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/barline-xcode-ui.XXXXXX")"
 
 cleanup() {
@@ -36,7 +37,6 @@ common=(
 
 "${common[@]}" build-for-testing
 result_bundle="$RESULT_ROOT/BarlineUITests.xcresult"
-[[ ! -e "$result_bundle" ]] || /bin/rm -rf "$result_bundle"
 "${common[@]}" -resultBundlePath "$result_bundle" \
     -only-testing:BarlineUITests test-without-building
 

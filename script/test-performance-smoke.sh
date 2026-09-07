@@ -38,6 +38,11 @@ while (($#)); do
     shift
 done
 
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]] && ! "$REUSE_RUNNING"; then
+    printf 'error: installed evidence requires --reuse-running\n' >&2
+    exit 2
+fi
+
 [[ "$PROBE" == runtime-smoke || "$PROBE" == status-item-click || "$PROBE" == apple-event-reopen ]] || {
     usage
     exit 2
@@ -65,6 +70,9 @@ if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PR
 fi
 
 cleanup() {
+    # Reused candidates never changed this preference; do not overwrite a
+    # user's concurrent choice during cleanup.
+    if "$REUSE_RUNNING"; then return; fi
     if ! "$REUSE_RUNNING"; then
         /usr/bin/pkill -x Barline >/dev/null 2>&1 || true
         /usr/bin/pkill -x BarlineMenuService >/dev/null 2>&1 || true
@@ -86,6 +94,10 @@ if "$REUSE_RUNNING"; then
         printf 'error: --reuse-running requires an active Barline process\n' >&2
         exit 1
     }
+    if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+        source "$ROOT/script/lib/installed-candidate.sh"
+        barline_verify_installed_candidate
+    fi
 else
     /usr/bin/defaults write "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" -bool true
     if [[ "$PROBE" == status-item-click ]]; then
@@ -105,6 +117,9 @@ else
     fi
 fi
 APP_PID="$(/usr/bin/pgrep -x Barline | /usr/bin/head -1 || true)"
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+    [[ "$APP_PID" == "$BARLINE_EXPECTED_PID" ]] || exit 1
+fi
 [[ -n "$APP_PID" ]] || {
     printf 'error: Barline process is unavailable for the responsiveness probe\n' >&2
     exit 1
@@ -113,7 +128,14 @@ mkdir -p "$MODULE_CACHE"
 xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     -framework AppKit -framework CoreGraphics \
     "$ROOT/script/measure-barline-shelf-responsiveness.swift" -o "$BINARY"
-if [[ -n "$OUTPUT_PATH" ]]; then
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+    BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \
+        BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" \
+        "$BINARY" | tee "$BARLINE_EVIDENCE_OUTPUT.log"
+    barline_verify_installed_candidate
+    BARLINE_PERFORMANCE_PROBE="$PROBE" ruby "$ROOT/script/write-installed-evidence.rb" \
+        --kind performance --log "$BARLINE_EVIDENCE_OUTPUT.log" --output "$BARLINE_EVIDENCE_OUTPUT"
+elif [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
     BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \
         BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" \

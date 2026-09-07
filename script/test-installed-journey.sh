@@ -31,4 +31,15 @@ PACKAGED_SHA="$(/usr/bin/unzip -p "$RELEASE_ZIP" "Barline.app/Contents/MacOS/$EX
 TASK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/barline-journey.XXXXXX")"
 trap '/bin/rm -f "$TASK_DIR/probe"; /bin/rmdir "$TASK_DIR"' EXIT
 xcrun swiftc -framework AppKit -framework CoreGraphics "$ROOT/script/test-installed-journey.swift" -o "$TASK_DIR/probe"
-"$TASK_DIR/probe"
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+    : "${BARLINE_JOURNEY_LANE:?Set the exact qualification journey lane}"
+    # Source-bound evidence cannot be emitted from a modified checkout.
+    source "$ROOT/script/lib/installed-candidate.sh"
+    barline_verify_installed_candidate
+    "$TASK_DIR/probe" | tee "$BARLINE_EVIDENCE_OUTPUT.log"
+    barline_verify_installed_candidate
+    ruby "$ROOT/script/write-installed-evidence.rb" --kind target-interface \
+        --log "$BARLINE_EVIDENCE_OUTPUT.log" --output "$BARLINE_EVIDENCE_OUTPUT"
+else
+    "$TASK_DIR/probe"
+fi

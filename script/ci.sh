@@ -200,6 +200,8 @@ run_fast() {
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
     fi
+    run_step "installed-evidence-validator" bash ./script/test-installed-evidence.sh
+    run_step "installed-evidence-writer" bash ./script/test-evidence-writer.sh
     run_step "repository-hygiene" ./script/ci/repo_hygiene.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "project-resolution" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \
@@ -221,12 +223,17 @@ run_full() {
         # app sharing its bundle ID. Exercise the actual candidate in place.
         : "${BARLINE_CANDIDATE_APP:?Set the installed signed candidate path}"
         : "${BARLINE_SOURCE_SHA:?Set the installed candidate source SHA}"
+        : "${BARLINE_INSTALLED_EVIDENCE_DIR:?Set the dedicated candidate receipt directory}"
         [[ "$BARLINE_SOURCE_SHA" == "$SHA" ]] || barline_die "installed candidate source mismatch"
         run_step "installed-signature" codesign --verify --deep --strict "$BARLINE_CANDIDATE_APP"
         run_step "installed-gatekeeper" spctl --assess --type execute "$BARLINE_CANDIDATE_APP"
         run_step "installed-staple" xcrun stapler validate "$BARLINE_CANDIDATE_APP"
         run_step "installed-shelf-recovery" ./script/test-reopen-burst.sh --reuse-running
-        printf 'The separately retained installed target-interface journey is also required before publication.\n'
+        local installed_executable_sha
+        installed_executable_sha="$(shasum -a 256 "$BARLINE_CANDIDATE_APP/Contents/MacOS/Barline" | awk '{print $1}')"
+        run_step "installed-evidence" ruby ./script/validate-installed-evidence.rb \
+            --source-sha "$SHA" --executable-sha256 "$installed_executable_sha" \
+            --evidence-dir "$BARLINE_INSTALLED_EVIDENCE_DIR"
         return
     fi
     require_gate_script ./script/test-xpc-interruption.sh
@@ -241,28 +248,28 @@ run_nonfocus() {
     run_step "debug-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Debug \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/debug.xcresult" \
-        -derivedDataPath "$ARTIFACT_DIR/build-derived" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/build-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
     run_step "release-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Release \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/release.xcresult" \
-        -derivedDataPath "$ARTIFACT_DIR/build-derived" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/build-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
     run_step "static-analysis" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Debug \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/analyze.xcresult" \
-        -derivedDataPath "$ARTIFACT_DIR/build-derived" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/build-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO analyze
     run_step "test-plan-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -testPlan Barline \
         -configuration Debug -destination 'platform=macOS,arch=arm64' \
-        -derivedDataPath "$ARTIFACT_DIR/test-derived" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/test-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build-for-testing
     if /usr/sbin/DevToolsSecurity -status 2>&1 | /usr/bin/grep -qi 'enabled'; then
         run_step "test-plan-core" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
             -project Barline.xcodeproj -scheme Barline -testPlan Barline \
             -configuration Debug -destination 'platform=macOS,arch=arm64' \
-            -derivedDataPath "$ARTIFACT_DIR/test-derived" \
+            -derivedDataPath "$BARLINE_RUN_ROOT/test-derived" \
             -resultBundlePath "$ARTIFACT_DIR/results/tests.xcresult" \
             -only-testing:BarlineTests -only-testing:BarlineIntegrationTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test-without-building

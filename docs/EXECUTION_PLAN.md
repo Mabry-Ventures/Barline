@@ -1,5 +1,30 @@
 # Barline execution plan
 
+## Distribution refinement — 1.0.9 build 12
+
+The September 7 follow-up audit identified mutable-neighbor restoration and
+candidate-receipt enforcement gaps. Temporary reveals now carry a durable,
+bounded checkpoint of the original display/section plus ordered stable anchors.
+Moved/missing anchors cannot redirect restoration; unavailable topology pauses
+for explicit recovery, and three failed attempts stop automatic retrying.
+After restart, retained entries require Retry Item Restoration in Layouts & Focus
+rather than silently overwriting possible outside-app edits.
+
+New authoritative layout operations are blocked while compensation remains;
+they never discard a pending reveal before an operation that might roll back.
+Manual dragging first attempts restoration. Focus/layout failures explain the
+recovery prerequisite. Core tests cover the guard, journal and resolution policy.
+
+The installed full gate already called performance and XPC interruption through
+the reopen-burst script; the audit's claim that these were entirely skipped was
+too broad. This refinement makes their receipts explicit and mandatory, together
+with four actual target-interface lanes, exact source SHA and executable hash.
+Receipt validator/writer tests cannot themselves certify runtime behavior.
+
+Build, signed candidate qualification, and distribution preparation are in
+progress. No new runtime, notarization, upgrade or public-release success is
+claimed by this implementation checkpoint. macOS 27 and soak remain deferred.
+
 This is the live implementation ledger. A milestone is complete only when its
 code and evidence match the build specification; documentation alone is not a
 gate result.

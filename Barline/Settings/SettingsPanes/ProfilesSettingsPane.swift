@@ -163,6 +163,7 @@ struct ProfilesSettingsPane: View {
             }
 
             Section("Recovery") {
+                TemporaryItemRecoveryView(manager: appState.itemManager)
                 HStack {
                     Button("Undo Layout Change") {
                         Task { await manager.undoLayoutChange() }
@@ -237,6 +238,34 @@ struct ProfilesSettingsPane: View {
                 manager.statusMessage = "Profile archive exported."
             case .failure:
                 manager.statusMessage = "The profile archive was not saved."
+            }
+        }
+    }
+}
+
+private struct TemporaryItemRecoveryView: View {
+    @ObservedObject var manager: MenuBarItemManager
+    @State private var confirmsCurrentPositions = false
+
+    var body: some View {
+        if manager.hasPendingRestorations {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("An item was temporarily revealed. Restore it before applying another layout.")
+                    .foregroundStyle(.secondary)
+                Button("Retry Item Restoration") {
+                    Task { await manager.retryPendingRestorations() }
+                }
+                .disabled(!manager.allowsPickerPresentation || manager.recoveryRecordsUnavailable)
+                Button("Keep Current Item Positions…") { confirmsCurrentPositions = true }
+                    .disabled(!manager.allowsPickerPresentation)
+            }
+            .alert("Keep current item positions?", isPresented: $confirmsCurrentPositions) {
+                Button("Keep Positions", role: .destructive) {
+                    Task { await manager.keepCurrentItemPositions() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This cancels pending item restoration without moving any icons. Old recovery records are archived, not deleted.")
             }
         }
     }

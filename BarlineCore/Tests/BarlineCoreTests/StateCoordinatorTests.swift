@@ -9,6 +9,143 @@ import Testing
 
 @Suite("Transactional state coordinator")
 struct StateCoordinatorTests {
+    @Test("Pending restoration guard blocks manual layout effects without replacing authority")
+    func restorationGuardBlocksManualMutation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(snapshots: [before])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        _ = try await coordinator.refresh()
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            try await coordinator.perform(.move(MenuBarMoveOperation(
+                itemID: before.items[0].id, section: .hidden, index: 0
+            )))
+        }
+
+        #expect(await guardRecorder.calls == 1)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.currentSnapshot == before)
+        #expect(await coordinator.lastKnownGoodSnapshot == before)
+        #expect(await coordinator.mutationGeneration == 0)
+        #expect(await coordinator.layoutAuthorityGeneration == 0)
+        #expect(await coordinator.canUndo == false)
+        #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Pending restoration guard blocks profile layout and workspace effects")
+    func restorationGuardBlocksProfileMutation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let workspace = WorkspaceRecorder(initial: original)
+        let profile = BarlineProfile(name: "New", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        let backend = FakeBackend(snapshots: [before, live])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        _ = try await coordinator.refresh()
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            try await coordinator.activate(
+                profile: profile,
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() },
+                    apply: { try await workspace.apply($0) }
+                )
+            )
+        }
+
+        #expect(await guardRecorder.calls == 1)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await workspace.values.isEmpty)
+        #expect(await workspace.capture() == original)
+        // History preflight may refresh physical evidence, but never changes its layout.
+        #expect(await coordinator.currentSnapshot == live)
+        #expect(await coordinator.lastKnownGoodSnapshot == live)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.mutationGeneration == 0)
+        #expect(await coordinator.layoutAuthorityGeneration == 0)
+        #expect(await coordinator.canUndo == false)
+    }
+
+    @Test("Pending restoration guard leaves undo and redo checkpoints intact", arguments: [false, true])
+    func restorationGuardBlocksHistoryMutation(redo: Bool) async throws {
+        let snapshots = (1 ... 6).map { makeSnapshot(generation: UInt64($0), count: 2) }
+        let backend = FakeBackend(snapshots: snapshots)
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        _ = try await coordinator.perform(.reveal(snapshots[0].items[0].id))
+        if redo {
+            _ = try await coordinator.undo()
+        }
+        let priorRestorations = await backend.restoredSnapshots
+        let priorMutationGeneration = await coordinator.mutationGeneration
+        let priorAuthorityGeneration = await coordinator.layoutAuthorityGeneration
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            if redo {
+                try await coordinator.redo()
+            } else {
+                try await coordinator.undo()
+            }
+        }
+
+        #expect(await guardRecorder.calls == 1)
+        #expect(await backend.restoredSnapshots == priorRestorations)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await coordinator.currentSnapshot == snapshots[redo ? 4 : 2])
+        #expect(await coordinator.mutationGeneration == priorMutationGeneration)
+        #expect(await coordinator.layoutAuthorityGeneration == priorAuthorityGeneration)
+        #expect(await coordinator.canUndo == !redo)
+        #expect(await coordinator.canRedo == redo)
+    }
+
+    @Test("Transient restoration moves bypass the pending restoration guard")
+    func transientRestorationBypassesAuthorityGuard() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+        let move = MenuBarMoveOperation(itemID: before.items[0].id, section: .visible, index: 0)
+
+        let result = try await coordinator.perform(.transientMove(move))
+
+        #expect(result == after)
+        #expect(await backend.moveOperations == [move])
+        #expect(await guardRecorder.calls == 0)
+        #expect(await coordinator.mutationGeneration == 1)
+        #expect(await coordinator.layoutAuthorityGeneration == 0)
+        #expect(await coordinator.canUndo == false)
+    }
+
+    @Test("A successful restoration guard advances authoritative layout generation")
+    func successfulRestorationGuardAdvancesAuthority() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: false)
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+        let move = MenuBarMoveOperation(itemID: before.items[0].id, section: .visible, index: 0)
+
+        let result = try await coordinator.perform(.move(move))
+
+        #expect(result == after)
+        #expect(await backend.moveOperations == [move])
+        #expect(await guardRecorder.calls == 1)
+        #expect(await coordinator.layoutAuthorityGeneration == 1)
+        #expect(await coordinator.mutationGeneration == 1)
+        #expect(await coordinator.canUndo)
+    }
+
     @Test("Cancelled mutations compensate in a live task before a queued refresh can proceed")
     func cancelledMutationCompensationIsSerialized() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
@@ -2931,6 +3068,22 @@ struct RetryPolicyTests {
         #expect(policy.delay(forAttempt: 1, jitterPermille: 200) == .milliseconds(240))
         #expect(policy.delay(forAttempt: 1, jitterPermille: 900) == .milliseconds(240))
         #expect(policy.delay(forAttempt: 3, jitterPermille: 200) == .milliseconds(450))
+    }
+}
+
+private actor RestorationGuardRecorder {
+    private let rejects: Bool
+    private(set) var calls = 0
+
+    init(rejects: Bool) {
+        self.rejects = rejects
+    }
+
+    func check() throws {
+        calls += 1
+        if rejects {
+            throw MenuBarBackendError.interrupted
+        }
     }
 }
 

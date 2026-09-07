@@ -2073,7 +2073,9 @@ final class ProfileManager: ObservableObject {
             completion(value)
             statusMessage = successMessage
         } catch {
-            statusMessage = "The profile operation could not be completed."
+            statusMessage = appState?.itemManager.hasPendingRestorations == true
+                ? "Finish item restoration in Recovery, then apply the layout again."
+                : "The profile operation could not be completed."
             Logger(category: "Profiles").error("Profile operation failed")
         }
     }

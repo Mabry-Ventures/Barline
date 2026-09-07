@@ -469,6 +469,16 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
     return (false, silentCancellation)
 }
 
+private let initialPointer = CGEvent(source: nil)?.location
+atexit {
+    let restored = initialPointer.map { CGWarpMouseCursorPosition($0) == .success } ?? false
+    print("{\"originalPointerRestored\":\(restored)}")
+    if !restored {
+        fflush(stdout)
+        _exit(EXIT_FAILURE)
+    }
+}
+
 do {
     if Configuration.probe == "apple-event-reopen" {
         guard

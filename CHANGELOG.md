@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.9 (build 12)
+
+- Restore temporarily revealed items to their original section/display even if
+  neighboring icons disappear or move.
+- Preserve interrupted restoration across restarts and expose Retry Item
+  Restoration in Layouts & Focus. Pause after three unsuccessful attempts.
+- Keep pending restoration intact when a competing layout operation cannot
+  proceed safely.
+- Require exact-candidate target-action, performance and helper-recovery receipts
+  before installed qualification passes.
+
 Barline has not published a binary release. Changes below describe the active
 development line and are not release certification.
 

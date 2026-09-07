@@ -195,6 +195,10 @@ public actor MenuBarStateCoordinator {
     public private(set) var lastKnownGoodSnapshot: MenuBarSnapshot?
     public private(set) var lastRejection: SnapshotRejectionReason?
     public private(set) var mutationGeneration: UInt64 = 0
+    /// User/profile/history intent supersedes temporary reveals, but helper
+    /// reconnects and other transient moves do not.
+    public private(set) var layoutAuthorityGeneration: UInt64 = 0
+    private var beforeAuthoritativeLayoutMutation: (@Sendable () async throws -> Void)?
     public private(set) var activeProfileID: UUID?
     public private(set) var backendHealth = MenuBarBackendHealth(
         backendName: "Unprobed",
@@ -224,6 +228,19 @@ public actor MenuBarStateCoordinator {
         self.validator = validator
         self.retryPolicy = retryPolicy
         self.compensationTimeout = max(.milliseconds(1), compensationTimeout)
+    }
+
+    public func setBeforeAuthoritativeLayoutMutation(
+        _ action: @escaping @Sendable () async throws -> Void
+    ) {
+        beforeAuthoritativeLayoutMutation = action
+    }
+
+    private func supersedeTemporaryReveals() async throws {
+        // The app refuses new layout intent while durable reveal compensation
+        // remains. Never erase it before an operation that could fail/roll back.
+        try await beforeAuthoritativeLayoutMutation?()
+        layoutAuthorityGeneration &+= 1
     }
 
     /// Reserves authority across a reveal / activate / observe / restore journey
@@ -384,6 +401,9 @@ public actor MenuBarStateCoordinator {
             throw MenuBarBackendError.unsafeMenuTracking
         }
         try validateReferences(for: mutation, in: before)
+        if mutation.recordsLayoutHistory {
+            try await supersedeTemporaryReveals()
+        }
         mutationGeneration &+= 1
         let generation = mutationGeneration
 
@@ -594,6 +614,7 @@ public actor MenuBarStateCoordinator {
         }
         var targetWorkspace = ProfileWorkspaceState(profile: profile)
         targetWorkspace.presentation = presentation
+        try await supersedeTemporaryReveals()
         mutationGeneration &+= 1
         let generation = mutationGeneration
         var didBeginLayoutMutation = false
@@ -1243,6 +1264,7 @@ public actor MenuBarStateCoordinator {
                 "workspace history requires a rollback-capable transaction"
             )
         }
+        try await supersedeTemporaryReveals()
         mutationGeneration &+= 1
         var didBeginLayoutMutation = false
         var didBeginWorkspaceMutation = false

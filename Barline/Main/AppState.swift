@@ -50,6 +50,12 @@ final class AppState: ObservableObject {
     /// Serialized authority for validated compatibility snapshots and recovery.
     let compatibilityCoordinator = MenuBarItem.snapshotCoordinator
 
+    let temporaryRevealJournal = TemporaryRevealJournal(
+        directoryURL: URL.applicationSupportDirectory
+            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "Barline", isDirectory: true)
+            .appendingPathComponent("TemporaryReveals", isDirectory: true)
+    )
+
     /// Persistence and transactional activation for menu bar profiles.
     let profileManager = ProfileManager()
 
@@ -82,6 +88,11 @@ final class AppState: ObservableObject {
         }
 
         appearanceManager.performSetup(with: self)
+        await compatibilityCoordinator.setBeforeAuthoritativeLayoutMutation { [temporaryRevealJournal] in
+            guard try await temporaryRevealJournal.load().isEmpty else {
+                throw MenuBarBackendError.operationFailed("temporary item restoration must finish before changing layouts")
+            }
+        }
         await profileManager.performSetup(with: self)
 
         let initialAccessibilityPermission = permissions.accessibility.hasPermission

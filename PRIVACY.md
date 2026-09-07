@@ -18,6 +18,14 @@ commands use the Barline App Group container with atomic files, validation, and
 a previous-valid backup. Profile archives are accessed only after an explicit
 user import or export action.
 
+Interrupted temporary item reveals use a bounded local recovery journal in
+Barline's Application Support directory. It stores stable item identifiers,
+original display/section, neighboring identifiers and timestamps, not images.
+Completed restorations remove their active records. Choosing Keep Current Item
+Positions archives the old journal locally; those backup files remain until
+you remove Barline's TemporaryReveals directory after quitting. Recovery files
+are not included in support bundles or uploaded.
+
 For display-specific profiles, Barline derives an opaque SHA-256 alias from
 public display hardware values so a uniquely identifiable monitor can be
 recognized after reconnecting. Raw hardware values are not stored. Profile
