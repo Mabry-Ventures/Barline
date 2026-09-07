@@ -4,11 +4,64 @@ import Foundation
 /// an event. These are synchronization tests, not a GUI-delivery certificate.
 @main
 private enum EventDeliveryTests {
-    static func main() {
+    static func main() async throws {
         concurrentCallbacksDispatchOnlyOnce()
         completionSuppressesLateDispatch()
         inFlightDispatchPrecedesCompletion()
-        print("PASS: production event delivery synchronization (3 tests; no taps or events)")
+        moveStagesDispatchIndependentlyOnce()
+        completionSuppressesBothMoveStages()
+        try await releaseWithoutIntermediateTransition()
+        try await releaseTransportFailurePropagates()
+        print("PASS: production event delivery synchronization (7 tests; no taps or events)")
+    }
+
+    private static func releaseWithoutIntermediateTransition() async throws {
+        let events = LockedLog()
+        try await HelperMoveSettlement.releaseAndObserve(initialOrigin: 0) { origin in
+            require(origin == 0, "no intermediate transition retains the original observation baseline")
+            events.append("observe")
+            return nil
+        } release: {
+            events.append("release")
+        }
+        require(events.values == ["observe", "release", "observe"],
+                "no intermediate transition still releases; final placement remains caller-owned")
+    }
+
+    private static func releaseTransportFailurePropagates() async throws {
+        let events = LockedLog()
+        do {
+            try await HelperMoveSettlement.releaseAndObserve(initialOrigin: 0) { _ in
+                events.append("observe")
+                return nil
+            } release: {
+                throw CancellationError()
+            }
+            require(false, "release cancellation must propagate for caller cleanup")
+        } catch is CancellationError {
+            require(events.values == ["observe"], "failed release cannot be treated as settled")
+        }
+    }
+
+    private static func moveStagesDispatchIndependentlyOnce() {
+        let delivery = HelperEventDelivery()
+        let posted = LockedLog()
+        for _ in 0 ..< 32 {
+            delivery.dispatchOnceWhilePending(stage: .session) { posted.append("session") }
+            delivery.dispatchOnceWhilePending(stage: .process) { posted.append("process") }
+        }
+        require(posted.values == ["session", "process"], "both intentional move stages dispatch once")
+        delivery.finish()
+    }
+
+    private static func completionSuppressesBothMoveStages() {
+        let delivery = HelperEventDelivery()
+        let posted = LockedLog()
+        delivery.dispatchOnceWhilePending(stage: .session) { posted.append("session") }
+        delivery.finish()
+        delivery.dispatchOnceWhilePending(stage: .session) { posted.append("late-session") }
+        delivery.dispatchOnceWhilePending(stage: .process) { posted.append("late-process") }
+        require(posted.values == ["session"], "completion prevents a late second-stage command-down")
     }
 
     private static func concurrentCallbacksDispatchOnlyOnce() {

@@ -1,5 +1,11 @@
 # Barline 1.0.9
 
+Candidate build 18 guards move dispatch against late cancellation callbacks
+and permits hosted drag geometry to commit on mouse-up. Final placement is
+still verified. Build 17 passed all four isolated fixture XCUITests but failed
+installed interaction qualification; it is not eligible for distribution.
+All release artifacts remain staged for final approval.
+
 Candidate build 17 also excludes windowless primary-control and shelf clicks
 from smart rehide using captured event positions. Build 16 opened the shelf but
 failed its target journey when the panel closed before its controls were ready.

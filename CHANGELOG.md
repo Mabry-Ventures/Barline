@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.0.9 (build 17)
+## 1.0.9 (build 18)
+
+- Prevent delayed drag callbacks from posting after cancellation or timeout.
+- Complete hosted item drags before evaluating their final placement, even
+  when macOS does not report an intermediate geometry transition.
 
 - Bind delayed rehide work to its originating presentation, so an old click,
   hover, or timer cannot dismiss a newer shelf.

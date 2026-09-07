@@ -1047,24 +1047,20 @@ final class WindowServerClient: @unchecked Sendable {
         let initialOrigin = item.bounds.origin
         do {
             try await deliver(down, to: pid)
-            guard let draggedOrigin = try await waitForOriginChange(
-                of: item.identifier,
-                from: initialOrigin,
-                timeout: .milliseconds(200)
-            ) else {
-                throw MenuBarBackendError.operationFailed("Menu bar item did not respond to move")
+            // Hosted items can commit their first geometry change only on
+            // release. A missing intermediate transition is not a failed move.
+            try await HelperMoveSettlement.releaseAndObserve(initialOrigin: initialOrigin) { [self] origin in
+                try await waitForOriginChange(
+                    of: item.identifier,
+                    from: origin,
+                    timeout: .milliseconds(200)
+                )
+            } release: { [self] in
+                try await deliver(up, to: pid)
+                try await deliver(up, to: pid)
             }
-            try await deliver(up, to: pid)
-            try await deliver(up, to: pid)
-            // Some hosted status items settle directly at their final origin
-            // after mouse-up and therefore have no second geometry transition.
-            // Event delivery has completed; the outer move loop and the typed
-            // coordinator postcondition verify the final placement.
-            _ = try await waitForOriginChange(
-                of: item.identifier,
-                from: draggedOrigin,
-                timeout: .milliseconds(200)
-            )
+            // The outer move loop and coordinator verify final placement;
+            // neither intermediate nor second geometry transitions prove it.
         } catch {
             // Always complete mouse-up after a successful or partially
             // successful mouse-down so the item cannot remain grabbed.
@@ -1122,7 +1118,9 @@ final class WindowServerClient: @unchecked Sendable {
             options: .listenOnly
         ) { _, received in
             if self.event(received, matches: entry, fields: [.eventSourceUserData]) {
-                event.post(tap: .cgSessionEventTap)
+                delivery.dispatchOnceWhilePending(stage: .session) {
+                    event.post(tap: .cgSessionEventTap)
+                }
                 return nil
             }
             if self.event(received, matches: exit, fields: [.eventSourceUserData]) {
@@ -1141,7 +1139,9 @@ final class WindowServerClient: @unchecked Sendable {
                 return received
             }
             tap.disable()
-            event.postToPid(pid)
+            delivery.dispatchOnceWhilePending(stage: .process) {
+                event.postToPid(pid)
+            }
             received.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
             return received
         }

@@ -1,6 +1,20 @@
 import CoreGraphics
 import Foundation
 
+/// Intermediate geometry is optional; only the caller's final placement
+/// postcondition can certify a drag. Transport errors still propagate.
+enum HelperMoveSettlement {
+    static func releaseAndObserve<Origin: Sendable>(
+        initialOrigin: Origin,
+        observeChange: (Origin) async throws -> Origin?,
+        release: () async throws -> Void
+    ) async throws {
+        let intermediate = try await observeChange(initialOrigin)
+        try await release()
+        _ = try await observeChange(intermediate ?? initialOrigin)
+    }
+}
+
 /// A helper-owned event tap used to deliver menu bar events through the
 /// WindowServer event stream. Raw event routing must remain inside the XPC
 /// compatibility service.
@@ -105,6 +119,11 @@ final class HelperEventTap: @unchecked Sendable {
 
 /// Serializes completion, timeout, and cancellation for one event delivery.
 final class HelperEventDelivery: @unchecked Sendable {
+    enum DispatchStage: Hashable {
+        case session
+        case process
+    }
+
     enum DeliveryError: Error {
         case unavailable(stage: Int)
         case timedOut
@@ -115,7 +134,7 @@ final class HelperEventDelivery: @unchecked Sendable {
         var taps = [HelperEventTap]()
         var completed = false
         var terminalError: (any Error)?
-        var dispatched = false
+        var dispatchedStages = Set<DispatchStage>()
     }
 
     private let state = NSLock()
@@ -123,11 +142,10 @@ final class HelperEventDelivery: @unchecked Sendable {
 
     /// Order a single real-event post against cancellation/timeout completion.
     /// A late barrier callback must never enqueue down after cleanup enqueues up.
-    func dispatchOnceWhilePending(_ post: () -> Void) {
+    func dispatchOnceWhilePending(stage: DispatchStage = .session, _ post: () -> Void) {
         state.lock()
         defer { state.unlock() }
-        guard !storage.completed, !storage.dispatched else { return }
-        storage.dispatched = true
+        guard !storage.completed, storage.dispatchedStages.insert(stage).inserted else { return }
         post()
     }
 

@@ -23,7 +23,20 @@ public enum PrivacySafeDiagnostics {
         case let .invalidSnapshot(reason): return snapshotCode(reason)
         case .interrupted: return "helper_interrupted"
         case .timedOut: return "helper_timed_out"
-        case .operationFailed: return "operation_failed"
+        case let .operationFailed(reason): return operationCode(reason)
+        }
+    }
+
+    /// Exact known literals select constants; unknown payloads never escape.
+    private static func operationCode(_ reason: String) -> String {
+        switch reason {
+        case "Menu bar item did not respond to move": "move_no_geometry_change"
+        case "Menu bar event delivery timed out": "move_delivery_timed_out"
+        case "Menu bar event delivery failed": "move_delivery_failed"
+        case "No destination item is available": "move_destination_unavailable"
+        case "No destination item is available on the requested display": "move_display_unavailable"
+        case "menu bar move did not reach requested section": "move_postcondition_failed"
+        default: "operation_failed"
         }
     }
 

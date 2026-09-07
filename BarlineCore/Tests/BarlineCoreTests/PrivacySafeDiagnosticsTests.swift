@@ -3,6 +3,18 @@ import Foundation
 import Testing
 
 struct PrivacySafeDiagnosticsTests {
+    @Test func knownMoveFailuresUseClosedCodes() {
+        #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
+            "menu bar move did not reach requested section"
+        )) == "move_postcondition_failed")
+        #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
+            "Menu bar event delivery timed out"
+        )) == "move_delivery_timed_out")
+        #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
+            "Menu bar event delivery timed out /Users/private"
+        )) == "operation_failed")
+    }
+
     @Test func payloadsAreNeverFormatted() {
         let secret = "PRIVATE_PROFILE_TITLE_/Users/private-person/private-file"
         let item = MenuBarItemID(bundleIdentifier: secret, title: secret)

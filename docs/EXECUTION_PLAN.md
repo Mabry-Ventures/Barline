@@ -1,6 +1,16 @@
 # Barline execution plan
 
-## Distribution refinement — 1.0.9 build 17 preparation
+## Distribution refinement — 1.0.9 build 18 preparation
+
+Build 17 (`f7478cf`) passed fast, signing/notarization, semantic upgrade, and
+all four isolated fixture XCUITests. Installed qualification failed: one
+restoration observation timed out and a later native-target move failed before
+activation. Successful intervening popover runs do not erase those failures.
+Build 18 guards both intentional drag dispatch stages against cancellation,
+allows release to commit geometry without requiring an intermediate change,
+and adds closed failure codes. Final placement checks remain unchanged.
+Focused no-event regressions cover dispatch ordering and release sequencing.
+Fresh full and signed installed proof remain mandatory; publication is staged.
 
 Build 16 (`67399bb`) passed fast, signing/notarization, and upgrade/preferences.
 Its first shelf presentation committed, but closed roughly 400 ms later before

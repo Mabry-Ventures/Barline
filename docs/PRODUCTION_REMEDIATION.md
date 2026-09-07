@@ -1,4 +1,12 @@
-# Production remediation — 1.0.9 (build 17 preparation)
+# Production remediation — 1.0.9 (build 18 preparation)
+
+Build 17 cleared the UI Automation boundary: all four fixture XCUITests passed
+with Barline isolated. It did not clear installed qualification: restoration
+timed out once, and a later native move failed. Build 18 addresses two reviewed
+helper defects: late dispatch after completion, and aborting before release
+when no intermediate drag geometry was observed. Transport/cancellation errors
+and final placement checks remain fail-closed. New exact-literal diagnostic
+codes distinguish known move failures without exposing payloads.
 
 Build 16 committed the first shelf presentation but failed the installed target
 journey when it closed before its accessible item controls appeared. Build 17
