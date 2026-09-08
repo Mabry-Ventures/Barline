@@ -1,5 +1,23 @@
 # Barline execution plan
 
+## Installed recovery failure diagnosis — September 8, 2026
+
+Build 25 at `23e55ce` is installed; the maintainer confirmed the clock/Control
+Center shelf defect resolved (BLN-20). The approved explicit pre-Focus restore
+then failed on the installed candidate. Its journal was retained; successful
+restoration is not claimed. BLN-4 remains open.
+
+The next diagnostic change uses closed, payload-free error codes and separates
+transaction failure from final recovery verification failure. Six focused
+diagnostics tests and strict lint pass. This is instrumentation, not a recovery
+fix or a new installed-candidate pass. The current source change requires fresh
+build and candidate qualification before its diagnostics can be used live.
+App, service and extension advance together to diagnostic build 26. The dirty
+fast run passed all other gates but failed site hygiene on `robots 2.txt`;
+the original failure is retained and no such file is removed to bypass it.
+No checkpoint is deleted to bypass recovery, and unrelated marketing work stays
+outside the change.
+
 ## Build 25 qualification candidate — September 8, 2026
 
 Follow-up review excludes Barline's stretching hidden/always-hidden separators

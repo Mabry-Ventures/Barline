@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.0.11 (build 25) — candidate
+## 1.0.11 (build 26) — diagnostic candidate
+
+- Distinguish interrupted Focus transaction failures from final verification
+  failures using fixed privacy-safe diagnostic codes. Recovery qualification
+  remains pending; this instrumentation does not itself fix restoration.
 
 - Keep clock, Control Center and other non-hideable status items out of
   empty-space click and hover handling. Preserve genuine empty-space clicks

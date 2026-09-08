@@ -4,6 +4,12 @@ import Foundation
 /// description, userInfo, identity, title, path, or a nested error in a log.
 public enum PrivacySafeDiagnostics {
     public static func errorCode(_ error: any Error) -> String {
+        if let transactionError = error as? MenuBarWorkspaceTransactionError {
+            switch transactionError {
+            case .superseded: return "workspace_superseded"
+            case .sideEffectRecoveryFailed: return "workspace_recovery_failed"
+            }
+        }
         guard let backendError = error as? MenuBarBackendError else {
             if error is CancellationError {
                 return "cancelled"
@@ -36,6 +42,9 @@ public enum PrivacySafeDiagnostics {
         case "No destination item is available": "move_destination_unavailable"
         case "No destination item is available on the requested display": "move_display_unavailable"
         case "menu bar move did not reach requested section": "move_postcondition_failed"
+        case "history restore did not reach requested displays": "restore_display_mismatch"
+        case "history restore did not reach requested display identity": "restore_display_identity_mismatch"
+        case "history restore did not reach requested layout": "restore_layout_mismatch"
         default: "operation_failed"
         }
     }

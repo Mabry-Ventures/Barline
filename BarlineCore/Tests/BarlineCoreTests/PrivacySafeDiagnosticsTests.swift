@@ -3,6 +3,22 @@ import Foundation
 import Testing
 
 struct PrivacySafeDiagnosticsTests {
+    @Test func recoveryFailuresUseExactPayloadFreeCodes() {
+        let cases = [
+            ("history restore did not reach requested displays", "restore_display_mismatch"),
+            ("history restore did not reach requested display identity", "restore_display_identity_mismatch"),
+            ("history restore did not reach requested layout", "restore_layout_mismatch"),
+        ]
+        for (reason, expected) in cases {
+            #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(reason)) == expected)
+            #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
+                reason + " /Users/private/profile"
+            )) == "operation_failed")
+        }
+        #expect(PrivacySafeDiagnostics.errorCode(MenuBarWorkspaceTransactionError.superseded) == "workspace_superseded")
+        #expect(PrivacySafeDiagnostics.errorCode(MenuBarWorkspaceTransactionError.sideEffectRecoveryFailed) == "workspace_recovery_failed")
+    }
+
     @Test func knownMoveFailuresUseClosedCodes() {
         #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
             "menu bar move did not reach requested section"

@@ -463,13 +463,19 @@ final class ProfileManager: ObservableObject {
             else {
                 throw MenuBarWorkspaceTransactionError.superseded
             }
-            _ = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
-                checkpoint,
-                workspaceTransaction: self.workspaceTransaction()
-            )
+            do {
+                _ = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
+                    checkpoint,
+                    workspaceTransaction: self.workspaceTransaction()
+                )
+            } catch {
+                Logger(category: "Profiles").error("Focus recovery transaction failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
+                throw error
+            }
             guard self.pendingFocusAuthority(matching: confirmedToken) == pending,
                   await self.currentWorkspaceMatches(checkpoint)
             else {
+                Logger(category: "Profiles").error("Focus recovery final verification failed")
                 throw MenuBarWorkspaceTransactionError.superseded
             }
             return checkpoint
@@ -2154,7 +2160,7 @@ final class ProfileManager: ObservableObject {
             statusMessage = appState?.itemManager.hasPendingRestorations == true
                 ? "Finish item restoration in Recovery, then apply the layout again."
                 : "The profile operation could not be completed."
-            Logger(category: "Profiles").error("Profile operation failed")
+            Logger(category: "Profiles").error("Profile operation failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
     }
 }
