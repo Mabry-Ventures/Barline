@@ -212,44 +212,43 @@ final class ControlItem {
             }
             .store(in: &c)
 
-        statusItem.publisher(for: \.button).removeNil()
+        statusItem.publisher(for: \.button)
             .handleEvents(receiveOutput: { [weak self] button in
-                self?.configureAction(for: button)
+                if let button {
+                    self?.configureAction(for: button)
+                }
             })
-            .flatMap { $0.publisher(for: \.window) }
-            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.window).eraseToAnyPublisher() }
             .sink { [weak self] window in
                 self?.window = window
             }
             .store(in: &c)
 
-        $window.removeNil()
-            .flatMap { $0.publisher(for: \.frame) }
+        $window.removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.frame).map(Optional.some).eraseToAnyPublisher() }
             .removeDuplicates()
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] frame in
                 self?.frame = frame
             }
             .store(in: &c)
 
-        $window.removeNil()
-            .flatMap { $0.publisher(for: \.screen) }
-            .receive(on: DispatchQueue.main)
+        $window.removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.screen).eraseToAnyPublisher() }
             .sink { [weak self] screen in
                 self?.screen = screen
             }
             .store(in: &c)
 
-        $screen.removeNil()
-            .flatMap { $0.publisher(for: \.frame) }
-            .combineLatest($frame.removeNil())
+        $screen.removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.frame).map(Optional.some).eraseToAnyPublisher() }
+            .combineLatest($frame)
             .removeDuplicates()
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] screenFrame, frame in
                 guard let self else {
                     return
                 }
-                if screenFrame.intersects(frame) {
+                if let screenFrame, let frame, screenFrame.intersects(frame) {
                     onScreenFrame = frame
                 } else {
                     onScreenFrame = nil

@@ -38,6 +38,13 @@ Failed attempts remain in local evidence; do not replace them with a later pass.
 
 ## Current boundary
 
+The worktree now contains an additional observation-lifecycle repair (BLN-19):
+old status-item window/screen publishers are canceled on replacement, nil clears
+cached values, and queued delivery is canceled inside the switched owner stream.
+Its standalone production-operator regression is a fast-gate check. Build-21
+installed receipts below do not qualify this changed source. BLN-17 attribution
+remains open independently.
+
 Frozen build-21 source `59de12d` passed clean nonfocus qualification, real
 preference fault probes, Carbon registration conflict/recovery checks,
 Debug/Release compilation and analysis. The signed/notarized candidate passed
@@ -45,6 +52,23 @@ a preference-preserving Sparkle update, all four installed target-interface
 journeys and one helper interruption. Installed checks cover single-display
 variant authoring, rule editing while disabled, final-layout deletion and
 shortcut-recorder accessibility exposure, not the full acceptance matrix above.
+
+Additional installed checks cover temporary group creation, saved rename,
+reopening and Escape cancellation preserving the prior saved group. The layout
+was not applied. Forty-four focused search/group tests and real preference-store
+fault probes passed; installed search interaction and shelf-group collapse remain
+separate pending lanes.
+
+A physical Control-Option-Command-9 fixture shortcut attempt on September 7
+dispatched and opened/closed a native menu, but received no action click and
+the maintainer reported nothing visible. A second, passively observed attempt
+received exactly one activation/open/action/close. The fixture-owned menu was
+on-screen, intersected the active display, and stayed open approximately five
+seconds before the action. The restoration journal was empty afterward; the
+temporary shortcut and fixture were removed. This proves one completed physical
+native-menu shortcut journey, not repeatability or the cause of the first miss.
+Both receipts and the fixture-only geometry trace remain in ignored
+`.artifacts/local-acceptance-2026-09-07/shortcut-failure/`.
 
 The initial installed shelf gate failed one opening cycle out of twenty.
 Subsequent diagnostic runs passed but did not establish the cause; no passing

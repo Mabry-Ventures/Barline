@@ -202,6 +202,7 @@ run_fast() {
     run_step "status-item-geometry" bash ./script/test-status-item-geometry.sh
     run_step "shelf-probe-cycle" bash ./script/test-shelf-probe-cycle.sh
     if [[ "$(uname -s)" == Darwin ]]; then
+        run_step "latest-optional-owner" bash ./script/test-latest-optional-publisher.sh
         run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
         run_step "search-preferences-atomicity" bash ./script/test-search-preferences.sh
         run_step "feature-preferences-atomicity" bash ./script/test-feature-preferences.sh

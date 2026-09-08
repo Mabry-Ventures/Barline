@@ -1,5 +1,46 @@
 # Barline execution plan
 
+## Search, groups and observation lifecycle — September 7, 2026
+
+Installed build 21 passed temporary group create/save/reopen, rename/save/reopen
+and Escape cancellation of an unsaved rename. No saved layout was applied.
+The focused search/group run passed 44 tests in six suites; the actual search
+preference actor passed private-file, reopen, cancellation, I/O failure,
+competing-writer and damaged-store probes. These are not installed search,
+group-collapse, Focus or accessibility acceptance.
+
+Read-only review found BLN-19 independently of the unresolved BLN-17 click miss:
+ControlItem retained superseded button/window/screen subscriptions and ignored
+nil detachment. The repair observes only the latest owner, clears detached
+values, and schedules delivery inside the switched stream so already queued old
+values cannot escape cancellation. A noninteractive probe compiles the actual
+production operator, reproduces the legacy overwrite/nil-retention and queued
+delivery failures, and verifies replacement, detach/reattach and duplicate-owner
+subscription behavior. It is now part of the macOS fast gate. This is not an
+atomic multi-property geometry snapshot or a change to input delivery.
+Focused regressions, strict fast checks, Debug and Release compilation, and
+Release static analysis passed during integration. These local results do not
+qualify a signed/installed replacement, and BLN-19 remains open for that lane.
+
+The installed signed candidate remains source `59de12d`; the lifecycle source
+change needs new candidate-bound build/release/runtime qualification. Do not
+close BLN-17 or carry the old candidate's certificate forward. Pending installed
+search uses a temporary Control-Option-Command-8 shortcut; remove it and the
+temporary layout when that check finishes. No public release has been made.
+
+## Physical shortcut checkpoint — September 7, 2026
+
+Installed build 21 (`59de12d`) received a physical fixture shortcut activation
+and native menu open/close, but the maintainer saw no response and no fixture
+action was received. A second attempt, with a passive fixture-only window
+geometry observer, completed exactly one activation/open/action/close; its menu
+intersected the active display and remained open approximately five seconds.
+The restoration journal was empty before removing the temporary shortcut and
+stopping only the fixture. The installed app was not replaced or restarted.
+Preserve both attempts: this bounded success does not explain the earlier miss
+or establish repeatability. Remaining qualification and release NO-GO are
+unchanged. See FEATURE_QUALIFICATION.md and the ignored shortcut-failure packet.
+
 ## Local-first qualification direction — September 7, 2026
 
 The maintainer confirmed dev@mabryventures.com as the private conduct-report
