@@ -33,7 +33,7 @@ public enum ProfileLayoutReconciler {
         public func matches(items: [MenuBarItemDescriptor]) -> Bool {
             guard Set(items.map(\.id)).count == items.count else { return false }
             if isGloballyScoped,
-               Set(items.map(\.id)) != Set(targets.flatMap { $0.layout.allItemIDs })
+               Set(items.map(\.id)) != Set(targets.flatMap(\.layout.allItemIDs))
             {
                 return false
             }
@@ -80,9 +80,9 @@ public enum ProfileLayoutReconciler {
         )
     }
 
-    // Separators are draggable in the native menu bar, but moving one changes
-    // section membership for neighboring items. A saved-layout transaction must
-    // move items across these boundaries, never move the boundaries themselves.
+    /// Separators are draggable in the native menu bar, but moving one changes
+    /// section membership for neighboring items. A saved-layout transaction must
+    /// move items across these boundaries, never move the boundaries themselves.
     private static func canReposition(_ item: MenuBarItemDescriptor) -> Bool {
         item.isMovable && !item.isBarlineControlItem
     }
