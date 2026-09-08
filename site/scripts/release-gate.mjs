@@ -49,6 +49,7 @@ export function validateProduction({ release, pages, headers, robots }) {
     const quotedHrefs = [...html.matchAll(/\shref\s*=\s*(?:"[^"]*"|'[^']*')/gi)].length;
     if (hrefAttributes !== quotedHrefs) throw new Error(`Production requires quoted href attributes: ${file}`);
     for (const [, href] of html.matchAll(/\bhref\s*=\s*["']([^"']+)["']/gi)) {
+      if (/[\\\u0000-\u0020\u007f]|&/.test(href)) throw new Error(`Production requires literal, unambiguous destinations: ${file}`);
       if ((href.startsWith('/') && !href.startsWith('//')) || href.startsWith('#')) continue;
       if (!approvedExternal.has(href)) throw new Error(`Production contains an unqualified alternate destination: ${file}`);
     }
@@ -57,7 +58,8 @@ export function validateProduction({ release, pages, headers, robots }) {
   if (!home) throw new Error('Production homepage is missing.');
   for (const key of ['downloadURL', 'sourceURL', 'checksumsURL', 'releaseURL', 'contributionURL']) {
     const anchors = [...home.matchAll(/<a\s[^>]*>/gi)].map(match => match[0]);
-    if (!anchors.some(anchor => anchor.includes(`href="${expected[key]}"`))) throw new Error(`Production homepage must link ${key}.`);
+    if (!anchors.some(anchor => [...anchor.matchAll(/\shref\s*=\s*"([^"]+)"/gi)]
+      .some(([, href]) => href === expected[key]))) throw new Error(`Production homepage must link ${key}.`);
   }
   for (const [file, html] of pages) {
     if (file === '404.html') continue;

@@ -73,6 +73,12 @@ test('production rejects comment, template and non-anchor substitutes', () => {
   assert.throws(() => validateProduction(missingPage), /Missing production page/);
   const unquoted = fixture(); unquoted.pages.set('index.html', unquoted.pages.get('index.html') + '<a href=https://wrong.invalid>Download</a>');
   assert.throws(() => validateProduction(unquoted), /quoted href/);
+  const dataOnly = fixture(); dataOnly.pages.set('index.html', dataOnly.pages.get('index.html').replaceAll('<a href=', '<a data-href='));
+  assert.throws(() => validateProduction(dataOnly), /homepage must link/);
+  for (const href of ['/\\wrong.invalid/download', '/&#92;wrong.invalid/download', '/\t/wrong.invalid']) {
+    const ambiguous = fixture(); ambiguous.pages.set('index.html', ambiguous.pages.get('index.html') + `<a href="${href}">Download</a>`);
+    assert.throws(() => validateProduction(ambiguous), /unambiguous destinations/);
+  }
 });
 
 test('current staged source cannot produce a production artifact or change existing output', async () => {
