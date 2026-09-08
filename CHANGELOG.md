@@ -1,6 +1,13 @@
 # Changelog
 
-## 1.0.11 (build 23) — candidate
+## 1.0.11 (build 24) — candidate
+
+- Plan saved layouts around fixed system items and newly discovered items,
+  preserving display ownership and avoiding redundant drag operations.
+- Verify complete layout results before committing profile authority; reject
+  unsupported physical destinations before changing workspace settings.
+- Retain observed workspace presentation during pending Focus recovery instead
+  of clearing the evidence needed for safe restoration.
 
 - Correct the macOS Focus Filter extension's launch and embedding topology;
   add regression gates for registration and extracted intent metadata.

@@ -1,5 +1,15 @@
 # Barline execution plan
 
+## Build 24 candidate freeze — September 7, 2026
+
+Version 1.0.11 build 24 incorporates the fixed-anchor activation and retained
+Focus recovery presentation changes. App, menu service, and intents extension
+build numbers advance together. Clean-source qualification, signing/notarization,
+and installed Focus activation/recovery are required anew; build 23 receipts do
+not qualify this candidate. The installed app remains untouched during the
+noninteractive gates. No public release or update feed activation is authorized
+by this candidate freeze alone.
+
 ## Integrated fixed-anchor activation — September 7, 2026
 
 Activation now preflights the display-local move plan before creating a checkpoint
