@@ -109,7 +109,7 @@ actor SupportBundleExporter {
         )
         let data = try encoder.encode(bundle)
         return SupportBundlePreview(
-            suggestedFilename: "Barline-Support-(Self.filenameDate(now)).json",
+            suggestedFilename: "Barline-Support-\(Self.filenameDate(now)).json",
             data: data,
             summary: "Barline and macOS versions, permission state, compatibility health, and bounded error codes"
         )

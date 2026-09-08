@@ -1,5 +1,34 @@
 # Barline execution plan
 
+## Support export filename regression — September 8, 2026
+
+Corrected the literal date expression in the suggested JSON filename to Swift
+string interpolation. The existing exporter harness now asserts the exact
+filename for a fixed timestamp: it failed before the correction and passed
+afterward. Red/green logs are retained under
+`.artifacts/local-acceptance-2026-09-07/support-filename-{red,green}.log`.
+`./script/ci.sh fast` also passed; its log is retained alongside those receipts
+as `support-filename-fast.log`.
+This is a post-build-28 source change, not part of its signed qualification;
+the installed app and existing user-exported files remain unchanged.
+
+## Build 28 installed qualification checkpoint — September 8, 2026
+
+Frozen source `b73150a5a96f6a986805cd71a9203037f2158ef1` passed clean nonfocus
+qualification (354 Core tests, 168 fixture checks, four Xcode UI tests) and
+GitHub's Linux hygiene check. Its Developer ID package passed notarization,
+stapling and Gatekeeper, then a guarded signed Sparkle update from build 27
+preserved semantic preferences and the production feed. Installed executable
+SHA-256: `b73f8550b5d3acea1de96dcc3ff0631a7a4ecca2a23001c4718d44fce99369a5`.
+
+The available-item preview opened and reported one missing saved item. It was
+canceled; no partial restore was applied, and the original checkpoint remains
+unchanged. Approval for that explicit test is pending. Native Focus, remaining
+physical interaction/accessibility checks, the Work MacBook Pro lane, and final
+public-release approval remain outstanding. No public release or feed activation
+has occurred. See FEATURE_QUALIFICATION.md for evidence scope and historical
+failures; the implementation-stage entries below are chronological history.
+
 ## Explicit available-item recovery — September 8, 2026
 
 The interrupted Focus recovery UI now offers a separate read-only preview with

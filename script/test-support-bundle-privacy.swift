@@ -6,6 +6,7 @@ enum PrivacyTestFailure: Error, CustomStringConvertible {
     case privateValueLeaked(String)
     case invalidShape
     case expectedDestinationRejection
+    case invalidFilename
 
     var description: String {
         switch self {
@@ -13,6 +14,7 @@ enum PrivacyTestFailure: Error, CustomStringConvertible {
         case let .privateValueLeaked(value): "private sentinel leaked into bundle: \(value)"
         case .invalidShape: "support bundle shape or error bound is invalid"
         case .expectedDestinationRejection: "non-JSON destination was accepted"
+        case .invalidFilename: "support bundle filename does not contain the expected UTC date"
         }
     }
 }
@@ -70,6 +72,10 @@ struct SupportBundlePrivacyTests {
             recentErrorCodes: (0 ..< 40).map { "error_\($0)" },
             now: Date(timeIntervalSince1970: 100)
         )
+
+        guard preview.suggestedFilename == "Barline-Support-1970-01-01.json" else {
+            throw PrivacyTestFailure.invalidFilename
+        }
 
         let encoded = String(decoding: preview.data, as: UTF8.self)
         for sentinel in [privatePath, privateName, "Documents/secret.txt"] where encoded.contains(sentinel) {

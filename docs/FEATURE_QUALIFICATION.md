@@ -1,6 +1,7 @@
 # Reliability-first feature qualification
 
-Next candidate: **1.0.11, build 23**. Installed baseline: **build 22**.
+Installed qualification candidate: **1.0.11, build 28** (September 8, 2026).
+Source: `b73150a5a96f6a986805cd71a9203037f2158ef1`.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
@@ -39,14 +40,39 @@ Failed attempts remain in local evidence; do not replace them with a later pass.
 
 ## Current boundary
 
+Build 28 passed clean local nonfocus qualification: 354 Core tests, 168 fixture
+checks, four Xcode UI tests, Debug/Release compilation, static analysis and
+the automated accessibility/privacy gates. The exact commit also passed the
+Linux repository-hygiene check. These automated checks do not certify the
+installed physical scenarios in the table above.
+
+The Developer ID package passed nested-signature/entitlement checks, Apple
+notarization, stapling and Gatekeeper assessment. A real signed Sparkle update
+from build 27 to 28 preserved semantic preferences and the canonical production
+feed, with one running installed instance verified after the upgrade.
+Installed executable SHA-256:
+`b73f8550b5d3acea1de96dcc3ff0631a7a4ecca2a23001c4718d44fce99369a5`.
+
+The installed available-item recovery preview reported one unavailable saved
+item and was canceled without applying recovery. The original checkpoint is
+retained. Explicit partial recovery, native Work Focus on/off, restart behavior,
+the remaining interaction/accessibility matrix, and the second-device display
+lane still require installed evidence. Build 28 is not a public-release GO.
+
+The candidate's local receipts are retained under ignored `.artifacts/ci/`,
+`.artifacts/release/` and `.artifacts/build28-installed/` paths in its frozen
+qualification worktree. Do not substitute earlier candidates' receipts.
+
+## Historical findings and evidence
+
 Build 22 (`249dcb0`) passed the clean nonfocus and bounded installed receipts,
 but failed native Focus Filter configuration loading in System Settings.
-The extension topology correction and new regression gates require a fresh
-signed candidate. Listing a filter is not proof that its configuration loads
+The subsequent extension topology correction required a fresh signed candidate.
+Listing a filter is not proof that its configuration loads
 or that Focus activates a layout. See FOCUS_AND_APP_INTENTS.md and the latest
 execution-plan checkpoint. Earlier build-21 evidence below remains historical.
 
-The worktree now contains an additional observation-lifecycle repair (BLN-19):
+The subsequent observation-lifecycle repair (BLN-19) ensures that
 old status-item window/screen publishers are canceled on replacement, nil clears
 cached values, and queued delivery is canceled inside the switched owner stream.
 Its standalone production-operator regression is a fast-gate check. Build-21
@@ -96,6 +122,14 @@ private conduct contact is dev@mabryventures.com. Preserve the current
 development/download disclosure
 until publication is authorized by passing release gates. Marketing drafts and
 unrelated work must not be swept into a release commit.
+
+The September 8 public-surface preflight verified the staging site, About and
+Privacy pages, and contribution-link reachability. Staging remains `noindex`;
+link reachability is not a new payment-processing test. The public repository
+has no releases. Canonical-domain activation remains pending: `usebarline.com`
+returned no A/AAAA answers and `www.usebarline.com` returned NXDOMAIN in the
+preflight. Verify DNS, HTTPS, versioned downloads, the update feed and support
+delivery again when the final public candidate is authorized.
 
 ## Hardware sequence
 
