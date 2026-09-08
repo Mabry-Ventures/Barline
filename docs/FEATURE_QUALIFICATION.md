@@ -38,10 +38,19 @@ Failed attempts remain in local evidence; do not replace them with a later pass.
 
 ## Current boundary
 
-Local iteration has passed Core tests, real preference fault probes, actual
-Carbon registration conflict/recovery checks, and Debug/Release compilation.
-The latest edits require the complete gates again. No new installed feature,
-physical hardware, macOS 27, public-download or production GO is claimed here.
+Frozen build-21 source `59de12d` passed clean nonfocus qualification, real
+preference fault probes, Carbon registration conflict/recovery checks,
+Debug/Release compilation and analysis. The signed/notarized candidate passed
+a preference-preserving Sparkle update, all four installed target-interface
+journeys and one helper interruption. Installed checks cover single-display
+variant authoring, rule editing while disabled, final-layout deletion and
+shortcut-recorder accessibility exposure, not the full acceptance matrix above.
+
+The initial installed shelf gate failed one opening cycle out of twenty.
+Subsequent diagnostic runs passed but did not establish the cause; no passing
+performance receipt replaces that failed attempt. BLN-17 remains open.
+Physical hardware, native keyboard/Focus, VoiceOver, macOS 27, public-download
+and production GO remain unclaimed. See the latest execution-plan checkpoint.
 
 The earlier shelf-close miss remains recorded. The driver now treats a failed
 close as a failed cycle and reacquires click geometry each time. This corrects

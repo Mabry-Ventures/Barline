@@ -1,5 +1,45 @@
 # Barline execution plan
 
+## Build 21 qualification checkpoint — September 7, 2026
+
+Frozen source `59de12d883c49d48b53b32d7874d4adff36ff76e`, installed
+1.0.11 build 21, passed clean nonfocus qualification: 314 Core tests,
+158 fixture/state tests, four fixture UI tests, Debug/Release builds and
+static analysis. Packaging, notarization, staple and Gatekeeper passed.
+The real build-20-to-21 Sparkle upgrade preserved semantic preferences,
+the production feed and a single installed app process.
+
+All four installed target-interface journeys passed on their first attempt:
+native right, native left, popover left and popover reuse. Each witnessed
+exactly one activation/open/action/close, the target's real accessible action,
+the shelf staying closed during activation, hidden-position restoration and
+pointer restoration. One forced helper interruption also recovered without
+restarting the app. Deleting the final temporary layout now succeeds; shortcut
+recorders are exposed in the installed accessibility tree. These observations
+do not establish physical-keyboard or VoiceOver qualification.
+
+**Release remains NO-GO.** The initial 20-cycle shelf gate failed cycle 9
+with one opening timeout. Its failed log is retained, with no passing
+performance receipt. The interval lacked both the product action log and
+AppKit tracking/action messages; this narrows the investigation but does not
+prove where input was lost. A traced 20-cycle run, buffered transport-observer
+100-cycle diagnostic and corresponding 100-cycle run without that observer
+passed. Passing diagnostics do not erase the original failure or establish a
+root cause. No production workaround, extra click or automatic replay was added.
+
+Temporary test layout, rule, shortcut and fixture process were cleaned up;
+the installed signed candidate remains available. Build-20 and build-21 logs,
+failed attempts, source/binary metadata and receipts are retained under ignored
+`.artifacts/retained-qualification/2026-09-07-build20-21/`. Draft PR #6 contains
+the implementation and visitor documentation; the Linux hygiene check passed.
+No public release, update-feed activation or canonical download was published.
+
+Outstanding: BLN-17 input-loss attribution; installed groups/search and
+physical shortcut/Focus/manual-override checks; second-display/notch and power
+transition hardware coverage; accessibility acceptance; private conduct-report
+contact; final exact-candidate release gates. This host has one external display
+and no macOS 27 runtime. Do not claim those unavailable lanes as tested.
+
 ## Installed qualification findings — September 7, 2026
 
 Source `3400f35` (1.0.11 build 20) passed clean nonfocus qualification,
