@@ -215,7 +215,7 @@ struct AdvancedSettingsPane: View {
                     lastSnapshotAt: snapshot?.capturedAt,
                     lastSnapshotRejectionCode: nil,
                     searchAvailabilityCode: Self.searchAvailabilityCode(),
-                    recentErrorCodes: []
+                    recentErrorCodes: [appState.profileManager.lastOperationErrorCode].compactMap(\.self)
                 )
                 supportBundlePreview = preview
                 supportBundleStatus = "Preview ready. Choose whether to save it."

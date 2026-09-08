@@ -35,6 +35,7 @@ final class ProfileManager: ObservableObject {
     @Published private(set) var isBusy = false
     @Published private(set) var interruptedFocusRecoveryToken: UUID?
     @Published var statusMessage: String?
+    @Published private(set) var lastOperationErrorCode: String?
 
     var archivedFocusRecoveryToken: UUID? {
         manualRecoveryStore.load()?.token
@@ -52,11 +53,13 @@ final class ProfileManager: ObservableObject {
     var configuredFocusIsActive: Bool? {
         guard bridgeDefaults != nil else { return nil }
         return isProcessingBridgeCommands ||
+            processedDefaults.bool(forKey: Self.nativeFocusRequestedKey) ||
             processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil ||
             activationRequests[.focus] != nil
     }
 
     private static let profileCatalogKey = "intent.profileCatalog"
+    private static let nativeFocusRequestedKey = "focus.nativeFilterRequested"
     private static let processedCommandIDsKey = "intent.processedCommandIDs"
     private static let profileBeforeFocusIDKey = "focus.profileBeforeFocusID"
     private static let presentationProfileIDKey = "focus.presentationProfileID"
@@ -210,7 +213,8 @@ final class ProfileManager: ObservableObject {
         admission: (@Sendable () async throws -> Void)? = nil,
         prepareCheckpoint: (
             @Sendable (MenuBarWorkspaceCheckpoint, ResolvedProfilePresentation) async throws -> Void
-        )? = nil
+        )? = nil,
+        onFailure: ((any Error) -> Void)? = nil
     ) async -> Bool {
         guard let appState else { return false }
         if [.manual, .shortcut, .appIntent, .recovery].contains(source) {
@@ -218,7 +222,7 @@ final class ProfileManager: ObservableObject {
         }
         let resolvedAuthorityToken = authorityToken ?? UUID()
         var didActivate = false
-        await performOperation(successMessage: "Profile applied.") {
+        await performOperation(successMessage: "Profile applied.", onFailure: onFailure) {
             let priorRequest = self.activationRequests[source]
             self.activationRequests[source] = ProfileActivationRequest(
                 profileID: profile.id,
@@ -1478,7 +1482,18 @@ final class ProfileManager: ObservableObject {
                     scheduleBridgeRetry()
                     continue
                 }
-                guard await handle(command) else {
+                var requiresReview = false
+                guard await handle(command, onFailure: {
+                    requiresReview = IntentCommandFailurePolicy.requiresUserReview($0)
+                }) else {
+                    if requiresReview {
+                        // Consume this rejected delivery, not the saved layout or
+                        // recovery journal. A fresh user command can try again.
+                        recordProcessed(command.id)
+                        try? await commandInbox.acknowledge(command.id)
+                        bridgeRetryAttempt = 0
+                        continue
+                    }
                     if command.kind == .setFocusProfile || command.kind == .setPresentationMode,
                        commands.dropFirst(index + 1).contains(where: {
                            $0.kind == .setFocusProfile || $0.kind == .setPresentationMode
@@ -1514,9 +1529,15 @@ final class ProfileManager: ObservableObject {
         }
     }
 
-    private func handle(_ command: BarlineIntentCommand) async -> Bool {
+    private func handle(
+        _ command: BarlineIntentCommand,
+        onFailure: ((any Error) -> Void)? = nil
+    ) async -> Bool {
         guard let appState else { return false }
 
+        if let requested = IntentCommandFailurePolicy.requestedFocusState(for: command) {
+            processedDefaults.set(requested, forKey: Self.nativeFocusRequestedKey)
+        }
         switch command.kind {
         case .openDestination:
             guard let destination = command.destination else { return true }
@@ -1540,18 +1561,18 @@ final class ProfileManager: ObservableObject {
                 statusMessage = "The profile requested by Shortcuts is no longer available."
                 return true
             }
-            return await activate(profile, source: .appIntent)
+            return await activate(profile, source: .appIntent, onFailure: onFailure)
 
         case .setFocusProfile:
-            return await applyFocusProfile(command.profileID)
+            return await applyFocusProfile(command.profileID, onFailure: onFailure)
 
         case .setPresentationMode:
             guard let isEnabled = command.presentationModeEnabled else { return true }
-            return await applyFocusProfile(isEnabled ? resolvedPresentationProfile()?.id : nil)
+            return await applyFocusProfile(isEnabled ? resolvedPresentationProfile()?.id : nil, onFailure: onFailure)
         }
     }
 
-    private func applyFocusProfile(_ profileID: UUID?) async -> Bool {
+    private func applyFocusProfile(_ profileID: UUID?, onFailure: ((any Error) -> Void)? = nil) async -> Bool {
         switch await recoverPendingFocusAuthority() {
         case .promoted:
             if let profileID, activeFocusProfile()?.id == profileID {
@@ -1571,8 +1592,8 @@ final class ProfileManager: ObservableObject {
            let currentFocusProfile = activeFocusProfile(),
            currentFocusProfile.id != profileID
         {
-            guard await applyFocusProfile(nil) else { return false }
-            return await applyFocusProfile(profileID)
+            guard await applyFocusProfile(nil, onFailure: onFailure) else { return false }
+            return await applyFocusProfile(profileID, onFailure: onFailure)
         }
 
         if let profileID {
@@ -1651,7 +1672,8 @@ final class ProfileManager: ObservableObject {
                 presentation,
                 source: .focus,
                 authorityToken: focusAuthorityToken,
-                prepareCheckpoint: journal
+                prepareCheckpoint: journal,
+                onFailure: onFailure
             ) else {
                 activationRequests.removeValue(forKey: .focus)
                 if let data = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey),
@@ -1698,7 +1720,7 @@ final class ProfileManager: ObservableObject {
         let authorityIsCurrent = focusAuthorityToken != nil
             && activeProfileAuthorityToken() == focusAuthorityToken
         var didFinish = false
-        await performOperation(successMessage: nil) {
+        await performOperation(successMessage: nil, onFailure: onFailure) {
             let result = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
                 checkpoint,
                 ifCurrentMatches: presentation,
@@ -2239,6 +2261,7 @@ final class ProfileManager: ObservableObject {
 
     private func performOperation<Value: Sendable>(
         successMessage: String?,
+        onFailure: ((any Error) -> Void)? = nil,
         operation: () async throws -> Value,
         completion: (Value) -> Void
     ) async {
@@ -2252,9 +2275,14 @@ final class ProfileManager: ObservableObject {
         do {
             let value = try await operation()
             completion(value)
+            lastOperationErrorCode = nil
             statusMessage = successMessage
         } catch {
-            statusMessage = error is WorkspaceRecoveryPlanner.Failure
+            onFailure?(error)
+            lastOperationErrorCode = PrivacySafeDiagnostics.errorCode(error)
+            statusMessage = IntentCommandFailurePolicy.requiresUserReview(error)
+                ? "A saved menu bar item is unavailable. Open its app or update the saved layout, then try again. Automatic retries stopped; any recovery checkpoint is retained."
+                : error is WorkspaceRecoveryPlanner.Failure
                 ? "The saved layout no longer matches the available items or displays. Restoration could not be verified; the recovery checkpoint is retained."
                 : appState?.itemManager.hasPendingRestorations == true
                 ? "Finish item restoration in Recovery, then apply the layout again."

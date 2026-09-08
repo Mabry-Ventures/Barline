@@ -1,5 +1,30 @@
 # Barline execution plan
 
+## Work Focus stale-item rejection — September 8, 2026
+
+The next qualification candidate is **1.0.11 build 29**, including this correction
+and the support-export filename fix. Build 28 remains installed until the new
+candidate's source, signing and update gates pass.
+
+Build 28's approved available-item recovery completed and survived a restart;
+the original checkpoint remains archived, outside active Focus authority. A
+subsequent native Work test reached the configured layout but failed with
+`stale_item`. After Work was turned off, command processing completed and retries
+stopped. Capture-only comparison found one unavailable non-system item in the
+assigned saved layout (19 saved versus 18 current), with no alias-only match.
+This failed native test remains evidence, not a completed Focus gate.
+
+The source now rejects that individual stale-item command without timed replay.
+It preserves saved layouts and recovery journals and asks the user to reopen the
+missing app or update the layout before a fresh command. Transient failures keep
+the existing retry path. The result is bound to the command's operation callback,
+not a shared last-error field. Native Focus ownership is persisted independently
+of successful layout activation so a rejected Focus does not yield priority to
+automatic rules. The latest payload-free profile error is available in support
+exports. Three focused Core tests and Debug compilation passed; full qualification
+and signed installed retesting are still required. Local evidence is retained in
+`.artifacts/local-acceptance-2026-09-07/` under `build28-focus-*` and `stale-retry-*`.
+
 ## Support export filename regression — September 8, 2026
 
 Corrected the literal date expression in the suggested JSON filename to Swift
