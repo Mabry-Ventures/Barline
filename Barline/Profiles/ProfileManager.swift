@@ -36,6 +36,17 @@ final class ProfileManager: ObservableObject {
     @Published private(set) var interruptedFocusRecoveryToken: UUID?
     @Published var statusMessage: String?
 
+    var archivedFocusRecoveryToken: UUID? {
+        manualRecoveryStore.load()?.token
+    }
+
+    func discardArchivedFocusRecovery(confirmedToken: UUID) {
+        guard !isBusy, manualRecoveryStore.load()?.token == confirmedToken else { return }
+        manualRecoveryStore.remove(ifMatching: confirmedToken)
+        interruptedFocusRecoveryToken = recoverableFocusAuthority()?.token
+        statusMessage = "Archived checkpoint discarded. The current arrangement and saved layouts were not changed."
+    }
+
     /// This is authority from Barline's configured native Focus Filter, not a
     /// second Focus-mode catalog or inference from notification preferences.
     var configuredFocusIsActive: Bool? {
@@ -65,6 +76,9 @@ final class ProfileManager: ObservableObject {
     private lazy var authorityStore = ProfileAuthorityEnvelopeStore(
         defaults: processedDefaults,
         key: Self.activeProfileAuthorityKey
+    )
+    private lazy var manualRecoveryStore = ManualFocusRecoveryStore(
+        defaults: processedDefaults, key: "profiles.manualFocusRecovery"
     )
     private weak var appState: AppState?
     private var cancellables = Set<AnyCancellable>()
@@ -456,7 +470,7 @@ final class ProfileManager: ObservableObject {
         guard let appState else { return }
         appState.contextualRules.pauseForManualChange()
         await performOperation(successMessage: "Pre-Focus layout restored.") {
-            guard let pending = self.pendingFocusAuthority(matching: confirmedToken),
+            guard let pending = self.recoverableFocusAuthority(matching: confirmedToken),
                   let checkpoint = pending.checkpoint,
                   let encoded = try? JSONEncoder().encode(checkpoint),
                   self.decodeFocusCheckpoint(encoded) != nil
@@ -472,7 +486,7 @@ final class ProfileManager: ObservableObject {
                 Logger(category: "Profiles").error("Focus recovery transaction failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 throw error
             }
-            guard self.pendingFocusAuthority(matching: confirmedToken) == pending,
+            guard self.recoverableFocusAuthority(matching: confirmedToken) == pending,
                   await self.currentWorkspaceMatches(checkpoint)
             else {
                 Logger(category: "Profiles").error("Focus recovery final verification failed")
@@ -484,6 +498,58 @@ final class ProfileManager: ObservableObject {
             restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
             activationRequests.removeValue(forKey: .focus)
             clearProfileBeforeFocus()
+            manualRecoveryStore.remove(ifMatching: confirmedToken)
+        }
+    }
+
+    func previewAvailableFocusRecovery(confirmedToken: UUID) async -> MenuBarPreparedWorkspaceRecovery? {
+        await profileOperationSemaphore.wait()
+        defer { profileOperationSemaphore.signal() }
+        guard let appState, let pending = recoverableFocusAuthority(matching: confirmedToken),
+              let checkpoint = pending.checkpoint else { return nil }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let prepared = try await appState.compatibilityCoordinator.prepareAvailableWorkspaceRecovery(
+                checkpoint, workspaceTransaction: workspaceTransaction()
+            )
+            guard recoverableFocusAuthority(matching: confirmedToken) == pending else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            return prepared
+        } catch {
+            statusMessage = "Recovery cannot be previewed safely. Leave the menu bar idle and check that the original displays are connected."
+            return nil
+        }
+    }
+
+    func restoreAvailableFocusLayout(confirmedToken: UUID, prepared: MenuBarPreparedWorkspaceRecovery) async {
+        guard let appState else { return }
+        appState.contextualRules.pauseForManualChange()
+        await performOperation(successMessage: "Available items restored. The original checkpoint is retained because this is not an exact full restoration.") {
+            guard let pending = self.recoverableFocusAuthority(matching: confirmedToken),
+                  pending.checkpoint == prepared.checkpoint
+            else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            try self.manualRecoveryStore.validateArchiving(pending)
+            let restored = try await appState.compatibilityCoordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: self.workspaceTransaction()
+            )
+            guard self.recoverableFocusAuthority(matching: confirmedToken) == pending,
+                  await self.currentWorkspaceMatches(restored)
+            else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            try self.manualRecoveryStore.archive(pending)
+            try self.finishArchivedFocusRecovery(pending)
+            return restored
+        } completion: { [weak self] restored in
+            guard let self else { return }
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            activePresentation = restored.workspace.presentation
+            activationRequests.removeValue(forKey: .focus)
         }
     }
 
@@ -1851,6 +1917,13 @@ final class ProfileManager: ObservableObject {
         try authorityStore.save(authority)
     }
 
+    private func recoverableFocusAuthority(matching token: UUID? = nil) -> ProfileAuthorityEnvelope? {
+        // A newer active transaction takes priority over an older manual receipt.
+        let value = pendingFocusAuthority() ?? manualRecoveryStore.load()
+        guard token == nil || value?.token == token else { return nil }
+        return value
+    }
+
     private func pendingFocusAuthority(matching token: UUID? = nil) -> ProfileAuthorityEnvelope? {
         guard let authority = persistedProfileAuthority(), authority.phase == .pendingFocus else {
             return nil
@@ -1913,9 +1986,33 @@ final class ProfileManager: ObservableObject {
         }
     }
 
+    private func finishArchivedFocusRecovery(_ pending: ProfileAuthorityEnvelope) throws {
+        guard manualRecoveryStore.load() == pending else { throw MenuBarWorkspaceTransactionError.superseded }
+        // Clear the journal first. A crash before removing pending authority is
+        // recognized by the matching manual receipt and resumes only cleanup.
+        clearProfileBeforeFocus()
+        guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) == nil,
+              processedDefaults.string(forKey: Self.activeFocusProfileIDKey) == nil,
+              !processedDefaults.bool(forKey: Self.presentationFocusActiveKey)
+        else {
+            throw MenuBarBackendError.operationFailed("partial recovery lifecycle cleanup failed")
+        }
+        setActiveProfileAuthorityToken(nil)
+    }
+
     private func recoverPendingFocusAuthority() async -> PendingFocusRecoveryOutcome {
-        defer { interruptedFocusRecoveryToken = pendingFocusAuthority()?.token }
+        defer { interruptedFocusRecoveryToken = recoverableFocusAuthority()?.token }
         guard let appState, let pending = pendingFocusAuthority() else { return .none }
+        // Crash after writing the manual receipt but before clearing active keys:
+        // finish cleanup, never replay the already-completed partial transaction.
+        if manualRecoveryStore.load() == pending {
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            do {
+                try finishArchivedFocusRecovery(pending)
+                return .none
+            } catch { return .failed }
+        }
         guard let checkpoint = pending.checkpoint,
               let encodedCheckpoint = try? JSONEncoder().encode(checkpoint),
               decodeFocusCheckpoint(encodedCheckpoint) != nil,
@@ -2150,14 +2247,16 @@ final class ProfileManager: ObservableObject {
         isBusy = true
         defer {
             isBusy = false
-            interruptedFocusRecoveryToken = pendingFocusAuthority()?.token
+            interruptedFocusRecoveryToken = recoverableFocusAuthority()?.token
         }
         do {
             let value = try await operation()
             completion(value)
             statusMessage = successMessage
         } catch {
-            statusMessage = appState?.itemManager.hasPendingRestorations == true
+            statusMessage = error is WorkspaceRecoveryPlanner.Failure
+                ? "The saved layout no longer matches the available items or displays. Restoration could not be verified; the recovery checkpoint is retained."
+                : appState?.itemManager.hasPendingRestorations == true
                 ? "Finish item restoration in Recovery, then apply the layout again."
                 : "The profile operation could not be completed."
             Logger(category: "Profiles").error("Profile operation failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")

@@ -1262,6 +1262,158 @@ struct StateCoordinatorTests {
         #expect(await coordinator.activeProfileID == nil)
     }
 
+    @Test("Explicit stale-checkpoint recovery fails before workspace or layout side effects")
+    func staleCheckpointPreflightHasNoSideEffects() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(snapshots: [live])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: original, activeProfileID: nil, workspace: workspace
+        )
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        await #expect(throws: WorkspaceRecoveryPlanner.Failure.incompleteInventory) {
+            try await coordinator.restoreWorkspaceCheckpoint(
+                checkpoint, workspaceTransaction: transaction, now: live.capturedAt
+            )
+        }
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
+    @Test("Confirmed available-item recovery retains original checkpoint and claims no profile")
+    func availableCheckpointRecovery() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let fresh = makeSnapshot(generation: 3, count: 2)
+        let after = makeSnapshot(generation: 4, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(
+            snapshots: [live, fresh, after],
+            environment: MenuBarEnvironmentSnapshot(
+                activeDisplayID: 1, activeStableDisplayID: MenuBarDisplayID("test-display"),
+                activeSpaceToken: 1, activeSpaceIsFullscreen: false
+            )
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: original, activeProfileID: UUID(), workspace: workspace
+        )
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            checkpoint, workspaceTransaction: transaction, now: live.capturedAt
+        )
+        #expect(prepared.preview.missingItemIDs.count == 1)
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        let result = try await coordinator.restoreAvailableWorkspaceRecovery(
+            prepared, workspaceTransaction: transaction, now: after.capturedAt
+        )
+        #expect(result.snapshot == after)
+        #expect(result.activeDisplayID == MenuBarDisplayID("test-display"))
+        #expect(result.activeProfileID == nil)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(prepared.checkpoint == checkpoint)
+        #expect(await recorder.values == [workspace])
+        #expect(await backend.restoredSnapshots.count == 1)
+    }
+
+    @Test("A changed inventory invalidates partial-recovery confirmation without side effects")
+    func availableRecoveryRejectsChangedPreview() async throws {
+        let original = makeSnapshot(generation: 1, count: 4)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let changed = makeSnapshot(generation: 3, count: 3)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(snapshots: [live, changed])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            MenuBarWorkspaceCheckpoint(snapshot: original, activeProfileID: nil, workspace: workspace),
+            workspaceTransaction: transaction, now: live.capturedAt
+        )
+        await #expect(throws: (any Error).self) {
+            try await coordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: transaction, now: changed.capturedAt
+            )
+        }
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
+    @Test("Failed available-item verification compensates workspace and layout")
+    func availableRecoveryCompensatesFailedTarget() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let layout = ProfileLayout(visible: [original.items[0].id], hidden: [original.items[1].id])
+        let live = makeProfileSnapshot(generation: 2, layout: layout)
+        let fresh = makeProfileSnapshot(generation: 3, layout: layout)
+        let wrong = makeProfileSnapshot(generation: 4, layout: layout)
+        let rollback = makeProfileSnapshot(generation: 5, layout: layout)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        var liveWorkspace = workspace
+        liveWorkspace.shelfBehavior.isEnabled.toggle()
+        let recorder = WorkspaceRecorder(initial: liveWorkspace)
+        let backend = FakeBackend(snapshots: [live, fresh, wrong, rollback])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let checkpoint = MenuBarWorkspaceCheckpoint(snapshot: original, activeProfileID: nil, workspace: workspace)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            checkpoint, workspaceTransaction: transaction, now: live.capturedAt
+        )
+        await #expect(throws: WorkspaceRecoveryPlanner.Failure.exactTargetUnavailable) {
+            try await coordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: transaction, now: rollback.capturedAt
+            )
+        }
+        #expect(await recorder.values == [workspace, liveWorkspace])
+        #expect(await backend.restoredSnapshots.count == 2)
+        #expect(await coordinator.currentSnapshot == rollback)
+        #expect(prepared.checkpoint == checkpoint)
+    }
+
+    @Test("Settings change-and-revert invalidates partial recovery confirmation")
+    func availableRecoveryRejectsNewWorkspaceRevision() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let fresh = makeSnapshot(generation: 3, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = RevisionedWorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(snapshots: [live, fresh])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { await recorder.apply($0) },
+            currentRevision: { await recorder.currentRevision() },
+            applyIfCurrent: { await recorder.apply($0, ifCurrentRevision: $1) },
+            rollbackSuperseded: { await recorder.rollbackSuperseded(from: $0, to: $1) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            MenuBarWorkspaceCheckpoint(snapshot: original, activeProfileID: nil, workspace: workspace),
+            workspaceTransaction: transaction, now: live.capturedAt
+        )
+        var changed = workspace
+        changed.shelfBehavior.isEnabled.toggle()
+        await recorder.apply(changed)
+        await recorder.apply(workspace)
+        await #expect(throws: MenuBarWorkspaceTransactionError.superseded) {
+            try await coordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: transaction, now: fresh.capturedAt
+            )
+        }
+        #expect(await recorder.currentRevision() == 2)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
     @Test("Pending no-op activation accepts the original state without mutation")
     func acceptsUnchangedPendingActivation() async throws {
         let originalSnapshot = makeSnapshot(generation: 1, count: 2)

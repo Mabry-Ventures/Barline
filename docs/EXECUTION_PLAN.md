@@ -1,5 +1,69 @@
 # Barline execution plan
 
+## Explicit available-item recovery — September 8, 2026
+
+The interrupted Focus recovery UI now offers a separate read-only preview with
+missing/new item counts and an explicit available-items confirmation. Prepared
+recovery binds the original checkpoint, live logical layout/workspace and local
+mutation epoch; changed state rejects confirmation before side effects. The
+transaction verifies the full reconciled target, including preserved new items,
+and uses the existing strict compensation path on failure. Partial success does
+not claim prior profile authority. It durably archives the original checkpoint
+in a separate manual-only store before ending the pending Focus lifecycle.
+Crash recovery recognizes a matching archive and resumes cleanup, not replay.
+The bounded archive cannot silently replace another receipt; an independently
+visible, token-confirmed discard action prevents older receipts from blocking
+later recovery. Settings change-and-revert invalidates confirmation by revision,
+and completion reports the observed active display rather than a historical one.
+Display topology and known hardware fingerprints must still match.
+
+All 354 Core tests pass, including partial success, stale-preview rejection,
+change-and-revert, manual archive reopen/no-overwrite and failed-target compensation;
+Debug app/helper compilation also passes. The read-only safety review findings
+are addressed. App, helper and extension advance to build 28 for clean candidate
+qualification; fresh fast/candidate gates are pending. Installed build 27 is
+unchanged. No physical partial recovery or release readiness is claimed.
+
+## Recovery inventory preview — September 8, 2026
+
+Exact restoration now preflights the inventory before workspace writes, and the
+helper uses the shared fixed-anchor plan instead of replaying every descriptor.
+It rechecks inventory between operations and verifies the complete admitted
+target afterward. Missing/new identities fail exact restoration rather than
+silently dropping items; incomplete recovery remains a separate unfinished path.
+The status message distinguishes inventory/display recovery failure from a generic
+operation failure. All 349 Core tests pass, including a stale-checkpoint test
+asserting zero workspace and restore side effects; app/helper Debug compilation
+passes in isolated DerivedData. These are source checks, not an installed pass.
+The subsequent dirty-worktree fast gate also passes after the reviewed generated
+duplicates were quarantined. Logs: ignored `recovery-preflight-fast.log`,
+`recovery-preflight-all-core.log`, and `recovery-preflight-debug-final.log` under
+`.artifacts/local-acceptance-2026-09-07/`. No signature or runtime claim attaches
+to these uncommitted source checks.
+
+Installed build 27 passed its clean nonfocus gate, notarization and signed local
+upgrade. Its explicit Focus restore progressed beyond capability admission but
+failed with `stale_item`. A read-only comparison found one saved non-control
+identity absent from the live census, with new identities also present. The
+checkpoint remains retained; restoration has not passed.
+
+`WorkspaceRecoveryPlanner` now computes a pure preview using exact identities
+and the existing fixed-anchor reconciler. It reports missing and added items,
+requires explicit approval for incomplete restoration, rejects duplicate
+identities, changed display assignments/topology and empty live responses, and
+preserves new items in the admitted target. Five focused tests and strict lint
+pass. Available-item recovery is not yet connected to the live transaction: preview UI,
+generation-bound execution, exact admitted-target verification and checkpoint
+completion semantics remain required. Existing strict rollback validation is
+unchanged. Build 27 remains installed; no new candidate is released.
+The dirty fast run at `14:55:57Z` passed all 345 Core tests but is not a
+qualification pass: SwiftFormat initially required a property-body wrap (now
+corrected), and site hygiene rejected `site/dist/robots 2.txt`. Inspection also
+found `site/dist/styles 2.css`. Both were subsequently verified byte-identical
+to their canonical generated outputs and moved (not deleted) into ignored
+`.artifacts/local-acceptance-2026-09-07/site-output-duplicates/` for recovery.
+The original failure logs are retained under the ignored candidate artifact path.
+
 ## Transient backend capability recovery — September 8, 2026
 
 Installed diagnostic build 26 reports `capability_unavailable` during explicit

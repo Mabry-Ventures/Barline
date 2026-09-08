@@ -3,6 +3,17 @@ import Foundation
 import Testing
 
 struct PrivacySafeDiagnosticsTests {
+    @Test func recoveryPreviewFailuresUseClosedCodes() {
+        let failures: [WorkspaceRecoveryPlanner.Failure] = [
+            .ambiguousIdentity, .displayTopologyChanged, .itemChangedDisplay,
+            .invalidLiveState, .incompleteInventory, .exactTargetUnavailable,
+        ]
+        #expect(failures.map { PrivacySafeDiagnostics.errorCode($0) } == [
+            "recovery_ambiguous_identity", "recovery_display_changed", "recovery_item_display_changed",
+            "recovery_invalid_live_state", "recovery_inventory_changed", "recovery_target_unavailable",
+        ])
+    }
+
     @Test func recoveryFailuresUseExactPayloadFreeCodes() {
         let cases = [
             ("history restore did not reach requested displays", "restore_display_mismatch"),

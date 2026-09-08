@@ -22,6 +22,10 @@ struct ProfilesSettingsPane: View {
     @State private var focusLayoutID: UUID?
     @State private var confirmedRecoveryToken: UUID?
     @State private var showsFocusRecoveryConfirmation = false
+    @State private var availableRecovery: MenuBarPreparedWorkspaceRecovery?
+    @State private var showsAvailableRecoveryConfirmation = false
+    @State private var archivedRecoveryToken: UUID?
+    @State private var showsArchiveRemovalConfirmation = false
 
     private var focusLayout: BarlineProfile? {
         manager.profiles.first { $0.id == focusLayoutID }
@@ -175,6 +179,15 @@ struct ProfilesSettingsPane: View {
 
             Section("Recovery") {
                 TemporaryItemRecoveryView(manager: appState.itemManager)
+                if let token = manager.archivedFocusRecoveryToken {
+                    Text("A previous partial recovery checkpoint is kept for manual recovery. It is not an active Focus. Discard it only if you no longer need the original arrangement; a new partial recovery will not overwrite it.")
+                        .foregroundStyle(.secondary)
+                    Button("Discard Archived Checkpoint…") {
+                        archivedRecoveryToken = token
+                        showsArchiveRemovalConfirmation = true
+                    }
+                    .accessibilityIdentifier("discard-archived-focus-recovery")
+                }
                 if let token = manager.interruptedFocusRecoveryToken {
                     Text("An interrupted Focus layout is awaiting recovery. Restore its saved pre-Focus layout and appearance only if you want to replace the current arrangement.")
                         .foregroundStyle(.secondary)
@@ -184,6 +197,15 @@ struct ProfilesSettingsPane: View {
                     }
                     .disabled(!appState.permissions.accessibility.hasPermission)
                     .accessibilityIdentifier("restore-interrupted-focus-layout")
+                    Button("Review Available-Item Recovery…") {
+                        confirmedRecoveryToken = token
+                        Task {
+                            availableRecovery = await manager.previewAvailableFocusRecovery(confirmedToken: token)
+                            showsAvailableRecoveryConfirmation = availableRecovery != nil
+                        }
+                    }
+                    .disabled(!appState.permissions.accessibility.hasPermission)
+                    .accessibilityIdentifier("preview-available-focus-recovery")
                 }
                 HStack {
                     Button("Undo Layout Change") {
@@ -217,6 +239,25 @@ struct ProfilesSettingsPane: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This replaces the current menu bar arrangement and layout settings with the saved pre-Focus checkpoint. Saved layouts are not deleted. If restoration cannot be verified, the checkpoint is retained.")
+        }
+        .alert("Restore available items?", isPresented: $showsAvailableRecoveryConfirmation) {
+            Button("Restore Available Items") {
+                guard let token = confirmedRecoveryToken, let prepared = availableRecovery else { return }
+                availableRecovery = nil
+                Task { await manager.restoreAvailableFocusLayout(confirmedToken: token, prepared: prepared) }
+            }
+            Button("Cancel", role: .cancel) { availableRecovery = nil }
+        } message: {
+            Text("\(availableRecovery?.preview.missingItemIDs.count ?? 0) saved items are unavailable; \(availableRecovery?.preview.addedItemIDs.count ?? 0) new items will be preserved. This replaces the available items’ arrangement and layout settings. The original checkpoint stays available. Any change since this preview cancels recovery.")
+        }
+        .confirmationDialog("Discard the archived recovery checkpoint?", isPresented: $showsArchiveRemovalConfirmation) {
+            Button("Discard Archived Checkpoint", role: .destructive) {
+                guard let token = archivedRecoveryToken else { return }
+                manager.discardArchivedFocusRecovery(confirmedToken: token)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes only the previous partial recovery checkpoint. The current arrangement, saved layouts, and any newer interrupted Focus transaction are preserved.")
         }
         .onChange(of: manager.profiles.map(\.id), initial: true) {
             guard focusLayout == nil else { return }

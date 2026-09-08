@@ -4,6 +4,16 @@ import Foundation
 /// description, userInfo, identity, title, path, or a nested error in a log.
 public enum PrivacySafeDiagnostics {
     public static func errorCode(_ error: any Error) -> String {
+        if let recoveryError = error as? WorkspaceRecoveryPlanner.Failure {
+            switch recoveryError {
+            case .ambiguousIdentity: return "recovery_ambiguous_identity"
+            case .displayTopologyChanged: return "recovery_display_changed"
+            case .itemChangedDisplay: return "recovery_item_display_changed"
+            case .invalidLiveState: return "recovery_invalid_live_state"
+            case .incompleteInventory: return "recovery_inventory_changed"
+            case .exactTargetUnavailable: return "recovery_target_unavailable"
+            }
+        }
         if let transactionError = error as? MenuBarWorkspaceTransactionError {
             switch transactionError {
             case .superseded: return "workspace_superseded"

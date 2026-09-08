@@ -60,6 +60,17 @@ public enum MenuBarConditionalRestoreResult: Sendable, Equatable {
     case superseded
 }
 
+/// A confirmation binds to both the original checkpoint and an observed live
+/// workspace. Callers cannot construct or alter a prepared recovery.
+public struct MenuBarPreparedWorkspaceRecovery: Sendable {
+    public let preview: WorkspaceRecoveryPlanner.Preview
+    public let checkpoint: MenuBarWorkspaceCheckpoint
+    fileprivate let source: MenuBarWorkspaceCheckpoint
+    fileprivate let target: MenuBarWorkspaceCheckpoint
+    fileprivate let mutationGeneration: UInt64
+    fileprivate let workspaceRevision: UInt64?
+}
+
 public enum PendingProfileActivationRecoveryResult: Sendable, Equatable {
     case promoted(ResolvedProfilePresentation)
     case restored(MenuBarSnapshot)
@@ -1113,6 +1124,13 @@ public actor MenuBarStateCoordinator {
             workspaceTransaction: workspaceTransaction,
             now: now
         )
+        // Reject stale or impossible exact recovery before applying workspace
+        // settings. The helper repeats admission against its own live inventory.
+        _ = try await WorkspaceRecoveryPlanner.exactPlan(
+            saved: checkpoint.snapshot,
+            live: live.snapshot,
+            destinationSupport: backend.capabilities.moveDestinationSupport ?? .existingItemRequired
+        )
         let target = HistoryCheckpoint(
             snapshot: checkpoint.snapshot,
             activeProfileID: checkpoint.activeProfileID,
@@ -1131,6 +1149,79 @@ public actor MenuBarStateCoordinator {
             workspace: live.workspace
         )
         return restored
+    }
+
+    public func prepareAvailableWorkspaceRecovery(
+        _ checkpoint: MenuBarWorkspaceCheckpoint,
+        workspaceTransaction: MenuBarWorkspaceTransaction,
+        now: Date? = nil
+    ) async throws -> MenuBarPreparedWorkspaceRecovery {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
+        try ProfileValidator().validate(checkpoint.workspace)
+        if case let .failure(reason) = validator.validate(
+            checkpoint.snapshot, previous: nil, now: checkpoint.snapshot.capturedAt
+        ) {
+            throw MenuBarBackendError.invalidSnapshot(reason)
+        }
+        let live = try await refreshedHistoryStartingCheckpoint(workspaceTransaction: workspaceTransaction, now: now)
+        guard let workspace = live.workspace else { throw MenuBarWorkspaceTransactionError.superseded }
+        let preview = try await WorkspaceRecoveryPlanner.preview(
+            saved: checkpoint.snapshot, live: live.snapshot,
+            destinationSupport: backend.capabilities.moveDestinationSupport ?? .existingItemRequired
+        )
+        return try MenuBarPreparedWorkspaceRecovery(
+            preview: preview,
+            checkpoint: checkpoint,
+            source: MenuBarWorkspaceCheckpoint(
+                snapshot: live.snapshot, activeProfileID: live.activeProfileID, workspace: workspace
+            ),
+            target: MenuBarWorkspaceCheckpoint(
+                snapshot: preview.targetSnapshot(from: live.snapshot),
+                activeProfileID: nil, activeDisplayID: checkpoint.activeDisplayID, workspace: checkpoint.workspace
+            ),
+            mutationGeneration: mutationGeneration,
+            workspaceRevision: live.workspaceRevision
+        )
+    }
+
+    public func restoreAvailableWorkspaceRecovery(
+        _ prepared: MenuBarPreparedWorkspaceRecovery,
+        workspaceTransaction: MenuBarWorkspaceTransaction,
+        now: Date? = nil
+    ) async throws -> MenuBarWorkspaceCheckpoint {
+        await acquireMutationTurn()
+        defer { releaseMutationTurn() }
+        try requireItemInteraction(nil)
+        guard prepared.mutationGeneration == mutationGeneration else {
+            throw MenuBarWorkspaceTransactionError.superseded
+        }
+        let live = try await refreshedHistoryStartingCheckpoint(workspaceTransaction: workspaceTransaction, now: now)
+        try validateHistoryResult(live.snapshot, matches: prepared.source.snapshot)
+        guard live.workspace == prepared.source.workspace,
+              live.workspaceRevision == prepared.workspaceRevision,
+              live.activeProfileID == prepared.source.activeProfileID
+        else { throw MenuBarWorkspaceTransactionError.superseded }
+        let restored = try await restoreHistoryCheckpoint(
+            HistoryCheckpoint(
+                snapshot: prepared.target.snapshot, activeProfileID: nil,
+                workspace: prepared.target.workspace, workspaceRevision: nil
+            ),
+            previous: live, now: now, workspaceTransaction: workspaceTransaction,
+            admittedRecoveryPlan: prepared.preview.availableItemsPlan
+        )
+        recordUndoCheckpoint(live.snapshot, activeProfileID: live.activeProfileID, workspace: live.workspace)
+        let observedDisplay: MenuBarDisplayID? = if let destination = prepared.target.workspace.presentation?.destinationDisplayID {
+            destination
+        } else {
+            try? await backend.environment().activeStableDisplayID
+        }
+        return MenuBarWorkspaceCheckpoint(
+            snapshot: restored, activeProfileID: nil,
+            activeDisplayID: observedDisplay.flatMap { restored.displayIDs.contains($0) ? $0 : nil },
+            workspace: prepared.target.workspace
+        )
     }
 
     /// Restores a journaled workspace only while the profile that created it
@@ -1261,7 +1352,8 @@ public actor MenuBarStateCoordinator {
         _ target: HistoryCheckpoint,
         previous: HistoryCheckpoint,
         now: Date?,
-        workspaceTransaction: MenuBarWorkspaceTransaction? = nil
+        workspaceTransaction: MenuBarWorkspaceTransaction? = nil,
+        admittedRecoveryPlan: ProfileLayoutReconciler.DisplayPlan? = nil
     ) async throws -> MenuBarSnapshot {
         guard await backend.capabilities.canRestore else {
             throw MenuBarBackendError.unavailableCapability("restore")
@@ -1311,7 +1403,14 @@ public actor MenuBarStateCoordinator {
             // the newer pre-undo snapshot would reject a correct restore.
             switch validator.validate(candidate, previous: nil, now: now ?? Date()) {
             case let .success(snapshot):
-                try validateHistoryResult(snapshot, matches: target.snapshot)
+                if let admittedRecoveryPlan {
+                    guard snapshot.displayIDs == target.snapshot.displayIDs,
+                          snapshot.displayIdentities == target.snapshot.displayIdentities,
+                          admittedRecoveryPlan.matches(items: snapshot.items)
+                    else { throw WorkspaceRecoveryPlanner.Failure.exactTargetUnavailable }
+                } else {
+                    try validateHistoryResult(snapshot, matches: target.snapshot)
+                }
                 let revisionToValidate = appliedWorkspaceRevision ?? previous.workspaceRevision
                 if let revisionToValidate,
                    await workspaceTransaction?.currentRevision() != revisionToValidate

@@ -476,18 +476,31 @@ final class WindowServerClient: @unchecked Sendable {
         guard priorSnapshot.items.count <= 256 else {
             throw MenuBarBackendError.operationFailed("restore plan exceeds the safe operation limit")
         }
-        let operations = MenuBarMovePlanner().restoreOperations(for: priorSnapshot)
+        let live = try snapshot()
+        let plan = try WorkspaceRecoveryPlanner.exactPlan(saved: priorSnapshot, live: live)
+        let operations = plan.operations
         guard operations.count <= 256 else {
             throw MenuBarBackendError.operationFailed("restore plan exceeds the safe operation limit")
         }
         var changed = [MenuBarItemID]()
         for operation in operations {
             try Task.checkCancellation()
+            // A process can add/remove an item between drags. Never continue a
+            // stale plan simply because the next source identity still exists.
+            let current = try snapshot()
+            guard current.displayIDs == live.displayIDs,
+                  Set(current.items.map(\.id)) == Set(live.items.map(\.id))
+            else {
+                throw WorkspaceRecoveryPlanner.Failure.incompleteInventory
+            }
             _ = try await moveWhileExclusive(operation)
             changed.append(operation.itemID)
         }
         try Task.checkCancellation()
         let updated = try snapshot()
+        guard plan.matches(items: updated.items) else {
+            throw WorkspaceRecoveryPlanner.Failure.exactTargetUnavailable
+        }
         return MenuBarMutationResult(generation: updated.generation, changedItemIDs: changed)
     }
 
