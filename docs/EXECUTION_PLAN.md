@@ -1,5 +1,14 @@
 # Barline execution plan
 
+## Build 31 diagnostic candidate — September 8, 2026
+
+Build 31 includes the closed activation-error diagnostics from `211b04d`,
+whose focused tests and fast gate passed. No click timing, process-resolution
+guard, event-delivery behavior, or restoration policy is intentionally changed.
+The candidate must pass local build/distribution gates before a preserved-state
+update and a bounded Time Machine/Google Drive reproduction. Build 30 remains
+installed until then; shelf activation remains a release blocker.
+
 ## Build 30 activation release blocker — September 8, 2026
 
 The installed signed update passed preservation checks and the maintainer
