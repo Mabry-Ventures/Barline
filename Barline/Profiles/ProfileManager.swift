@@ -33,6 +33,7 @@ final class ProfileManager: ObservableObject {
     @Published private(set) var pendingArchiveImport: ProfileArchiveImportPreview?
     @Published private(set) var pendingIceImports = [IceImportPreview]()
     @Published private(set) var isBusy = false
+    @Published private(set) var interruptedFocusRecoveryToken: UUID?
     @Published var statusMessage: String?
 
     /// This is authority from Barline's configured native Focus Filter, not a
@@ -446,6 +447,37 @@ final class ProfileManager: ObservableObject {
                 activationRequests.removeAll()
                 setActiveProfileAuthorityToken(nil)
             }
+        }
+    }
+
+    /// A user-confirmed restore, not an automatic claim of Focus ownership.
+    /// Bind confirmation to the exact transaction so a newer journal cannot be restored.
+    func restoreInterruptedFocusLayout(confirmedToken: UUID) async {
+        guard let appState else { return }
+        appState.contextualRules.pauseForManualChange()
+        await performOperation(successMessage: "Pre-Focus layout restored.") {
+            guard let pending = self.pendingFocusAuthority(matching: confirmedToken),
+                  let checkpoint = pending.checkpoint,
+                  let encoded = try? JSONEncoder().encode(checkpoint),
+                  self.decodeFocusCheckpoint(encoded) != nil
+            else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            _ = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
+                checkpoint,
+                workspaceTransaction: self.workspaceTransaction()
+            )
+            guard self.pendingFocusAuthority(matching: confirmedToken) == pending,
+                  await self.currentWorkspaceMatches(checkpoint)
+            else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            return checkpoint
+        } completion: { [weak self] checkpoint in
+            guard let self else { return }
+            restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
+            activationRequests.removeValue(forKey: .focus)
+            clearProfileBeforeFocus()
         }
     }
 
@@ -1876,6 +1908,7 @@ final class ProfileManager: ObservableObject {
     }
 
     private func recoverPendingFocusAuthority() async -> PendingFocusRecoveryOutcome {
+        defer { interruptedFocusRecoveryToken = pendingFocusAuthority()?.token }
         guard let appState, let pending = pendingFocusAuthority() else { return .none }
         guard let checkpoint = pending.checkpoint,
               let encodedCheckpoint = try? JSONEncoder().encode(checkpoint),
@@ -2109,7 +2142,10 @@ final class ProfileManager: ObservableObject {
         await profileOperationSemaphore.wait()
         defer { profileOperationSemaphore.signal() }
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            interruptedFocusRecoveryToken = pendingFocusAuthority()?.token
+        }
         do {
             let value = try await operation()
             completion(value)

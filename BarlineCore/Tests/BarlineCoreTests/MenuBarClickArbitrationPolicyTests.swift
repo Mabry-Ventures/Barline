@@ -8,6 +8,18 @@ import Testing
 
 @Suite("Menu-bar click arbitration")
 struct MenuBarClickArbitrationPolicyTests {
+    @Test("An unavailable hit-test snapshot is not evidence of empty menu-bar space")
+    func missingHitTestSnapshot() {
+        #expect(!MenuBarClickArbitrationPolicy.isEmptyMenuBarSpace(
+            isInsideMenuBar: true,
+            isInsideApplicationMenu: false,
+            isInsidePrimaryControlItem: false,
+            isInsideCachedMenuBarItem: false,
+            isInsideNotch: false,
+            hasHitTestSnapshot: false
+        ))
+    }
+
     @Test("A windowless hosted control click cannot schedule rehide with stale bar geometry")
     func windowlessPrimaryClickDoesNotRehide() {
         #expect(!MenuBarClickArbitrationPolicy.shouldScheduleSmartRehide(

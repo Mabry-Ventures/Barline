@@ -20,6 +20,8 @@ struct ProfilesSettingsPane: View {
     @State private var showsArchiveExporter = false
     @State private var showsArchiveImporter = false
     @State private var focusLayoutID: UUID?
+    @State private var confirmedRecoveryToken: UUID?
+    @State private var showsFocusRecoveryConfirmation = false
 
     private var focusLayout: BarlineProfile? {
         manager.profiles.first { $0.id == focusLayoutID }
@@ -173,6 +175,16 @@ struct ProfilesSettingsPane: View {
 
             Section("Recovery") {
                 TemporaryItemRecoveryView(manager: appState.itemManager)
+                if let token = manager.interruptedFocusRecoveryToken {
+                    Text("An interrupted Focus layout is awaiting recovery. Restore its saved pre-Focus layout and appearance only if you want to replace the current arrangement.")
+                        .foregroundStyle(.secondary)
+                    Button("Restore Pre-Focus Layout…") {
+                        confirmedRecoveryToken = token
+                        showsFocusRecoveryConfirmation = true
+                    }
+                    .disabled(!appState.permissions.accessibility.hasPermission)
+                    .accessibilityIdentifier("restore-interrupted-focus-layout")
+                }
                 HStack {
                     Button("Undo Layout Change") {
                         Task { await manager.undoLayoutChange() }
@@ -197,6 +209,15 @@ struct ProfilesSettingsPane: View {
         }
         .formStyle(.grouped)
         .disabled(manager.isBusy)
+        .confirmationDialog("Restore the pre-Focus layout?", isPresented: $showsFocusRecoveryConfirmation) {
+            Button("Restore Pre-Focus Layout") {
+                guard let token = confirmedRecoveryToken else { return }
+                Task { await manager.restoreInterruptedFocusLayout(confirmedToken: token) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces the current menu bar arrangement and layout settings with the saved pre-Focus checkpoint. Saved layouts are not deleted. If restoration cannot be verified, the checkpoint is retained.")
+        }
         .onChange(of: manager.profiles.map(\.id), initial: true) {
             guard focusLayout == nil else { return }
             focusLayoutID = manager.profiles.first { $0.id == manager.activeProfileID }?.id

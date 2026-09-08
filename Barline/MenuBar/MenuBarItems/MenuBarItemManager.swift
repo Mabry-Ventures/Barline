@@ -208,6 +208,8 @@ extension MenuBarItemManager {
 
     /// Cache for menu bar items.
     struct ItemCache: Hashable {
+        /// Hit testing includes system controls and clones that cannot be managed.
+        fileprivate(set) var hitTestItems = [MenuBarItem]()
         /// Storage for cached menu bar items, keyed by section.
         private var storage = [MenuBarSection.Name: [MenuBarItem]]()
 
@@ -414,6 +416,7 @@ extension MenuBarItemManager {
         }
 
         var context = CacheContext(controlItems: controlItems, displayID: displayID)
+        context.cache.hitTestItems = items
 
         for item in items where context.isValidForCaching(item) {
             if item.sourcePID == nil {

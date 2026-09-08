@@ -29,9 +29,10 @@ public enum MenuBarClickArbitrationPolicy {
         isInsidePrimaryControlItem: Bool,
         isInsideCachedMenuBarItem: Bool,
         isInsideNotch: Bool,
-        eventTargetsPrimaryControlItem: Bool = false
+        eventTargetsPrimaryControlItem: Bool = false,
+        hasHitTestSnapshot: Bool = true
     ) -> Bool {
-        isInsideMenuBar &&
+        hasHitTestSnapshot && isInsideMenuBar &&
             !eventTargetsPrimaryControlItem &&
             !isInsideApplicationMenu &&
             !isInsidePrimaryControlItem &&

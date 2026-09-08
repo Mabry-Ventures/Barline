@@ -1206,6 +1206,62 @@ struct StateCoordinatorTests {
         #expect(await coordinator.activeProfileID == nil)
     }
 
+    @Test("Explicit recovery after restart restores or compensates failure", arguments: [false, true])
+    func explicitCheckpointRecoveryAfterRestart(restoreFails: Bool) async throws {
+        let original = makeSnapshot(generation: 1, count: 2)
+        let partial = makeProfileSnapshot(
+            generation: 2,
+            layout: ProfileLayout(
+                visible: [original.items[1].id],
+                hidden: [original.items[0].id]
+            )
+        )
+        let restored = makeSnapshot(generation: 3, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        var liveWorkspace = workspace
+        liveWorkspace.shelfBehavior.isEnabled.toggle()
+        liveWorkspace.presentation = nil
+        let recorder = WorkspaceRecorder(initial: liveWorkspace)
+        let backend = FakeBackend(
+            snapshots: [partial, restoreFails ? partial : restored],
+            restoreFailures: restoreFails ? 1 : 0
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: original,
+            activeProfileID: nil,
+            workspace: workspace
+        )
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { try await recorder.apply($0) }
+        )
+
+        if restoreFails {
+            await #expect(throws: MenuBarBackendError.interrupted) {
+                try await coordinator.restoreWorkspaceCheckpoint(
+                    checkpoint, workspaceTransaction: transaction, now: partial.capturedAt
+                )
+            }
+            #expect(await recorder.values == [workspace, liveWorkspace])
+            #expect(await backend.restoredSnapshots == [original, partial])
+            #expect(await coordinator.currentSnapshot == partial)
+        } else {
+            let result = try await coordinator.restoreWorkspaceCheckpoint(
+                checkpoint, workspaceTransaction: transaction, now: partial.capturedAt
+            )
+            #expect(result == restored)
+            #expect(await recorder.values == [workspace])
+            #expect(await backend.restoredSnapshots == [original])
+        }
+
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
     @Test("Pending no-op activation accepts the original state without mutation")
     func acceptsUnchangedPendingActivation() async throws {
         let originalSnapshot = makeSnapshot(generation: 1, count: 2)

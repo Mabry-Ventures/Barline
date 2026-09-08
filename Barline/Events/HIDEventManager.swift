@@ -25,6 +25,7 @@ final class HIDEventManager: ObservableObject {
 
     /// History of the manager's enabled states.
     private var enabledStateStack = [Bool]()
+    private var mouseDownSequence: UInt64 = 0
 
     /// A Boolean value that indicates whether the manager is enabled.
     private var isEnabled = false {
@@ -50,6 +51,7 @@ final class HIDEventManager: ObservableObject {
         guard let self, isEnabled, let appState, let screen = bestScreen(appState: appState) else {
             return event
         }
+        mouseDownSequence &+= 1
         switch event.type {
         case .leftMouseDown:
             handleShowOnClick(with: event, appState: appState, screen: screen)
@@ -195,8 +197,19 @@ extension HIDEventManager {
             return
         }
 
+        let clickLocation = click.location
+        let clickModifiers = event.modifierFlags
+        let requestSequence = mouseDownSequence
         Task {
-            if NSEvent.modifierFlags == .control {
+            // A cached gap is only a candidate. System status items may have
+            // moved since the last snapshot; failed lookup is not empty-space proof.
+            guard let context = try? await BarlineMenuService.Connection.shared.pointContext(at: clickLocation),
+                  !context.isInsideMenuBarItem,
+                  isEnabled,
+                  appState.settings.general.showOnClick,
+                  requestSequence == mouseDownSequence
+            else { return }
+            if clickModifiers == .control {
                 handleSecondaryContextMenu(appState: appState, screen: screen)
                 return
             }
@@ -204,7 +217,7 @@ extension HIDEventManager {
             let targetSection: MenuBarSection
 
             if
-                NSEvent.modifierFlags == .option,
+                clickModifiers == .option,
                 let alwaysHiddenSection = appState.menuBarManager.section(withName: .alwaysHidden),
                 alwaysHiddenSection.isEnabled
             {
@@ -519,7 +532,7 @@ extension HIDEventManager {
         guard let mouseLocation = location else {
             return false
         }
-        return appState.itemManager.itemCache.managedItems.contains {
+        return appState.itemManager.itemCache.hitTestItems.contains {
             $0.isOnScreen && $0.bounds.contains(mouseLocation)
         }
     }
@@ -560,7 +573,8 @@ extension HIDEventManager {
             isInsidePrimaryControlItem: isMouseInsideBarlineIcon(appState: appState, location: appKitLocation),
             isInsideCachedMenuBarItem: isMouseInsideMenuBarItem(appState: appState, screen: screen, location: coreGraphicsLocation),
             isInsideNotch: isMouseInsideNotch(appState: appState, screen: screen, location: appKitLocation),
-            eventTargetsPrimaryControlItem: eventTargetsPrimaryControlItem
+            eventTargetsPrimaryControlItem: eventTargetsPrimaryControlItem,
+            hasHitTestSnapshot: !appState.itemManager.itemCache.hitTestItems.isEmpty
         )
     }
 

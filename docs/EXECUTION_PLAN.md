@@ -1,5 +1,55 @@
 # Barline execution plan
 
+## Build 25 qualification candidate — September 8, 2026
+
+Build 25 retains version 1.0.11 and includes the system-control hit-test correction
+and explicit interrupted-Focus recovery action. App/service/extension versions
+advance together. Unsigned Debug compilation passes including the click sequence
+guard; recovery success and compensated-failure regressions both pass.
+The dirty fast gate passed Core tests but failed site hygiene on an unexpected
+`robots 2.txt` entry that was absent on subsequent inspection. Its failure log is
+preserved; no files were removed to bypass the gate. A new clean candidate outside
+the synchronized workspace must pass qualification. Build 24 remains installed;
+no live recovery, new signed installation, public release or feed change is claimed.
+
+## System-control clicks misclassified as empty space — September 8, 2026
+
+The user reported that clicking the clock or Control Center opens the shelf and
+leaves it visible. Inspection found that HID hit-testing used `managedItems`,
+whose cache deliberately excludes `canBeHidden == false` and system clones.
+The accepted cache now retains an independent hit-test list before management
+filtering. Click/hover empty-space classification uses this list and refuses an
+empty/unavailable cache. Empty-space left-click toggling also requires the helper's
+live point context to confirm no menu-bar item owns the point. Event modifiers
+are captured from the initiating event before the asynchronous lookup.
+
+Seven click-arbitration tests pass, including missing-snapshot rejection and
+preserved genuine-gap eligibility. Updated app compilation and fast gates are
+running. Physical clock/Control Center checks and shelf dismissal remain required;
+the source correction is not yet installed or claimed as a live fix.
+
+## Explicit interrupted-Focus recovery — September 8, 2026
+
+Installed build 24 at `682a7e7` passed 20 bounded status-item clicks (zero
+timeouts, p95 109.4 ms) and one controlled helper interruption (app process
+preserved, replacement helper, recovery click 203.8 ms). Exact candidate receipts
+remain in the frozen worktree's ignored `build24-installed` artifacts. These
+passes do not resolve the earlier input miss or qualify the remaining journeys.
+
+The retained interrupted Focus checkpoint still cannot be automatically recovered
+after presentation evidence was lost across restart. Layouts & Focus now exposes
+a confirmation-gated Restore Pre-Focus Layout action for pending transactions.
+Confirmation binds to the exact journal token; the existing transactional restore
+must succeed and the resulting workspace must match before the journal is cleared.
+Cancellation, stale confirmation and failed restoration cannot discard the journal.
+Automatic recovery remains conservative and is not granted user-override authority.
+
+A focused Core regression passes for explicit checkpoint restoration with absent
+live presentation after restart. Fast checks and unsigned app compilation are in
+progress. No installation or live restore has run for this source change; build 24
+remains installed and its checkpoint is untouched. New source needs fresh candidate
+qualification before distribution.
+
 ## Build 24 independent-review corrections — September 7, 2026
 
 The preliminary clean candidate `d342b85` passed the complete nonfocus suite and
