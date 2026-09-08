@@ -1,5 +1,31 @@
 # Barline execution plan
 
+## Fixed-anchor profile planning — September 7, 2026
+
+A read-only replay of build 23's failed Focus checkpoint found that its saved
+18-item layout was applied to a 20-item snapshot. Fixed-index activation requests
+moving an immovable visible item from section index 12 to 10 after nine simulated
+moves. This proves an invalid plan from the retained input, not the exact live
+failure location. The existing prefix-based authority checks also need to account
+for newly discovered items rather than forcing fixed system items ahead of them.
+
+`ProfileLayoutReconciler` now constructs a complete target while preserving the
+relative order and sections of unspecified items and immovable anchors. Impossible
+fixed-item reorder/section changes and invalid identities fail before a target is
+returned. Four focused tests pass. It is intentionally not wired into activation
+yet: movement generation, display scoping, postconditions and authority matching
+must be integrated and tested together. No live recovery or installed fix is
+claimed by this target-construction step.
+
+The per-display move builder now emits helper-compatible pre-removal insertion
+indices in reverse target order, never scheduling unspecified or immovable items.
+Seven focused tests pass, including all 144 combinations of a small ordering,
+idempotence, cross-section transfers and unavailable physical destinations. Mixed
+display input is rejected by this per-display primitive; multi-display composition
+is still required before integration. The preceding target-only fast gate passed;
+later move-builder edits have focused compilation/test evidence, not that earlier
+gate's full certificate. No live event path uses this builder yet.
+
 ## Native Focus activation/recovery finding — September 7, 2026
 
 Installed build 23 (`aa3e738`) passed native filter configuration and saved-layout
