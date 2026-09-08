@@ -1,6 +1,10 @@
 # Changelog
 
-## 1.0.11 (build 26) — diagnostic candidate
+## 1.0.11 (build 27) — candidate
+
+- Recheck temporarily unavailable helper capabilities on later requests, with
+  bounded probing and no background retry loop, instead of retaining a failed
+  startup probe permanently. Installed recovery qualification remains pending.
 
 - Distinguish interrupted Focus transaction failures from final verification
   failures using fixed privacy-safe diagnostic codes. Recovery qualification

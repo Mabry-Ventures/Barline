@@ -1,5 +1,25 @@
 # Barline execution plan
 
+## Transient backend capability recovery — September 8, 2026
+
+Installed diagnostic build 26 reports `capability_unavailable` during explicit
+Focus restoration. Its local support bundle confirms Fallback/unavailable with
+all capabilities false while Accessibility and Screen Recording are granted.
+The original lock/start timing is not yet proven, but permanently retaining a
+failed factory probe prevents later recovery regardless of that trigger.
+
+The helper now retains a probe-gated backend after unavailable startup and uses
+a serialized, demand-driven two-second capability cache. It neither advertises
+capabilities based solely on OS version nor runs a background timer. Later
+observations can recover or revoke capabilities. Four pure transition/bounding
+regressions and strict lint pass; helper compilation and clean candidate gates
+are next. Installed build 26 is unchanged and the Focus checkpoint is retained.
+No successful runtime recovery or release readiness is claimed.
+App, service and extension advance to build 27. The default DerivedData build
+failed on a stale Sparkle precompiled header; retain its log and use clean
+isolated DerivedData via the canonical qualification script, not a source
+workaround for the cache failure.
+
 ## Installed recovery failure diagnosis — September 8, 2026
 
 Build 25 at `23e55ce` is installed; the maintainer confirmed the clock/Control

@@ -2,19 +2,26 @@ import BarlineCore
 import Foundation
 
 actor TahoeMenuBarBackend: MenuBarBackend {
-    let capabilities: MenuBarCapabilities
     private let client: WindowServerClient
+    private var capabilityCache = MenuBarCapabilityProbeCache()
+
+    var capabilities: MenuBarCapabilities {
+        capabilityCache.resolve(at: DispatchTime.now().uptimeNanoseconds) {
+            let canSnapshot = client.behavioralProbe()
+            let canSynthesize = canSnapshot && client.eventSynthesisProbe()
+            return MenuBarCapabilities(
+                canSnapshot: canSnapshot,
+                canMove: canSynthesize,
+                canReveal: canSynthesize,
+                canActivate: canSynthesize,
+                canRestore: canSynthesize,
+                canCapture: canSnapshot
+            )
+        }
+    }
 
     init(client: WindowServerClient) {
         self.client = client
-        capabilities = MenuBarCapabilities(
-            canSnapshot: client.behavioralProbe(),
-            canMove: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canReveal: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canActivate: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canRestore: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canCapture: client.behavioralProbe()
-        )
     }
 
     func snapshot() throws -> MenuBarSnapshot {
@@ -83,19 +90,26 @@ actor TahoeMenuBarBackend: MenuBarBackend {
 }
 
 actor GoldenGateMenuBarBackend: MenuBarBackend {
-    let capabilities: MenuBarCapabilities
     private let client: WindowServerClient
+    private var capabilityCache = MenuBarCapabilityProbeCache()
+
+    var capabilities: MenuBarCapabilities {
+        capabilityCache.resolve(at: DispatchTime.now().uptimeNanoseconds) {
+            let canSnapshot = client.behavioralProbe()
+            let canSynthesize = canSnapshot && client.eventSynthesisProbe()
+            return MenuBarCapabilities(
+                canSnapshot: canSnapshot,
+                canMove: canSynthesize,
+                canReveal: canSynthesize,
+                canActivate: canSynthesize,
+                canRestore: canSynthesize,
+                canCapture: canSnapshot
+            )
+        }
+    }
 
     init(client: WindowServerClient) {
         self.client = client
-        capabilities = MenuBarCapabilities(
-            canSnapshot: client.behavioralProbe(),
-            canMove: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canReveal: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canActivate: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canRestore: client.behavioralProbe() && client.eventSynthesisProbe(),
-            canCapture: client.behavioralProbe()
-        )
     }
 
     func snapshot() throws -> MenuBarSnapshot {
@@ -221,10 +235,9 @@ enum MenuBarBackendFactory {
             }
         }
 
-        let tahoe = TahoeMenuBarBackend(client: client)
-        if client.behavioralProbe() {
-            return tahoe
-        }
-        return FallbackMenuBarBackend()
+        // A failed startup observation may mean the session is locked, not an
+        // unsupported API. Retain a probe-gated backend so later requests can
+        // recover; no capability becomes available until its live probe passes.
+        return TahoeMenuBarBackend(client: client)
     }
 }
