@@ -822,16 +822,11 @@ public enum ProfileAuthorityMatcher {
         guard expectedWorkspace == checkpoint.workspace else {
             return false
         }
-        let scopedItems = presentation.destinationDisplayID.map { activeDisplayID in
-            checkpoint.snapshot.items.filter { $0.displayID == activeDisplayID }
-        } ?? checkpoint.snapshot.items
-        let visible = scopedItems.filter { $0.section == .visible }.map(\.id)
-        let hidden = scopedItems.filter { $0.section == .hidden }.map(\.id)
-        let alwaysHidden = scopedItems.filter { $0.section == .alwaysHidden }.map(\.id)
-        let layout = presentation.layout
-        return visible.starts(with: layout.visible)
-            && hidden.starts(with: layout.hidden)
-            && alwaysHidden.starts(with: layout.alwaysHidden)
+        return ProfileLayoutReconciler.matches(
+            layout: presentation.layout,
+            items: checkpoint.snapshot.items,
+            displayID: presentation.destinationDisplayID
+        )
     }
 }
 

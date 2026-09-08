@@ -26,6 +26,52 @@ public enum ProfileLayoutReconciler {
     public struct DisplayPlan: Equatable, Sendable {
         public let targets: [ScopedTarget]
         public let operations: [MenuBarMoveOperation]
+
+        /// Validate the complete admitted target, including preserved anchors.
+        /// A new or missing item during execution invalidates this transaction.
+        public func matches(items: [MenuBarItemDescriptor]) -> Bool {
+            guard Set(items.map(\.id)).count == items.count else { return false }
+            return targets.allSatisfy { target in
+                ProfileLayoutReconciler.observedLayout(
+                    items: items.filter { $0.displayID == target.displayID }
+                ) == target.layout
+            }
+        }
+    }
+
+    /// Authority is based on the same fixed-anchor ordering as activation, not
+    /// a saved prefix that would incorrectly displace newly discovered items.
+    public static func matches(
+        layout: ProfileLayout,
+        items: [MenuBarItemDescriptor],
+        displayID: MenuBarDisplayID? = nil
+    ) -> Bool {
+        guard Set(items.map(\.id)).count == items.count,
+              Set(layout.allItemIDs).count == layout.allItemIDs.count
+        else { return false }
+        let scoped = displayID.map { display in items.filter { $0.displayID == display } } ?? items
+        let known = Set(scoped.map(\.id))
+        guard layout.allItemIDs.allSatisfy({ known.contains($0) }) else { return false }
+        return Set(scoped.map(\.displayID)).allSatisfy { display in
+            let localItems = scoped.filter { $0.displayID == display }
+            let ids = Set(localItems.map(\.id))
+            let localLayout = ProfileLayout(
+                visible: layout.visible.filter { ids.contains($0) },
+                hidden: layout.hidden.filter { ids.contains($0) },
+                alwaysHidden: layout.alwaysHidden.filter { ids.contains($0) }
+            )
+            guard let target = try? reconcile(layout: localLayout, items: localItems) else { return false }
+            return observedLayout(items: localItems) == target
+        }
+    }
+
+    private static func observedLayout(items: [MenuBarItemDescriptor]) -> ProfileLayout {
+        let ordered = items.sorted { $0.order < $1.order }
+        return ProfileLayout(
+            visible: ordered.filter { $0.section == .visible }.map(\.id),
+            hidden: ordered.filter { $0.section == .hidden }.map(\.id),
+            alwaysHidden: ordered.filter { $0.section == .alwaysHidden }.map(\.id)
+        )
     }
 
     /// Compose display-local plans while translating each operation against the
@@ -33,7 +79,8 @@ public enum ProfileLayoutReconciler {
     public static func planAcrossDisplays(
         layout: ProfileLayout,
         items: [MenuBarItemDescriptor],
-        displayID: MenuBarDisplayID? = nil
+        displayID: MenuBarDisplayID? = nil,
+        destinationSupport: MenuBarMoveDestinationSupport = .existingItemRequired
     ) throws -> DisplayPlan {
         guard Set(items.map(\.id)).count == items.count,
               Set(layout.allItemIDs).count == layout.allItemIDs.count
@@ -56,7 +103,7 @@ public enum ProfileLayoutReconciler {
                 hidden: layout.hidden.filter { ids.contains($0) },
                 alwaysHidden: layout.alwaysHidden.filter { ids.contains($0) }
             )
-            let localPlan = try plan(layout: localLayout, items: localItems)
+            let localPlan = try plan(layout: localLayout, items: localItems, destinationSupport: destinationSupport)
             targets.append(ScopedTarget(displayID: display, layout: localPlan.target))
             for operation in localPlan.operations {
                 let destination = global[operation.section] ?? []
@@ -67,6 +114,8 @@ public enum ProfileLayoutReconciler {
                         throw Failure.unsupportedDestination
                     }
                     insertion = index
+                } else if localDestination.isEmpty, destinationSupport == .emptySectionAllowed {
+                    insertion = destination.count
                 } else {
                     guard let last = localDestination.last,
                           let index = destination.firstIndex(of: last)
@@ -92,7 +141,8 @@ public enum ProfileLayoutReconciler {
     /// The caller must retain generation ownership and verify the complete target.
     public static func plan(
         layout: ProfileLayout,
-        items: [MenuBarItemDescriptor]
+        items: [MenuBarItemDescriptor],
+        destinationSupport: MenuBarMoveDestinationSupport = .existingItemRequired
     ) throws -> Plan {
         guard Set(items.map(\.displayID)).count <= 1 else {
             throw Failure.unsupportedDestination
@@ -129,7 +179,7 @@ public enum ProfileLayoutReconciler {
                     continue
                 }
                 // The current helper needs another item as a physical destination.
-                guard destination.contains(where: { $0 != id }) else {
+                guard destinationSupport == .emptySectionAllowed || destination.contains(where: { $0 != id }) else {
                     throw Failure.unsupportedDestination
                 }
                 operations.append(MenuBarMoveOperation(

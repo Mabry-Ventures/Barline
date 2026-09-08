@@ -488,25 +488,13 @@ public actor MenuBarStateCoordinator {
     }
 
     private func validateProfileResult(
-        _ layout: ProfileLayout,
-        in snapshot: MenuBarSnapshot,
-        displayID: MenuBarDisplayID?
+        _ plan: ProfileLayoutReconciler.DisplayPlan,
+        in snapshot: MenuBarSnapshot
     ) throws {
-        for (section, itemIDs) in [
-            (MenuBarSection.visible, layout.visible),
-            (.hidden, layout.hidden),
-            (.alwaysHidden, layout.alwaysHidden),
-        ] {
-            let actualItemIDs = snapshot.items
-                .filter {
-                    $0.section == section && (displayID == nil || $0.displayID == displayID)
-                }
-                .map(\.id)
-            guard actualItemIDs.starts(with: itemIDs) else {
-                throw MenuBarBackendError.operationFailed(
-                    "profile activation did not reach requested layout"
-                )
-            }
+        guard plan.matches(items: snapshot.items) else {
+            throw MenuBarBackendError.operationFailed(
+                "profile activation did not reach requested layout"
+            )
         }
     }
 
@@ -612,6 +600,13 @@ public actor MenuBarStateCoordinator {
         for itemID in layout.allItemIDs where !knownItemIDs.contains(itemID) {
             throw MenuBarBackendError.staleItem(itemID)
         }
+        // Reject an impossible physical destination before journaling or changing
+        // workspace state. The helper's own admission checks remain authoritative.
+        let destinationSupport = await backend.capabilities.moveDestinationSupport ?? .existingItemRequired
+        let layoutPlan = try ProfileLayoutReconciler.planAcrossDisplays(
+            layout: layout, items: before.items, displayID: profileDisplayID,
+            destinationSupport: destinationSupport
+        )
 
         let priorProfileID = startingCheckpoint.activeProfileID
         if let prepareCheckpoint {
@@ -665,28 +660,11 @@ public actor MenuBarStateCoordinator {
                     try await workspaceTransaction.apply(targetWorkspace)
                 }
             }
-            for (section, itemIDs) in [
-                (MenuBarSection.visible, layout.visible),
-                (.hidden, layout.hidden),
-                (.alwaysHidden, layout.alwaysHidden),
-            ] {
-                let sectionCandidates = before.items.filter { $0.section == section }
-                let baseIndex = profileDisplayID.flatMap { displayID in
-                    sectionCandidates.firstIndex(where: { $0.displayID == displayID })
-                } ?? 0
-                for (index, itemID) in itemIDs.enumerated() {
-                    try Task.checkCancellation()
-                    try await admission?()
-                    didBeginLayoutMutation = true
-                    _ = try await backend.move(
-                        MenuBarMoveOperation(
-                            itemID: itemID,
-                            section: section,
-                            index: baseIndex + index,
-                            destinationDisplayID: profileDisplayID
-                        )
-                    )
-                }
+            for operation in layoutPlan.operations {
+                try Task.checkCancellation()
+                try await admission?()
+                didBeginLayoutMutation = true
+                _ = try await backend.move(operation)
             }
 
             try Task.checkCancellation()
@@ -722,7 +700,7 @@ public actor MenuBarStateCoordinator {
                         }
                     }
                 }
-                try validateProfileResult(layout, in: snapshot, displayID: profileDisplayID)
+                try validateProfileResult(layoutPlan, in: snapshot)
                 try await admission?()
                 if let appliedWorkspaceRevision,
                    await workspaceTransaction?.currentRevision() != appliedWorkspaceRevision

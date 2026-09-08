@@ -5,6 +5,11 @@
 
 import Foundation
 
+public enum MenuBarMoveDestinationSupport: String, Codable, Sendable {
+    case existingItemRequired
+    case emptySectionAllowed
+}
+
 public struct MenuBarCapabilities: Codable, Equatable, Sendable {
     public let canSnapshot: Bool
     public let canMove: Bool
@@ -12,6 +17,8 @@ public struct MenuBarCapabilities: Codable, Equatable, Sendable {
     public let canActivate: Bool
     public let canRestore: Bool
     public let canCapture: Bool
+    /// Missing on older peers means a physical destination item is required.
+    public let moveDestinationSupport: MenuBarMoveDestinationSupport?
 
     public init(
         canSnapshot: Bool,
@@ -19,7 +26,8 @@ public struct MenuBarCapabilities: Codable, Equatable, Sendable {
         canReveal: Bool,
         canActivate: Bool,
         canRestore: Bool,
-        canCapture: Bool = false
+        canCapture: Bool = false,
+        moveDestinationSupport: MenuBarMoveDestinationSupport? = nil
     ) {
         self.canSnapshot = canSnapshot
         self.canMove = canMove
@@ -27,6 +35,7 @@ public struct MenuBarCapabilities: Codable, Equatable, Sendable {
         self.canActivate = canActivate
         self.canRestore = canRestore
         self.canCapture = canCapture
+        self.moveDestinationSupport = moveDestinationSupport
     }
 
     public static let fallback = MenuBarCapabilities(

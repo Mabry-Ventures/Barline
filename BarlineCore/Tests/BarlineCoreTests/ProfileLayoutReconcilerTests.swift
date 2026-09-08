@@ -1,8 +1,57 @@
 @testable import BarlineCore
+import Foundation
 import Testing
 
 @Suite("Saved layout and fixed-anchor reconciliation")
 struct ProfileLayoutReconcilerTests {
+    @Test("Older capability payloads retain physical destination requirements")
+    func legacyDestinationCapability() throws {
+        let data = Data(#"{"canSnapshot":true,"canMove":true,"canReveal":true,"canActivate":true,"canRestore":true,"canCapture":false}"#.utf8)
+        let capabilities = try JSONDecoder().decode(MenuBarCapabilities.self, from: data)
+        #expect(capabilities.moveDestinationSupport == nil)
+        let saved = ProfileLayout(hidden: [id("a")])
+        #expect(throws: ProfileLayoutReconciler.Failure.unsupportedDestination) {
+            try ProfileLayoutReconciler.planAcrossDisplays(
+                layout: saved, items: [item("a", 0)],
+                destinationSupport: capabilities.moveDestinationSupport ?? .existingItemRequired
+            )
+        }
+        let logical = try ProfileLayoutReconciler.planAcrossDisplays(
+            layout: saved, items: [item("a", 0)], destinationSupport: .emptySectionAllowed
+        )
+        #expect(logical.operations.count == 1)
+        #expect(logical.targets.first?.layout == saved)
+    }
+
+    @Test("Authority accepts preserved new anchors but rejects wrong saved order and section")
+    func authorityUsesAnchorOrdering() {
+        let saved = ProfileLayout(visible: [id("a"), id("fixed"), id("b")])
+        let live = [item("a", 0), item("new", 1), item("fixed", 2, movable: false), item("b", 3)]
+        #expect(ProfileLayoutReconciler.matches(layout: saved, items: live))
+        #expect(!ProfileLayoutReconciler.matches(
+            layout: saved,
+            items: [item("b", 0), item("new", 1), item("fixed", 2, movable: false), item("a", 3)]
+        ))
+        #expect(!ProfileLayoutReconciler.matches(
+            layout: saved,
+            items: [item("a", 0), item("new", 1), item("fixed", 2, movable: false), item("b", 3, section: .hidden)]
+        ))
+        #expect(!ProfileLayoutReconciler.matches(layout: saved, items: Array(live.dropLast())))
+        #expect(!ProfileLayoutReconciler.matches(layout: saved, items: live + [live[0]]))
+    }
+
+    @Test("Transaction verification rejects additions, missing anchors, and incorrect order")
+    func verifiesCompleteTarget() throws {
+        let live = [item("a", 0), item("new", 1), item("fixed", 2, movable: false), item("b", 3)]
+        let plan = try ProfileLayoutReconciler.planAcrossDisplays(
+            layout: ProfileLayout(visible: [id("a"), id("fixed"), id("b")]), items: live
+        )
+        #expect(plan.matches(items: live))
+        #expect(!plan.matches(items: live + [item("arrived", 4)]))
+        #expect(!plan.matches(items: live.filter { $0.id != id("new") }))
+        #expect(!plan.matches(items: [item("b", 0), item("new", 1), item("fixed", 2, movable: false), item("a", 3)]))
+    }
+
     @Test("Interleaved displays translate local indices without moving foreign anchors")
     func composesDisplayPlans() throws {
         let left = MenuBarDisplayID("left")

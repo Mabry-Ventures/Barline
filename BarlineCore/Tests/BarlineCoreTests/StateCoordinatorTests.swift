@@ -9,6 +9,66 @@ import Testing
 
 @Suite("Transactional state coordinator")
 struct StateCoordinatorTests {
+    @Test("Physical profile destinations are checked before checkpoint or workspace effects")
+    func rejectsEmptyPhysicalDestinationBeforeEffects() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let backend = FakeBackend(
+            snapshots: [before],
+            capabilities: MenuBarCapabilities(
+                canSnapshot: true, canMove: true, canReveal: true, canActivate: true, canRestore: true
+            )
+        )
+        let workspace = WorkspaceRecorder(initial: ProfileWorkspaceState(profile: BarlineProfile(name: "Original")))
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        await #expect(throws: ProfileLayoutReconciler.Failure.unsupportedDestination) {
+            try await coordinator.activate(
+                profile: BarlineProfile(name: "Target", layout: ProfileLayout(hidden: before.items.map(\.id))),
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() }, apply: { try await workspace.apply($0) }
+                ),
+                prepareCheckpoint: { _, _ in Issue.record("Impossible plan must not create a checkpoint") }
+            )
+        }
+        #expect(await workspace.values.isEmpty)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Activation preserves newly discovered anchors and never drags fixed items")
+    func activatesAroundFixedAndNewItems() async throws {
+        let seed = makeSnapshot(generation: 1, count: 4)
+        let ids = seed.items.map(\.id)
+        func snapshot(_ generation: UInt64, indices: [Int]) -> MenuBarSnapshot {
+            MenuBarSnapshot(
+                generation: generation, capturedAt: seed.capturedAt,
+                items: indices.enumerated().map { order, index in
+                    MenuBarItemDescriptor(
+                        id: ids[index], section: .visible, order: order,
+                        displayID: seed.items[index].displayID, isMovable: index != 2
+                    )
+                },
+                displayIDs: seed.displayIDs, activeSpaceIsValid: true
+            )
+        }
+        let before = snapshot(1, indices: [3, 1, 2, 0])
+        let after = snapshot(2, indices: [0, 1, 2, 3])
+        let profile = BarlineProfile(name: "Saved", layout: ProfileLayout(visible: [ids[0], ids[2], ids[3]]))
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let result = try await coordinator.activate(profile: profile, now: after.capturedAt)
+        #expect(result == after)
+        #expect(await coordinator.activeProfileID == profile.id)
+        #expect(await backend.moveOperations.count == 2)
+        #expect(await backend.moveOperations.allSatisfy { $0.itemID != ids[1] && $0.itemID != ids[2] })
+        var workspace = ProfileWorkspaceState(profile: profile)
+        workspace.presentation = try profile.resolvedPresentation(using: nil).resolvingItemIdentities(in: after)
+        #expect(ProfileAuthorityMatcher.matches(
+            profile: profile,
+            checkpoint: MenuBarWorkspaceCheckpoint(snapshot: after, activeProfileID: profile.id, workspace: workspace)
+        ))
+    }
+
     @Test("Rule authority denial occurs before any layout or workspace effect")
     func ruleAdmissionDenialHasNoEffects() async throws {
         let before = makeSnapshot(generation: 1, count: 2)
@@ -937,9 +997,14 @@ struct StateCoordinatorTests {
         #expect(result == after)
         #expect(await coordinator.activeProfileID == profile.id)
         #expect(await backend.moveOperations == [
-            MenuBarMoveOperation(itemID: before.items[2].id, section: .visible, index: 0),
-            MenuBarMoveOperation(itemID: before.items[0].id, section: .hidden, index: 0),
-            MenuBarMoveOperation(itemID: before.items[1].id, section: .alwaysHidden, index: 0),
+            MenuBarMoveOperation(
+                itemID: before.items[0].id, section: .hidden, index: 0,
+                destinationDisplayID: before.items[0].displayID
+            ),
+            MenuBarMoveOperation(
+                itemID: before.items[1].id, section: .alwaysHidden, index: 0,
+                destinationDisplayID: before.items[1].displayID
+            ),
         ])
         #expect(await backend.restoredSnapshots.isEmpty)
     }
@@ -1581,7 +1646,7 @@ struct StateCoordinatorTests {
             displayOverrides: [
                 DisplayProfileOverride(
                     displayID: firstDisplay,
-                    layout: ProfileLayout(visible: [firstItem])
+                    layout: ProfileLayout(hidden: [firstItem])
                 ),
             ]
         )
@@ -2297,7 +2362,7 @@ struct StateCoordinatorTests {
             displayIdentities: [identity],
             activeSpaceIsValid: true
         )
-        let layout = ProfileLayout(visible: before.items.map(\.id))
+        let layout = ProfileLayout(visible: before.items.reversed().map(\.id))
         let rawAfter = makeProfileSnapshot(generation: 2, layout: layout)
         let after = MenuBarSnapshot(
             generation: rawAfter.generation,
@@ -2452,8 +2517,8 @@ struct StateCoordinatorTests {
 
         _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
 
-        #expect(await backend.moveOperations.map(\.itemID) == profile.layout.allItemIDs)
-        #expect(await backend.moveOperations.allSatisfy { $0.destinationDisplayID == nil })
+        // Both displays already match; activation must not issue redundant drags.
+        #expect(await backend.moveOperations.isEmpty)
         #expect(await coordinator.activeProfileID == profile.id)
     }
 
@@ -2463,7 +2528,7 @@ struct StateCoordinatorTests {
         let profile = BarlineProfile(
             id: UUID(101),
             name: "Broken",
-            layout: ProfileLayout(visible: before.items.map(\.id))
+            layout: ProfileLayout(visible: before.items.reversed().map(\.id))
         )
         let verifiedRollback = makeSnapshot(generation: 2, count: 3)
         let backend = FakeBackend(snapshots: [before, verifiedRollback], failMoveAt: 2)
@@ -3117,7 +3182,7 @@ struct StateCoordinatorTests {
         let profile = BarlineProfile(
             id: UUID(102),
             name: "Invalid result",
-            layout: ProfileLayout(visible: before.items.map(\.id))
+            layout: ProfileLayout(visible: before.items.reversed().map(\.id))
         )
         let backend = FakeBackend(snapshots: [before, invalid, verifiedRollback])
         let coordinator = MenuBarStateCoordinator(
@@ -3437,7 +3502,9 @@ private actor FakeBackend: MenuBarBackend {
             canMove: true,
             canReveal: true,
             canActivate: true,
-            canRestore: true
+            canRestore: true,
+            // This logical backend does not synthesize a drag to a physical item.
+            moveDestinationSupport: .emptySectionAllowed
         ),
         mutationDelay: Duration = .zero,
         restartDelay: Duration = .zero,

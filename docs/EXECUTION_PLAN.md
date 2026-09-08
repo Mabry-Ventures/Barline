@@ -1,5 +1,31 @@
 # Barline execution plan
 
+## Integrated fixed-anchor activation — September 7, 2026
+
+Activation now preflights the display-local move plan before creating a checkpoint
+or applying workspace settings, emits only necessary movable-item operations, and
+verifies the complete admitted target. Profile authority uses the same anchor
+ordering instead of a saved prefix. New or missing items during the transaction
+invalidate the target rather than being silently accepted.
+
+Empty-destination behavior is an explicit optional backend capability. Missing
+capabilities (including older peers) require a physical destination item; all
+production backends retain that requirement and the helper checks are unchanged.
+The logical test backend explicitly advertises its existing empty-section support.
+Rollback tests now request actual changes instead of depending on redundant no-op
+drags to trigger failures. New regressions verify preflight has no checkpoint or
+workspace effects, preserved anchors, immutable item exclusion, and authority.
+
+The integrated fast run's 329 Core tests and unsigned Debug compilation passed.
+Its formatting gate found import ordering and await placement; both were corrected
+and the complete fast-gate rerun passed. Prior failed integration runs remain
+in the ignored local acceptance logs. A read-only replay of the actual retained
+20-item checkpoint produces six moves, zero fixed-item moves and zero unspecified
+item moves under the physical destination contract. This is planner evidence,
+not live WindowServer execution. Installed build 23 and its
+pending recovery checkpoint remain untouched. No new installed Focus activation,
+restoration, signature, notarization, or release qualification is claimed.
+
 ## Fixed-anchor profile planning — September 7, 2026
 
 A read-only replay of build 23's failed Focus checkpoint found that its saved
