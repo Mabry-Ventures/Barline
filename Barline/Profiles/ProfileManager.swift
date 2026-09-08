@@ -272,7 +272,9 @@ final class ProfileManager: ObservableObject {
                 if self.pendingFocusAuthority(matching: resolvedAuthorityToken) != nil {
                     self.activeProfileID = nil
                     self.activeProfileActivatedAt = nil
-                    self.activePresentation = nil
+                    // Keep the workspace presentation actually left by apply/rollback.
+                    // Clearing profile authority must not fabricate a nil workspace:
+                    // pending recovery compares this live state with its checkpoint.
                     self.processedDefaults.removeObject(
                         forKey: Self.activeProfileAuthorityTokenKey
                     )
@@ -1949,7 +1951,8 @@ final class ProfileManager: ObservableObject {
             case .inconclusive:
                 activeProfileID = nil
                 activeProfileActivatedAt = nil
-                activePresentation = nil
+                // Inconclusive is not a workspace mutation. Retain its observed
+                // presentation so a later verified recovery can still compare it.
                 processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
                 statusMessage = "Barline preserved an interrupted Focus profile recovery for review."
                 return .failed
@@ -1957,7 +1960,7 @@ final class ProfileManager: ObservableObject {
         } catch {
             activeProfileID = nil
             activeProfileActivatedAt = nil
-            activePresentation = nil
+            // Recovery failure cannot author a replacement workspace either.
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
             statusMessage = "Barline could not recover an interrupted Focus profile activation."
             return .failed

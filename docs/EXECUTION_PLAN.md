@@ -1,5 +1,32 @@
 # Barline execution plan
 
+## Native Focus activation/recovery finding — September 7, 2026
+
+Installed build 23 (`aa3e738`) passed native filter configuration and saved-layout
+selection, but a physical Work Focus activation failed. The application retained
+a pending checkpoint without committing Focus authority; returning to Sleep did
+not resolve it. The temporary Work filter was removed, Sleep was verified on,
+and the application checkpoint remains untouched. A changed serialized appearance
+hash is not proof of a modeled appearance difference: target and checkpoint
+appearance values match. The original layout mutation failure remains unattributed.
+
+A two-case coordinator regression demonstrates that a partial activation can
+restore with retained live presentation, but must remain inconclusive without
+that evidence. The app's pending-error path previously erased that presentation
+while clearing active profile authority. It now retains the presentation actually
+left by apply/rollback, without reconstructing it from the desired journal state
+or relaxing recovery comparisons. Inconclusive/failed recovery likewise does not
+author a nil workspace. This addresses an in-process recovery-evidence loss,
+not relaunch reconstruction or the original activation failure. New source needs
+fresh qualification; the signed installed build and its evidence remain unchanged.
+
+The focused two-case reproduction, 315 Core tests within the fast gate, the
+remaining fast checks, formatting, and unsigned Debug compilation passed locally.
+Evidence is retained under `.artifacts/local-acceptance-2026-09-07/` in the
+`focus-recovery-*` logs. These tests establish the recovery-evidence distinction;
+they do not certify the ProfileManager error path on the installed app or repair
+the original live activation failure.
+
 ## Native Focus extension repair — September 7, 2026
 
 Signed build 22 (`249dcb0`) passed clean nonfocus gates, notarization, a

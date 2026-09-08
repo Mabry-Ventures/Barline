@@ -1069,6 +1069,59 @@ struct StateCoordinatorTests {
         #expect(await backend.restoredSnapshots == [originalSnapshot])
     }
 
+    @Test("Partial Focus recovery needs retained presentation evidence", arguments: [false, true])
+    func partialFocusRecoveryRequiresPresentationEvidence(retainsPresentation: Bool) async throws {
+        let originalSnapshot = makeSnapshot(generation: 1, count: 2)
+        let targetLayout = ProfileLayout(hidden: originalSnapshot.items.map(\.id))
+        let partialSnapshot = makeProfileSnapshot(
+            generation: 2,
+            layout: ProfileLayout(
+                visible: [originalSnapshot.items[1].id],
+                hidden: [originalSnapshot.items[0].id]
+            )
+        )
+        let restoredSnapshot = makeSnapshot(generation: 3, count: 2)
+        let profile = BarlineProfile(id: UUID(119), name: "Pending", layout: targetLayout)
+        let presentation = profile.resolvedPresentation(using: nil)
+        var liveWorkspace = ProfileWorkspaceState(profile: profile)
+        // ProfileManager currently clears this on its activation-error path.
+        // Do not substitute the journal's desired presentation for live evidence.
+        liveWorkspace.presentation = retainsPresentation ? presentation : nil
+        let originalWorkspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: liveWorkspace)
+        let backend = FakeBackend(snapshots: [partialSnapshot, restoredSnapshot])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let result = try await coordinator.recoverPendingProfileActivation(
+            profile: profile,
+            persistedPresentation: presentation,
+            checkpoint: MenuBarWorkspaceCheckpoint(
+                snapshot: originalSnapshot,
+                activeProfileID: nil,
+                workspace: originalWorkspace
+            ),
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { await recorder.capture() },
+                apply: { try await recorder.apply($0) }
+            ),
+            now: partialSnapshot.capturedAt
+        )
+
+        if retainsPresentation {
+            #expect(result == .restored(restoredSnapshot))
+            #expect(await recorder.values == [originalWorkspace])
+            #expect(await backend.restoredSnapshots == [originalSnapshot])
+        } else {
+            #expect(result == .inconclusive)
+            #expect(await recorder.values.isEmpty)
+            #expect(await backend.restoredSnapshots.isEmpty)
+        }
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
     @Test("Pending no-op activation accepts the original state without mutation")
     func acceptsUnchangedPendingActivation() async throws {
         let originalSnapshot = makeSnapshot(generation: 1, count: 2)
