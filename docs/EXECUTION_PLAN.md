@@ -26,6 +26,16 @@ is still required before integration. The preceding target-only fast gate passed
 later move-builder edits have focused compilation/test evidence, not that earlier
 gate's full certificate. No live event path uses this builder yet.
 
+Multi-display composition now splits base layouts by current display ownership
+and translates each local operation against simulated global section indices.
+A scoped layout emits operations only for its requested display. Nine focused
+tests pass, including interleaved displays and scope exclusion. Activation remains
+unwired pending shared postconditions/authority integration and empty-destination
+contract review: the physical helper requires another destination item, whereas
+some existing fake-backend activation fixtures allow empty target sections.
+Do not silently change those tests or weaken the physical precondition to obtain
+a passing integration run.
+
 ## Native Focus activation/recovery finding — September 7, 2026
 
 Installed build 23 (`aa3e738`) passed native filter configuration and saved-layout

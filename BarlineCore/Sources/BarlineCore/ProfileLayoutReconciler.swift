@@ -18,6 +18,76 @@ public enum ProfileLayoutReconciler {
         public let operations: [MenuBarMoveOperation]
     }
 
+    public struct ScopedTarget: Equatable, Sendable {
+        public let displayID: MenuBarDisplayID?
+        public let layout: ProfileLayout
+    }
+
+    public struct DisplayPlan: Equatable, Sendable {
+        public let targets: [ScopedTarget]
+        public let operations: [MenuBarMoveOperation]
+    }
+
+    /// Compose display-local plans while translating each operation against the
+    /// simulated global section state, exactly as the helper indexes candidates.
+    public static func planAcrossDisplays(
+        layout: ProfileLayout,
+        items: [MenuBarItemDescriptor],
+        displayID: MenuBarDisplayID? = nil
+    ) throws -> DisplayPlan {
+        guard Set(items.map(\.id)).count == items.count,
+              Set(layout.allItemIDs).count == layout.allItemIDs.count
+        else { throw Failure.ambiguousIdentity }
+        let scopedItems = displayID.map { display in items.filter { $0.displayID == display } } ?? items
+        let known = Dictionary(uniqueKeysWithValues: scopedItems.map { ($0.id, $0) })
+        guard layout.allItemIDs.allSatisfy({ known[$0] != nil }) else { throw Failure.missingItem }
+        let displays = Set(scopedItems.map(\.displayID)).sorted { ($0?.value ?? "") < ($1?.value ?? "") }
+        let allKnown = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        var global = Dictionary(uniqueKeysWithValues: MenuBarSection.allCases.map { section in
+            (section, items.filter { $0.section == section }.sorted { $0.order < $1.order }.map(\.id))
+        })
+        var targets = [ScopedTarget]()
+        var operations = [MenuBarMoveOperation]()
+        for display in displays {
+            let localItems = scopedItems.filter { $0.displayID == display }
+            let ids = Set(localItems.map(\.id))
+            let localLayout = ProfileLayout(
+                visible: layout.visible.filter { ids.contains($0) },
+                hidden: layout.hidden.filter { ids.contains($0) },
+                alwaysHidden: layout.alwaysHidden.filter { ids.contains($0) }
+            )
+            let localPlan = try plan(layout: localLayout, items: localItems)
+            targets.append(ScopedTarget(displayID: display, layout: localPlan.target))
+            for operation in localPlan.operations {
+                let destination = global[operation.section] ?? []
+                let localDestination = destination.filter { allKnown[$0]?.displayID == display }
+                let insertion: Int
+                if operation.index < localDestination.count {
+                    guard let index = destination.firstIndex(of: localDestination[operation.index]) else {
+                        throw Failure.unsupportedDestination
+                    }
+                    insertion = index
+                } else {
+                    guard let last = localDestination.last,
+                          let index = destination.firstIndex(of: last)
+                    else { throw Failure.unsupportedDestination }
+                    insertion = index + 1
+                }
+                guard let sourceSection = global.first(where: { $0.value.contains(operation.itemID) })?.key,
+                      let sourceIndex = global[sourceSection]?.firstIndex(of: operation.itemID)
+                else { throw Failure.missingItem }
+                let adjusted = insertion - (sourceSection == operation.section && sourceIndex < insertion ? 1 : 0)
+                global[sourceSection]?.remove(at: sourceIndex)
+                global[operation.section]?.insert(operation.itemID, at: adjusted)
+                operations.append(MenuBarMoveOperation(
+                    itemID: operation.itemID, section: operation.section,
+                    index: insertion, destinationDisplayID: display
+                ))
+            }
+        }
+        return DisplayPlan(targets: targets, operations: operations)
+    }
+
     /// Plan one display's layout using the helper's pre-removal insertion indices.
     /// The caller must retain generation ownership and verify the complete target.
     public static func plan(

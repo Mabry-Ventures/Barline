@@ -3,6 +3,55 @@ import Testing
 
 @Suite("Saved layout and fixed-anchor reconciliation")
 struct ProfileLayoutReconcilerTests {
+    @Test("Interleaved displays translate local indices without moving foreign anchors")
+    func composesDisplayPlans() throws {
+        let left = MenuBarDisplayID("left")
+        let right = MenuBarDisplayID("right")
+        let names = ["a", "x", "b", "y", "fixedLeft", "fixedRight"]
+        let items = names.enumerated().map { offset, name in
+            MenuBarItemDescriptor(
+                id: id(name), section: .visible, order: offset,
+                displayID: offset.isMultiple(of: 2) ? left : right,
+                isMovable: !name.hasPrefix("fixed")
+            )
+        }
+        let saved = ProfileLayout(visible: ["b", "a", "fixedLeft", "y", "x", "fixedRight"].map(id))
+        let plan = try ProfileLayoutReconciler.planAcrossDisplays(layout: saved, items: items)
+        var live = items.map(\.id)
+        for operation in plan.operations {
+            let source = try #require(live.firstIndex(of: operation.itemID))
+            let owner = try #require(items.first { $0.id == operation.itemID })
+            #expect(owner.isMovable)
+            #expect(operation.destinationDisplayID == owner.displayID)
+            let insertion = operation.index - (source < operation.index ? 1 : 0)
+            live.remove(at: source)
+            live.insert(operation.itemID, at: insertion)
+        }
+        for target in plan.targets {
+            let scoped = Set(items.filter { $0.displayID == target.displayID }.map(\.id))
+            #expect(live.filter { scoped.contains($0) } == target.layout.visible)
+        }
+        #expect(plan.targets.count == 2)
+        #expect(Set(live) == Set(items.map(\.id)))
+    }
+
+    @Test("A scoped display plan leaves the other display out of all operations")
+    func scopesDisplayPlan() throws {
+        let left = MenuBarDisplayID("left")
+        let right = MenuBarDisplayID("right")
+        let items = [
+            MenuBarItemDescriptor(id: id("foreign"), section: .visible, order: 0, displayID: left),
+            MenuBarItemDescriptor(id: id("a"), section: .visible, order: 1, displayID: right),
+            MenuBarItemDescriptor(id: id("b"), section: .visible, order: 2, displayID: right),
+        ]
+        let plan = try ProfileLayoutReconciler.planAcrossDisplays(
+            layout: ProfileLayout(visible: [id("b"), id("a")]), items: items, displayID: right
+        )
+        #expect(plan.targets.count == 1)
+        #expect(plan.targets.first?.displayID == right)
+        #expect(plan.operations.allSatisfy { $0.destinationDisplayID == right && $0.itemID != id("foreign") })
+    }
+
     @Test("Section transfers retain physical anchors and preserve each move destination")
     func plansSectionTransfers() throws {
         let items = [
