@@ -6,8 +6,8 @@ It does not supersede the source-bound qualification record of any candidate.
 
 The latest implementation and remaining feature gates are tracked in
 [FEATURE_QUALIFICATION.md](FEATURE_QUALIFICATION.md). Version 1.0.11 includes
-the authoring/rule/shortcut paths. Build 21 is installed; build 22 is being
-prepared with the observation-lifecycle repair. Installed qualification remains
+the authoring/rule/shortcut paths. Consult the qualification record for the
+installed candidate and exact source-bound results. Installed qualification remains
 separate from implementation. The user has conditionally
 authorized release once all required qualification passes.
 

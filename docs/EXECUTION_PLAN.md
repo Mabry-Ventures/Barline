@@ -1,5 +1,16 @@
 # Barline execution plan
 
+## Build 30 preparation — September 8, 2026
+
+Build 30 advances all six shipping target configurations together for the next
+signed-update qualification. It includes the shared recovery description fix.
+The preceding source `aa00f1f08805203582ab2e9e7eca3530a725376f` passed clean
+nonfocus qualification (357 Core tests, 168 fixture checks, four Xcode UI tests,
+Debug/Release/analyze and automated accessibility/privacy checks) and Linux CI.
+This version change requires its own frozen-source qualification and signed
+package; prior evidence is not a build 30 release certificate. Installed build
+29 remains unchanged until the new candidate passes distribution checks.
+
 ## Build 29 native Focus runtime checkpoint — September 8, 2026
 
 Installed source `e05e577f383ea7b41cfe95ce3abdfdc40e0ed993` passed the
