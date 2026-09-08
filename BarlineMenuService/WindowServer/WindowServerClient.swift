@@ -953,18 +953,15 @@ final class WindowServerClient: @unchecked Sendable {
             }
             return received
         }
-        let fields: [CGEventField] = [
-            .eventSourceUserData,
-            .mouseEventWindowUnderMousePointer,
-            .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
-        ]
         let sessionTap = HelperEventTap(
             type: event.type,
             location: .session,
             placement: .tailAppendEventTap,
             options: .listenOnly
         ) { tap, received in
-            if self.event(received, matches: event, fields: fields) {
+            // Retain baseline source routing before acknowledging the session
+            // event. An exit marker alone does not prove target consumption.
+            if HelperClickRouting.restoreTarget(of: received, matching: event, to: pid) {
                 tap.disable()
                 exit.postToPid(pid)
             }
@@ -1258,17 +1255,16 @@ final class WindowServerClient: @unchecked Sendable {
         }
         // Hidden status items live outside physical display bounds. Their
         // WindowServer-managed display is ownership; geometric visibility is not.
-        let membership: Set<MenuBarDisplayID>?
-        if let connection = resolver.resolve("CGSMainConnectionID", as: MainConnectionFunction.self),
-           let copyDisplay = resolver.resolve("CGSCopyManagedDisplayForWindow", as: WindowDisplayFunction.self)
+        let membership: Set<MenuBarDisplayID>? = if let connection = resolver.resolve("CGSMainConnectionID", as: MainConnectionFunction.self),
+                                                    let copyDisplay = resolver.resolve("CGSCopyManagedDisplayForWindow", as: WindowDisplayFunction.self)
         {
             if let display = copyDisplay(connection(), window.identifier)?.takeRetainedValue() {
-                membership = [MenuBarDisplayID(display as String)]
+                [MenuBarDisplayID(display as String)]
             } else {
-                membership = []
+                []
             }
         } else {
-            membership = nil
+            nil
         }
         return MenuBarDisplayOwnershipPolicy.resolve(
             itemBounds: MenuBarRect(

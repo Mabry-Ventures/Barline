@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Exercises the production delivery state without creating a tap or posting
@@ -10,9 +11,53 @@ private enum EventDeliveryTests {
         inFlightDispatchPrecedesCompletion()
         moveStagesDispatchIndependentlyOnce()
         completionSuppressesBothMoveStages()
+        matchedClickRestoresTargetWithoutChangingPayload()
+        unrelatedClickIsNotRetargeted()
         try await releaseWithoutIntermediateTransition()
         try await releaseTransportFailurePropagates()
-        print("PASS: production event delivery synchronization (7 tests; no taps or events)")
+        print("PASS: production event delivery synchronization and routing (9 tests; no taps or posted events)")
+    }
+
+    private static func matchedClickRestoresTargetWithoutChangingPayload() {
+        for type: CGEventType in [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp] {
+            let expected = routingEvent(type)
+            let received = routingEvent(type)
+            received.setIntegerValueField(.eventTargetUnixProcessID, value: 999)
+            require(HelperClickRouting.restoreTarget(of: received, matching: expected, to: 123), "matched click retargets")
+            require(received.getIntegerValueField(.eventTargetUnixProcessID) == 123, "source routing restored before acknowledgement")
+            require(received.type == expected.type, "event type preserved")
+            for field: CGEventField in [.eventSourceUserData, .mouseEventWindowUnderMousePointer,
+                                        .mouseEventWindowUnderMousePointerThatCanHandleThisEvent, .mouseEventButtonNumber]
+            {
+                require(received.getIntegerValueField(field) == expected.getIntegerValueField(field), "payload preserved")
+            }
+        }
+    }
+
+    private static func unrelatedClickIsNotRetargeted() {
+        let expected = routingEvent(.rightMouseUp)
+        for field: CGEventField in [.eventSourceUserData, .mouseEventWindowUnderMousePointer,
+                                    .mouseEventWindowUnderMousePointerThatCanHandleThisEvent]
+        {
+            let received = routingEvent(.rightMouseUp, mismatching: field)
+            received.setIntegerValueField(.eventTargetUnixProcessID, value: 999)
+            require(received.getIntegerValueField(field) != expected.getIntegerValueField(field), "test events have distinct matching fields")
+            require(!HelperClickRouting.restoreTarget(of: received, matching: expected, to: 123), "unrelated marker or window rejected")
+            require(received.getIntegerValueField(.eventTargetUnixProcessID) == 999, "unrelated target untouched")
+        }
+        let wrongType = routingEvent(.leftMouseUp)
+        require(!HelperClickRouting.restoreTarget(of: wrongType, matching: expected, to: 123), "different type rejected")
+        require(!HelperClickRouting.restoreTarget(of: expected, matching: expected, to: 0), "invalid PID rejected")
+    }
+
+    private static func routingEvent(_ type: CGEventType, mismatching: CGEventField? = nil) -> CGEvent {
+        let button: CGMouseButton = type == .rightMouseDown || type == .rightMouseUp ? .right : .left
+        let event = CGEvent(mouseEventSource: CGEventSource(stateID: .privateState), mouseType: type,
+                            mouseCursorPosition: .zero, mouseButton: button)!
+        event.setIntegerValueField(.eventSourceUserData, value: mismatching == .eventSourceUserData ? 9876 : 1234)
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: mismatching == .mouseEventWindowUnderMousePointer ? 9876 : 42)
+        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: mismatching == .mouseEventWindowUnderMousePointerThatCanHandleThisEvent ? 9876 : 42)
+        return event
     }
 
     private static func releaseWithoutIntermediateTransition() async throws {

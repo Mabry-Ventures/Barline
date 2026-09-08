@@ -52,10 +52,21 @@ public struct ProfileCodec: Sendable {
     }
 
     public func export(_ profiles: [BarlineProfile], at date: Date = Date()) throws -> Data {
+        try encodeArchive(profiles, at: date, allowsEmptyStore: false)
+    }
+
+    /// An empty local catalog is valid. Interchange archives remain nonempty.
+    func encodeStore(_ profiles: [BarlineProfile], at date: Date) throws -> Data {
+        try encodeArchive(profiles, at: date, allowsEmptyStore: true)
+    }
+
+    private func encodeArchive(_ profiles: [BarlineProfile], at date: Date, allowsEmptyStore: Bool) throws -> Data {
         guard profiles.count <= Self.maximumProfileCount else {
             throw ProfileValidationError.archiveLimitExceeded("profile count")
         }
-        try validator.validate(profiles)
+        if !allowsEmptyStore || !profiles.isEmpty {
+            try validator.validate(profiles)
+        }
         let data = try makeEncoder().encode(ProfileArchive(exportedAt: date, profiles: profiles))
         guard data.count <= Self.maximumArchiveByteCount else {
             throw ProfileValidationError.archiveTooLarge(data.count)
@@ -65,6 +76,14 @@ public struct ProfileCodec: Sendable {
     }
 
     public func importArchive(_ data: Data) throws -> ProfileArchive {
+        try decodeArchive(data, allowsEmptyStore: false)
+    }
+
+    func decodeStore(_ data: Data) throws -> ProfileArchive {
+        try decodeArchive(data, allowsEmptyStore: true)
+    }
+
+    private func decodeArchive(_ data: Data, allowsEmptyStore: Bool) throws -> ProfileArchive {
         guard data.count <= Self.maximumArchiveByteCount else {
             throw ProfileValidationError.archiveTooLarge(data.count)
         }
@@ -109,7 +128,9 @@ public struct ProfileCodec: Sendable {
             let profileData = try JSONSerialization.data(withJSONObject: document)
             return try decode(profileData)
         }
-        try validator.validate(profiles)
+        if !allowsEmptyStore || !profiles.isEmpty {
+            try validator.validate(profiles)
+        }
         return ProfileArchive(formatVersion: formatVersion, exportedAt: exportedAt, profiles: profiles)
     }
 

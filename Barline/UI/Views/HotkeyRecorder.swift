@@ -25,10 +25,12 @@ struct HotkeyRecorder<Label: View>: View {
             } label: {
                 label
             }
+            .accessibilityElement(children: .contain)
             if let message = model.hotkey.registrationError {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .accessibilityElement(children: .contain)
         .disabled(model.hotkey.isSaving)
         .onDisappear { model.stopRecording() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in model.stopRecording() }
@@ -41,6 +43,7 @@ struct HotkeyRecorder<Label: View>: View {
             trailingSegment
         }
         .frame(width: 132, height: 24)
+        .accessibilityElement(children: .contain)
     }
 
     private var leadingSegment: some View {

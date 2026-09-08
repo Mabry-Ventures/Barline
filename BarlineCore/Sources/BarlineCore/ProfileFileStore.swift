@@ -96,7 +96,7 @@ public actor ProfileFileStore {
     }
 
     public func save(_ profiles: [BarlineProfile], at date: Date = Date()) throws {
-        let encoded = try codec.export(profiles, at: date)
+        let encoded = try codec.encodeStore(profiles, at: date)
         try ensureDirectory()
 
         if let current = tryDecode(primaryURL) {
@@ -145,7 +145,7 @@ public actor ProfileFileStore {
 
     private func tryDecode(_ url: URL) -> (data: Data, archive: ProfileArchive)? {
         guard let data = try? Data(contentsOf: url),
-              let archive = try? codec.importArchive(data)
+              let archive = try? codec.decodeStore(data)
         else {
             return nil
         }

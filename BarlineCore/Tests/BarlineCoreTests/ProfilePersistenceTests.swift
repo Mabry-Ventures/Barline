@@ -9,6 +9,40 @@ import Testing
 
 @Suite("Profile persistence and Ice import")
 struct ProfilePersistenceTests {
+    @Test("Deleting the last local layout persists an empty catalog across reopen")
+    func lastProfileDeletion() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileFileStore(directoryURL: directory)
+        let saved = profile(id: UUID(101), name: "Temporary")
+        try await store.save([saved])
+        try await store.save([])
+        let reopened = ProfileFileStore(directoryURL: directory)
+        let result = try await reopened.load()
+        #expect(result.profiles.isEmpty)
+        #expect(result.source == .primary)
+        #expect(try ProfileCodec().importArchive(Data(contentsOf: store.backupURL)).profiles == [saved])
+        #expect(throws: ProfileValidationError.emptyArchive) {
+            try ProfileCodec().importArchive(Data(contentsOf: store.primaryURL))
+        }
+        #expect(throws: ProfileValidationError.emptyArchive) { try ProfileCodec().export([]) }
+    }
+
+    @Test("An empty local catalog remains valid backup recovery after a later save")
+    func emptyCatalogBackupRecovery() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProfileFileStore(directoryURL: directory)
+        try await store.save([])
+        try await store.save([profile(id: UUID(102), name: "New")])
+        try Data("corrupt".utf8).write(to: store.primaryURL)
+        let recovered = try await store.load()
+        #expect(recovered.profiles.isEmpty)
+        #expect(recovered.source == .recoveredBackup)
+        #expect(recovered.repairedPrimaryFile)
+        #expect(try await store.load().profiles.isEmpty)
+    }
+
     @Test("Atomic saves preserve the previous valid file as a backup")
     func atomicSaveAndBackup() async throws {
         let directory = temporaryDirectory()

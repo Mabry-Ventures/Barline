@@ -1,6 +1,6 @@
 # Reliability-first feature qualification
 
-Candidate: **1.0.11, build 20**. Implementation is not a release certificate.
+Candidate: **1.0.11, build 21**. Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
 

@@ -1,6 +1,12 @@
 # Changelog
 
-## 1.0.11 (build 20) — candidate
+## 1.0.11 (build 21) — candidate
+
+- Restore baseline target-process routing for matched shelf clicks before
+  acknowledging session delivery, without replaying a mouse-down.
+- Correct display-variant authoring guidance in Layouts & Focus.
+- Allow deleting the final saved layout; persist an empty local catalog without
+  weakening validation for imported/exported archives.
 
 - Capture and edit verified display-specific layout variants without replacing
   the base layout or silently discarding a failed-save draft.

@@ -1,5 +1,44 @@
 # Barline execution plan
 
+## Installed qualification findings — September 7, 2026
+
+Source `3400f35` (1.0.11 build 20) passed clean nonfocus qualification,
+312 Core tests, 158 fixture/state tests, four fixture UI tests, strict
+Debug/Release builds and analysis. Signed packaging/notarization, a real
+build-19-to-20 Sparkle upgrade with retained preferences and one process,
+20 shelf cycles (zero timeouts, p95 97 ms), and helper interruption passed.
+Native left activation passed, but native right activation intermittently
+failed twice: the target process received reveal/move events but no right
+click, while the helper's session barrier reported delivery. Passing diagnostic
+retries do not erase those failures. Public release remains blocked.
+
+Build 21 restores the imported compatibility baseline's target-PID assignment
+on the exact matched click at the session boundary, before exit acknowledgement.
+No second mouse-down or automatic click replay is added. Regression tests cover
+matched routing/payload preservation and nonmatching-event rejection. Passive
+tap mutation is compatibility behavior, not an Apple API delivery guarantee;
+fresh signed installed target-action qualification is mandatory.
+
+Installed build-20 UI checks passed single-display capture, save/reopen,
+replacement confirmation and discarded removal drafts. A temporary rule could
+be created while global rules remained off. These are bounded checks, not the
+physical-display, native Focus, power-transition or accessibility matrix.
+The outdated read-only display-help text is corrected. Test data remains
+explicitly named temporary until cleanup. Original failed evidence is retained
+under `.artifacts/feature-installed/` in the clean qualification worktree and
+will be copied into the main repository's ignored evidence storage.
+
+Cleanup exposed a preexisting last-layout deletion restriction inconsistent
+with the supported empty state. Build 21 permits an empty persisted local
+catalog while retaining nonempty public archive validation. Regression tests
+cover reopen, previous-layout backup and recovery from an empty backup.
+The installed shortcut recorder also exposed a semantic grouping issue: its
+buttons were visible but absent from the accessibility subtree in a nested
+item row. Explicit child containment now preserves those controls; installed
+accessibility verification remains required. A shortcut was recorded for the
+synthetic native fixture, but a tool-generated chord did not establish global
+Carbon dispatch, so no physical-keyboard activation pass is claimed.
+
 ## Feature completion and visitor cleanup — September 7, 2026
 
 Candidate 1.0.11 build 20 integrates display-variant authoring, opt-in event-driven

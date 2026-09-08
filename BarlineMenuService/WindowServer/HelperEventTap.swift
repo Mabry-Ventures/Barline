@@ -1,6 +1,25 @@
 import CoreGraphics
 import Foundation
 
+/// Restore the source application's routing field only for this delivery's
+/// exact event. Session routing may have replaced the field since posting.
+/// This preserves the compatibility baseline; transport is not an activation
+/// certificate and must still be checked against the target's actual interface.
+enum HelperClickRouting {
+    static func restoreTarget(of received: CGEvent, matching expected: CGEvent, to pid: pid_t) -> Bool {
+        let fields: [CGEventField] = [
+            .eventSourceUserData,
+            .mouseEventWindowUnderMousePointer,
+            .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+        ]
+        guard pid > 0, received.type == expected.type,
+              fields.allSatisfy({ received.getIntegerValueField($0) == expected.getIntegerValueField($0) })
+        else { return false }
+        received.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+        return true
+    }
+}
+
 /// Intermediate geometry is optional; only the caller's final placement
 /// postcondition can certify a drag. Transport errors still propagate.
 enum HelperMoveSettlement {

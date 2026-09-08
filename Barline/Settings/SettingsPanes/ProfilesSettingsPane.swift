@@ -306,7 +306,7 @@ struct ProfilesSettingsPane: View {
         Section("Layouts for Different Displays") {
             Text("For a laptop and a desk setup, arrange each workspace and capture a separately named layout. Use Apply when you want to switch, or assign a saved layout through a native Focus Filter above.")
                 .foregroundStyle(.secondary)
-            Text("Connecting a display does not select a different saved layout. Display-specific variants already included in a layout archive can be reviewed in Edit; this editor does not create or change those variants.")
+            Text("Connecting a display does not select a different saved layout. To capture a display-specific variant within a saved layout, choose Edit, then Capture Current Menu Bar Display. Review or remove variants there; changes are saved only when you click Save.")
                 .foregroundStyle(.secondary)
             if let activeID = manager.activeProfileID,
                let activeProfile = manager.profiles.first(where: { $0.id == activeID }),

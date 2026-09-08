@@ -631,12 +631,10 @@ final class ProfileManager: ObservableObject {
     }
 
     func delete(_ profile: BarlineProfile) async {
+        appState?.contextualRules.pauseForManualChange()
         await performOperation(successMessage: "Profile deleted.") {
             try self.validateProfileDefinitionMutation(profileID: profile.id)
             let remaining = self.profiles.filter { $0.id != profile.id }
-            guard !remaining.isEmpty else {
-                throw MenuBarBackendError.operationFailed("at least one profile is required")
-            }
             try await self.store.save(remaining)
             let invalidatedAuthority = await self.appState?.compatibilityCoordinator
                 .clearActiveProfileAuthority(ifMatches: profile.id) == true
