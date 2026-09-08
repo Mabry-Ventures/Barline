@@ -1,6 +1,13 @@
 # Changelog
 
-## 1.0.11 (build 24) — candidate
+## 1.0.11 (build 25) — candidate
+
+- Keep clock, Control Center and other non-hideable status items out of
+  empty-space click and hover handling. Preserve genuine empty-space clicks
+  around Barline's noninteractive layout separators.
+- Reject delayed empty-space click results after a newer click.
+- Offer an explicit, confirmation-gated restore for an interrupted Focus
+  checkpoint; retain the checkpoint when restoration cannot be verified.
 
 - Plan saved layouts around fixed system items and newly discovered items,
   preserving display ownership and avoiding redundant drag operations.
