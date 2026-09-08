@@ -395,7 +395,8 @@ final class WindowServerClient: @unchecked Sendable {
     func pointContext(_ point: MenuBarPoint) throws -> MenuBarPointContext {
         let location = CGPoint(x: point.x, y: point.y)
         let isInsideItem = try currentWindows().contains { window in
-            window.isOnScreen && window.bounds.contains(location)
+            window.isOnScreen && window.bounds.contains(location) &&
+                !MenuBarClickArbitrationPolicy.isLayoutSeparator(title: window.title)
         }
         let window = WindowInfo.createWindows(option: .onScreen)
             .filter { $0.layer < CGWindowLevelForKey(.cursorWindow) }

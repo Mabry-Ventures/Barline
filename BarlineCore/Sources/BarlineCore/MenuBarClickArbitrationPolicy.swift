@@ -4,6 +4,11 @@
 //
 
 public enum MenuBarClickArbitrationPolicy {
+    /// Stretching layout separators occupy window geometry but are not buttons.
+    public static func isLayoutSeparator(title: String?) -> Bool {
+        title == "Barline.ControlItem.Hidden" || title == "Barline.ControlItem.AlwaysHidden"
+    }
+
     /// A hosted control click can have no local window and stale menu-bar
     /// geometry. Its live hit region still owns the event exclusively.
     public static func shouldScheduleSmartRehide(

@@ -2,6 +2,12 @@
 
 ## Build 25 qualification candidate — September 8, 2026
 
+Follow-up review excludes Barline's stretching hidden/always-hidden separators
+from the helper's live button hit test. Their broad window bounds must not disable
+genuine empty-space activation. Exact-identity regression tests preserve the
+visible Barline control, clock and Control Center as occupied regions. This source
+change requires a new clean run; the preliminary `e0fab66` run remains separate.
+
 Build 25 retains version 1.0.11 and includes the system-control hit-test correction
 and explicit interrupted-Focus recovery action. App/service/extension versions
 advance together. Unsigned Debug compilation passes including the click sequence

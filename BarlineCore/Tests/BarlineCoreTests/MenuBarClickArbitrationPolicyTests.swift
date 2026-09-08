@@ -8,6 +8,15 @@ import Testing
 
 @Suite("Menu-bar click arbitration")
 struct MenuBarClickArbitrationPolicyTests {
+    @Test("Only layout separators leave empty-space clicks available")
+    func separatorHitTesting() {
+        #expect(MenuBarClickArbitrationPolicy.isLayoutSeparator(title: "Barline.ControlItem.Hidden"))
+        #expect(MenuBarClickArbitrationPolicy.isLayoutSeparator(title: "Barline.ControlItem.AlwaysHidden"))
+        for title in [nil, "Clock", "BentoBox", "Barline.ControlItem.Visible", "Other"] {
+            #expect(!MenuBarClickArbitrationPolicy.isLayoutSeparator(title: title))
+        }
+    }
+
     @Test("An unavailable hit-test snapshot is not evidence of empty menu-bar space")
     func missingHitTestSnapshot() {
         #expect(!MenuBarClickArbitrationPolicy.isEmptyMenuBarSpace(
