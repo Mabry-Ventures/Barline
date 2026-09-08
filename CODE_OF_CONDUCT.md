@@ -58,12 +58,11 @@ representative at an online or offline event.
 
 ## Enforcement
 
-A verified private conduct-reporting contact must be published here before the
-first public binary release. It is not yet documented. Do not post a private
-conduct complaint, personal information, or sensitive evidence in a public
-issue, and do not use vulnerability reporting for unrelated conduct complaints.
-Community leaders are responsible for establishing that private channel and
-reviewing complaints fairly.
+Report conduct concerns privately to [dev@mabryventures.com](mailto:dev@mabryventures.com).
+Do not post a private conduct complaint, personal information, or sensitive
+evidence in a public issue, and do not use vulnerability reporting for unrelated
+conduct complaints. Community leaders are responsible for reviewing complaints
+fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.

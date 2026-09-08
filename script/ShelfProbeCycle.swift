@@ -9,14 +9,14 @@ enum ShelfProbeCycle {
     static func run(
         baselineClosed: () -> Bool,
         click: () throws -> Void,
-        waitForOpen: () -> Double?,
-        waitForClose: () -> Bool
+        waitForOpen: () throws -> Double?,
+        waitForClose: () throws -> Bool
     ) throws -> Double? {
         guard baselineClosed() else { throw Failure.baselineStillOpen }
         try click()
-        guard let latency = waitForOpen() else { return nil }
+        guard let latency = try waitForOpen() else { return nil }
         try click()
-        guard waitForClose() else { throw Failure.closeTimedOut }
+        guard try waitForClose() else { throw Failure.closeTimedOut }
         return latency
     }
 }

@@ -59,7 +59,15 @@ missed. Requalify the final candidate with retained raw cycle results.
 
 ## Visitor prerequisites
 
-Private GitHub vulnerability reporting is enabled. A monitored private conduct
-contact is still needed. Preserve the current development/download disclosure
+Private GitHub vulnerability reporting is enabled. The maintainer-confirmed
+private conduct contact is dev@mabryventures.com. Preserve the current
+development/download disclosure
 until publication is authorized by passing release gates. Marketing drafts and
 unrelated work must not be swept into a release commit.
+
+## Hardware sequence
+
+Complete and stabilize the current Mac's local qualification first. Then use
+Jared's Work MacBook Pro for the notched-display and display-transition lane.
+Naming that device is not evidence that it has been tested. macOS 27 remains a
+separate runtime lane; do not upgrade either Mac merely to satisfy a gate.

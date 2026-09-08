@@ -1,5 +1,21 @@
 # Barline execution plan
 
+## Local-first qualification direction — September 7, 2026
+
+The maintainer confirmed dev@mabryventures.com as the private conduct-report
+contact; CODE_OF_CONDUCT.md now publishes it. Complete and stabilize the current
+Mac's remaining runtime checks before using Jared's Work MacBook Pro for notch
+and display-transition coverage. No test pass or release approval is implied by
+the device selection. Keep the installed signed candidate and the original
+BLN-17 failure evidence intact while narrowing the remaining local checks.
+
+The shelf probe now distinguishes unexpected foreground UI from a timing
+timeout, stops after the first opening failure instead of sending more clicks,
+and emits buffered per-dispatch timing/flag metadata at exit. It collects no
+coordinates, app names or outside input. Six deterministic cycle tests cover
+success, timeout/baseline failures and interrupted opening/closing. These are
+diagnostic corrections, not attribution or a product fix for the original miss.
+
 ## Build 21 qualification checkpoint — September 7, 2026
 
 Frozen source `59de12d883c49d48b53b32d7874d4adff36ff76e`, installed

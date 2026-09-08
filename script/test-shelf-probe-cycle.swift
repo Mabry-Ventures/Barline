@@ -2,6 +2,8 @@ import Foundation
 
 @main
 struct ShelfProbeCycleTests {
+    enum ObservationError: Error { case foregroundInterrupted }
+
     static func main() throws {
         var clicks = 0
         let success = try ShelfProbeCycle.run(
@@ -36,6 +38,27 @@ struct ShelfProbeCycleTests {
         } catch ShelfProbeCycle.Failure.baselineStillOpen {
             precondition(clicks == 2)
         }
-        print("PASS: shelf probe success, opening failure, missed close, and unclosed baseline")
+        clicks = 0
+        do {
+            _ = try ShelfProbeCycle.run(
+                baselineClosed: { true }, click: { clicks += 1 },
+                waitForOpen: { throw ObservationError.foregroundInterrupted },
+                waitForClose: { fatalError("must not click again after interrupted observation") }
+            )
+            fatalError("interrupted opening must propagate separately from timeout")
+        } catch ObservationError.foregroundInterrupted {
+            precondition(clicks == 1)
+        }
+        clicks = 0
+        do {
+            _ = try ShelfProbeCycle.run(
+                baselineClosed: { true }, click: { clicks += 1 },
+                waitForOpen: { 42 }, waitForClose: { throw ObservationError.foregroundInterrupted }
+            )
+            fatalError("interrupted closing must propagate separately from timeout")
+        } catch ObservationError.foregroundInterrupted {
+            precondition(clicks == 2)
+        }
+        print("PASS: six shelf cycle cases: success, open timeout, close timeout, baseline, interrupted open/close")
     }
 }

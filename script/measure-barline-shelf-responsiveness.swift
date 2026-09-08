@@ -69,6 +69,8 @@ private enum ProbeError: Error, CustomStringConvertible {
     case unableToCloseBaseline
     case unableToSynthesizeClick
     case coldFirstClickTimedOut
+    case unexpectedForegroundUI
+    case openingTimedOut(Int)
 
     var description: String {
         switch self {
@@ -94,6 +96,10 @@ private enum ProbeError: Error, CustomStringConvertible {
             "The status-item click event could not be created"
         case .coldFirstClickTimedOut:
             "The cold first status-item click did not commit the Barline Bar"
+        case .unexpectedForegroundUI:
+            "Unexpected foreground UI interrupted the shelf probe; not a timing sample"
+        case let .openingTimedOut(cycle):
+            "Shelf opening timed out at cycle \(cycle); stopped without further clicks"
         }
     }
 }
@@ -323,6 +329,23 @@ private func barlineShelfSnapshot() -> WindowSnapshot? {
     }
 }
 
+/// Buffer transport metadata rather than logging/querying windows in the hot
+/// path. No coordinates, app names, content, or input outside this probe are kept.
+private struct ClickDispatch: Codable {
+    let sequence: Int
+    let startedNanoseconds: UInt64
+    let completedNanoseconds: UInt64
+    let downTimestamp: UInt64
+    let upTimestamp: UInt64
+    let downFlags: UInt64
+    let upFlags: UInt64
+    let targetMoved: Bool
+}
+
+private let dispatchOriginUnixSeconds = Date().timeIntervalSince1970
+private let dispatchOriginNanoseconds = DispatchTime.now().uptimeNanoseconds
+private var clickDispatches = [ClickDispatch]()
+
 private func click(at point: CGPoint) throws {
     switch Configuration.probe {
     case "runtime-smoke":
@@ -357,22 +380,33 @@ private func click(at point: CGPoint) throws {
         else {
             throw ProbeError.unableToSynthesizeClick
         }
+        let started = DispatchTime.now().uptimeNanoseconds
         mouseDown.post(tap: .cghidEventTap)
         usleep(20000)
         mouseUp.post(tap: .cghidEventTap)
+        if clickDispatches.count < 2004 {
+            clickDispatches.append(ClickDispatch(
+                sequence: clickDispatches.count + 1,
+                startedNanoseconds: started,
+                completedNanoseconds: DispatchTime.now().uptimeNanoseconds,
+                downTimestamp: mouseDown.timestamp, upTimestamp: mouseUp.timestamp,
+                downFlags: mouseDown.flags.rawValue, upFlags: mouseUp.flags.rawValue,
+                targetMoved: hypot(currentPoint.x - point.x, currentPoint.y - point.y) > 1
+            ))
+        }
     default:
         fputs("error: shelf click requires runtime-smoke or status-item-click\n", stderr)
         exit(2)
     }
 }
 
-private func waitForVisibility(_ target: Bool, timeout: Duration) -> Duration? {
+private func waitForVisibility(_ target: Bool, timeout: Duration) throws -> Duration? {
     let start = ContinuousClock.now
     var consecutiveSamples = 0
     var committedWindowNumber: CGWindowID?
     while start.duration(to: .now) < timeout {
         if unexpectedForegroundUIPresent() {
-            return nil
+            throw ProbeError.unexpectedForegroundUI
         }
         let shelfSnapshot = barlineShelfSnapshot()
         let matchesTarget: Bool
@@ -441,7 +475,7 @@ private func ensureClosed(iconPoint: CGPoint) throws {
         return
     }
     try click(at: iconPoint)
-    guard waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+    guard try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
         throw ProbeError.unableToCloseBaseline
     }
 }
@@ -452,21 +486,21 @@ private func runSingleClick(iconPoint: CGPoint) throws -> Double? {
         baselineClosed: { !isBarlineShelfVisible() },
         click: { try click(at: iconPoint) },
         waitForOpen: {
-            guard waitForVisibility(true, timeout: Configuration.openTimeout) != nil else { return nil }
+            guard try waitForVisibility(true, timeout: Configuration.openTimeout) != nil else { return nil }
             // Include dispatch and target lookup, not just the post-click poll.
             return milliseconds(start.duration(to: .now))
         },
-        waitForClose: { waitForVisibility(false, timeout: Configuration.closeTimeout) != nil }
+        waitForClose: { try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil }
     )
 }
 
 private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool, silentCancellation: Bool) {
     let start = ContinuousClock.now
     try click(at: iconPoint)
-    if waitForVisibility(true, timeout: Configuration.feedbackBudget) != nil {
+    if try waitForVisibility(true, timeout: Configuration.feedbackBudget) != nil {
         let feedbackInBudget = start.duration(to: .now) <= Configuration.feedbackBudget
         try click(at: iconPoint)
-        guard waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+        guard try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
             throw ShelfProbeCycle.Failure.closeTimedOut
         }
         return (feedbackInBudget, false)
@@ -474,11 +508,11 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
 
     // Reproduce a user retrying because the first click produced no visible feedback.
     try click(at: iconPoint)
-    let silentCancellation = waitForVisibility(true, timeout: Configuration.closeTimeout) == nil
+    let silentCancellation = try waitForVisibility(true, timeout: Configuration.closeTimeout) == nil
 
     if isBarlineShelfVisible() {
         try click(at: iconPoint)
-        guard waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+        guard try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
             throw ShelfProbeCycle.Failure.closeTimedOut
         }
     }
@@ -487,6 +521,12 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
 
 private let initialPointer = CGEvent(source: nil)?.location
 atexit {
+    if !clickDispatches.isEmpty {
+        print("DISPATCH_ORIGIN unix_seconds=\(dispatchOriginUnixSeconds) monotonic_ns=\(dispatchOriginNanoseconds)")
+        if let data = try? JSONEncoder().encode(clickDispatches) {
+            print("DISPATCH_TRACE \(String(decoding: data, as: UTF8.self))")
+        }
+    }
     let restored = initialPointer.map { CGWarpMouseCursorPosition($0) == .success } ?? false
     print("{\"originalPointerRestored\":\(restored)}")
     if !restored {
@@ -569,10 +609,13 @@ do {
 
     let iconPoint = try barlineIconCenter()
 
+    guard !unexpectedForegroundUIPresent() else {
+        throw ProbeError.unexpectedForegroundUI
+    }
     try ensureClosed(iconPoint: iconPoint)
 
     var latencies = [Double]()
-    var timeouts = 0
+    let timeouts = 0
 
     let firstMeasuredCycle: Int
     if Configuration.probe == "status-item-click" {
@@ -597,9 +640,8 @@ do {
                 latencies.append(latency)
                 print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
             } else {
-                timeouts += 1
                 print(String(format: "cycle=%02d status=TIMEOUT", cycle))
-                try ensureClosed(iconPoint: iconPoint)
+                throw ProbeError.openingTimedOut(cycle)
             }
         }
     }
