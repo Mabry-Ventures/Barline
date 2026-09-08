@@ -4,7 +4,11 @@
 //
 
 import AppIntents
+import ExtensionFoundation
 import Foundation
+
+@main
+struct BarlineIntentsExtension: AppIntentsExtension {}
 
 private enum BarlineIntentBridge {
     static var appGroupIdentifier: String {

@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.0.11 (build 21) — candidate
+## 1.0.11 (build 23) — candidate
+
+- Correct the macOS Focus Filter extension's launch and embedding topology;
+  add regression gates for registration and extracted intent metadata.
+- Cancel superseded status-item window/screen observations and clear detached
+  geometry instead of allowing stale owners to overwrite current state.
 
 - Restore baseline target-process routing for matched shelf clicks before
   acknowledging session delivery, without replaying a mouse-down.

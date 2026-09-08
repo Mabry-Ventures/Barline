@@ -1,5 +1,29 @@
 # Barline execution plan
 
+## Native Focus extension repair — September 7, 2026
+
+Signed build 22 (`249dcb0`) passed clean nonfocus gates, notarization, a
+preference-preserving Sparkle upgrade, all four installed target journeys,
+20 shelf cycles (p95 73.5 ms), and a single helper interruption/recovery.
+Installed temporary-layout checks also passed canceled group rename and
+single-display variant save/reopen, replacement confirmation/cancel, and removal.
+No temporary layout was applied and local rules remained off.
+
+The native Focus setup check then found a concrete blocker: macOS listed the
+filter but displayed “Could not load Focus Filter.” Its log reported no
+Launch Services extension record. The extension's legacy product/registration
+and absent AppIntentsExtension entry point differed from the installed Xcode
+macOS template. The correction adopts ExtensionKit without new identifiers or
+entitlements, plus source and built-bundle regression gates. Build 23 must be
+qualified afresh; build 22 remains installed until replacement gates pass.
+
+BLN-17's original intermittent click miss is independently unresolved. A proposed
+diagnostic generator was never executed; review found unsafe abort handling,
+so its launch mode was removed. No passing later burst explains the earlier
+miss. Native Focus loading/catalog/activation, search/keyboard, accessibility,
+physical displays, and final installed gates remain separate requirements.
+No public release, feed activation, or cross-device Focus changes occurred.
+
 ## Fixture setup and production-site safeguards — September 7, 2026
 
 The clean `9c3af20` nonfocus run passed its non-UI gates but failed three

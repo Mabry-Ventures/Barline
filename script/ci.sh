@@ -201,7 +201,9 @@ run_fast() {
     run_step "core-tests" swift test --package-path BarlineCore --enable-code-coverage
     run_step "status-item-geometry" bash ./script/test-status-item-geometry.sh
     run_step "shelf-probe-cycle" bash ./script/test-shelf-probe-cycle.sh
+    run_step "app-intents-topology-tests" ruby ./script/test-app-intents-topology.rb
     if [[ "$(uname -s)" == Darwin ]]; then
+        run_step "app-intents-source-topology" ruby ./script/validate-app-intents-topology.rb
         run_step "latest-optional-owner" bash ./script/test-latest-optional-publisher.sh
         run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
         run_step "search-preferences-atomicity" bash ./script/test-search-preferences.sh
@@ -236,6 +238,7 @@ run_full() {
         run_step "installed-signature" codesign --verify --deep --strict "$BARLINE_CANDIDATE_APP"
         run_step "installed-gatekeeper" spctl --assess --type execute "$BARLINE_CANDIDATE_APP"
         run_step "installed-staple" xcrun stapler validate "$BARLINE_CANDIDATE_APP"
+        run_step "installed-app-intents-topology" ruby ./script/validate-app-intents-topology.rb --app "$BARLINE_CANDIDATE_APP"
         run_step "installed-shelf-recovery" ./script/test-reopen-burst.sh --reuse-running
         local installed_executable_sha
         installed_executable_sha="$(shasum -a 256 "$BARLINE_CANDIDATE_APP/Contents/MacOS/Barline" | awk '{print $1}')"
@@ -264,6 +267,10 @@ run_nonfocus() {
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/release.xcresult" \
         -derivedDataPath "$BARLINE_RUN_ROOT/build-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+    for configuration in Debug Release; do
+        run_step "app-intents-bundle-$configuration" ruby ./script/validate-app-intents-topology.rb \
+            --app "$BARLINE_RUN_ROOT/build-derived/Build/Products/$configuration/Barline.app"
+    done
     run_step "static-analysis" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Debug \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/analyze.xcresult" \

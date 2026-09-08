@@ -40,6 +40,15 @@ or become a second source of truth.
 
 ## Evidence and remaining boundary
 
+- Installed build 22 exposed the filter in System Settings but failed to load
+  its configuration. The system reported no Launch Services extension record
+  (`NSOSStatusErrorDomain -10814`). The target used legacy NSExtension service
+  metadata instead of Xcode's macOS App Intents ExtensionKit template.
+- The replacement uses `@main AppIntentsExtension`, the ExtensionKit product
+  type, `EXAppExtensionAttributes` with `com.apple.appintents-extension`, and
+  embedding in `Contents/Extensions`. Identifiers, App Group and sandbox scope
+  are unchanged. Source and built-bundle topology/metadata checks now run in
+  local CI and packaging. These structural checks do not certify runtime loading.
 - Extension target, matching host/extension entitlements, App Group identifier,
   embedded topology, and generated metadata compile locally.
 - Core tests cover Focus-profile inbox ordering/idempotence, activation precedence, rapid

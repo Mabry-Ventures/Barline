@@ -1,6 +1,6 @@
 # Reliability-first feature qualification
 
-Next candidate: **1.0.11, build 22**. Installed baseline: **build 21**.
+Next candidate: **1.0.11, build 23**. Installed baseline: **build 22**.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
@@ -38,6 +38,13 @@ Failed attempts remain in local evidence; do not replace them with a later pass.
 | Distribution | Exact source, GPL notices, SBOM, signatures, notarization, staple, Gatekeeper, signed appcast | Clean install, update/rollback, published asset integrity and canonical site/download validation |
 
 ## Current boundary
+
+Build 22 (`249dcb0`) passed the clean nonfocus and bounded installed receipts,
+but failed native Focus Filter configuration loading in System Settings.
+The extension topology correction and new regression gates require a fresh
+signed candidate. Listing a filter is not proof that its configuration loads
+or that Focus activates a layout. See FOCUS_AND_APP_INTENTS.md and the latest
+execution-plan checkpoint. Earlier build-21 evidence below remains historical.
 
 The worktree now contains an additional observation-lifecycle repair (BLN-19):
 old status-item window/screen publishers are canceled on replacement, nil clears

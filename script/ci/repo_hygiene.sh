@@ -92,6 +92,7 @@ if git grep -n -E -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'; then
 fi
 
 ./script/test-release-evidence-privacy.sh
+ruby ./script/test-app-intents-topology.rb
 
 # Dependency-free static website checks belong in the existing Linux lane.
 # They validate staging/build safeguards, not deployed release availability.

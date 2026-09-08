@@ -161,7 +161,8 @@ else
     APP="$EXPORT_PATH/Barline.app"
 fi
 HELPER="$APP/Contents/XPCServices/BarlineMenuService.xpc"
-INTENTS="$APP/Contents/PlugIns/BarlineIntents.appex"
+INTENTS="$APP/Contents/Extensions/BarlineIntents.appex"
+ruby "$ROOT/script/validate-app-intents-topology.rb" --app "$APP"
 for product in "$APP" "$HELPER" "$INTENTS"; do
     [[ -e "$product" ]] || { printf 'error: archive is missing embedded product: %s\n' "$product" >&2; exit 1; }
 done
