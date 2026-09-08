@@ -1,5 +1,27 @@
 # Barline execution plan
 
+## Fixture setup and production-site safeguards — September 7, 2026
+
+The clean `9c3af20` nonfocus run passed its non-UI gates but failed three
+fixture UI preconditions: the running menu-bar layout placed newly created
+synthetic status items off-screen. No off-screen click was attempted. Fresh
+fixture sessions now seed only their own nonpersistent preferred position and
+wait at most three seconds for an actual on-screen frame. Installed journeys
+retain their original position/restoration behavior. The focused four-test
+XCUITest rerun passed with exact activation/open/action/close receipts; both
+the failed and successful `.xcresult` bundles are retained. This is a fixture
+setup repair, not attribution or closure of BLN-17.
+
+The static site now has explicit production-mode validation for the canonical
+domain, approved contribution link, exact versioned binary/source/checksum and
+release links, canonical pages, and launch-ready indexing. Current preview
+content intentionally fails production validation before output changes.
+Website regression tests also run in the existing Linux repository-hygiene
+lane. Configuration validation is not proof of artifact availability, rendered
+production QA, app qualification, or permission to publish. No site content,
+deployment, or installed app was changed by this checkpoint. Freeze the new
+source and rerun local qualification before signed build 22 packaging.
+
 ## Build 22 preparation — September 7, 2026
 
 Version 1.0.11 build 22 incorporates the BLN-19 observation-lifecycle repair.

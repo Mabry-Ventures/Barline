@@ -32,6 +32,32 @@ indexing; it is not access control.
 deployed content, and app-download destinations still require launch validation.
 Do not turn a staging deployment into a claim of public app availability.
 
+Production builds require an explicit operator-reviewed JSON configuration:
+
+```sh
+node scripts/build.mjs --production /absolute/approved-release.json
+```
+
+It must contain `version`, `canonicalOrigin`, `downloadURL`, `sourceURL`,
+`checksumsURL`, `releaseURL`, and `contributionURL`. Destinations must be the
+canonical domain, approved hosted Stripe link, and exact version-specific
+Mabry-Ventures/Barline GitHub release assets emitted by `script/release.sh`.
+No keys, tokens, account state, latest-release redirect, or alternate repository
+is accepted. The launch-ready source must contain anchors to those destinations, use
+correct per-page canonical URLs, and remove preview availability/indexing blocks.
+The current staged source intentionally fails this gate before output is changed.
+
+The configuration is operator input, **not** proof of release qualification or
+asset availability. Validate the published artifacts, hashes, matching source,
+required local/physical gates and launch approval separately before deployment.
+Build and deployment remain separate operations. Preview remains the default.
+Production markup is intentionally constrained: no comments or templates,
+quoted href attributes, and explicitly allowlisted external destinations.
+This is a source guard, not a general HTML parser or proof of visual/AX visibility.
+Rendered desktop/mobile/keyboard QA remains required. The current source tests
+assert preview copy/indexing deliberately; launch conversion must replace those
+preview assertions with approved production-content tests in the same change.
+
 ## Public launch checklist
 
 - Finish app qualification and provide exact signed binary, corresponding

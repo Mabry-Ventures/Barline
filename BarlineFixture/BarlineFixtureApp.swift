@@ -161,11 +161,19 @@ private final class FixtureJourneyController: NSObject, NSMenuDelegate, NSPopove
         let configuredNames = environment["BARLINE_FIXTURE_JOURNEY_ITEMS"]?
             .split(separator: ",").map(String.init) ?? ["Native", "Popover"]
         for (index, name) in configuredNames.filter({ allowedNames.contains($0) }).prefix(4).enumerated() {
-            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             // Fixture qualification uses a fresh position; installed journeys
             // deliberately retain their position so reveal/restoration is real.
             let positionScope = environment["BARLINE_FIXTURE_FRESH_POSITION"] == "1" ? ".\(receipt.session)" : ""
-            item.autosaveName = "BarlineFixture.Journey.\(name)\(positionScope)"
+            let autosaveName = "BarlineFixture.Journey.\(name)\(positionScope)"
+            if !positionScope.isEmpty {
+                // A new autosave name alone defaults left of a running menu-bar
+                // manager's divider. Seed only this synthetic session's position
+                // in the nonpersistent registration domain, before creation.
+                // XCTest still requires the actual resulting frame on-screen.
+                UserDefaults.standard.register(defaults: ["NSStatusItem Preferred Position \(autosaveName)": index])
+            }
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.autosaveName = autosaveName
             item.button?.title = "BF \(name)"
             item.button?.window?.title = "BF \(name)"
             item.button?.setAccessibilityLabel("BF \(name)")

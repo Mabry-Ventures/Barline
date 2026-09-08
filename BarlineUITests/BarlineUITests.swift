@@ -74,11 +74,16 @@ final class BarlineUITests: XCTestCase {
             XCTFail("The exact fixture source/host status control is unavailable; no click attempted")
             return
         }
-        let itemFrame = item.frame
         let displayFrames = NSScreen.screens.compactMap { screen -> CGRect? in
             guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
             return CGDisplayBounds(number.uint32Value)
         }
+        let onScreen = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let frame = item.frame
+            return frame.width > 0 && frame.height > 0 && displayFrames.contains { $0.contains(frame) }
+        }, object: nil)
+        _ = XCTWaiter.wait(for: [onScreen], timeout: 3)
+        let itemFrame = item.frame
         print("FIXTURE statusFrame=\(itemFrame) activeDisplays=\(displayFrames)")
         guard itemFrame.width > 0, itemFrame.height > 0,
               displayFrames.contains(where: { $0.contains(itemFrame) })

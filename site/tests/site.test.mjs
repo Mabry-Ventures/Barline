@@ -15,6 +15,8 @@ test('build refuses unexpected stale files and symlinks without deleting them', 
     assert.equal(await readFile(join(fixture, 'old-checkout.js'), 'utf8'), 'stale');
     await symlink('old-checkout.js', join(fixture, 'index.html'));
     await assert.rejects(assertAllowedTree(fixture, ['index.html', 'old-checkout.js']), /Unexpected/);
+    await symlink(fixture, join(fixture, 'linked-root'));
+    await assert.rejects(assertAllowedTree(join(fixture, 'linked-root'), ['index.html', 'old-checkout.js', 'linked-root']), /real directory/);
   } finally { await rm(fixture, { recursive: true }); }
 });
 test('staged pages have semantic headings, viewport and no tracking/payment code', async () => {
