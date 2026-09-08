@@ -5,9 +5,10 @@ language about macOS 27 feature adoption or deferring its compatibility work.
 It does not supersede the source-bound qualification record of any candidate.
 
 The latest implementation and remaining feature gates are tracked in
-[FEATURE_QUALIFICATION.md](FEATURE_QUALIFICATION.md). Candidate 1.0.11 build 20
-includes the previously unfinished authoring/rule/shortcut paths; installed
-qualification remains separate from implementation. The user has conditionally
+[FEATURE_QUALIFICATION.md](FEATURE_QUALIFICATION.md). Version 1.0.11 includes
+the authoring/rule/shortcut paths. Build 21 is installed; build 22 is being
+prepared with the observation-lifecycle repair. Installed qualification remains
+separate from implementation. The user has conditionally
 authorized release once all required qualification passes.
 
 ## Product promise
@@ -108,14 +109,14 @@ support. Local-only execution; no macOS/self-hosted GitHub Actions runners.
 - Confirm Cloudflare account/project and domain ownership before deployment.
 - Public GitHub release and update feed remain staged for final approval.
 
-## Initial checkpoint
+## Historical initial checkpoint
 
 The installed 1.0.9 build 18 remains untouched while these changes are built.
 Its qualification packet is under the ignored source-bound release directory
 for `184edc7cb01944153e7f93c8946b75372b44a3f6`. That evidence does not qualify
 new source. Feature, website, and macOS 27 acceptance must be recorded afresh.
 
-## September 7 implementation evidence
+## Historical September 7 initial implementation evidence
 
 Branch: `codex/reliability-first`, uncommitted iteration atop
 `184edc7cb01944153e7f93c8946b75372b44a3f6`. This is not a release candidate.
@@ -134,7 +135,8 @@ Branch: `codex/reliability-first`, uncommitted iteration atop
   `6e1cabff0f756cee080e82b49fc727429c68d599296f6e6e7b0c2ff35112f91a`.
   No native app launch, update, permission reset or focus-stealing test was run.
 
-Remaining implementation: safe contextual admission coordinated with Focus,
+Remaining at that checkpoint (subsequently implemented; see current qualification):
+safe contextual admission coordinated with Focus,
 manual override, recovery and presentation leases; persisted rule UI and signal
 adapters; per-item global shortcut conflict/dispatch handling. Display variants
 currently expose existing imported state read-only, not a new capture/authoring

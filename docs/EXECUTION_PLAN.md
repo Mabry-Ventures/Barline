@@ -1,5 +1,16 @@
 # Barline execution plan
 
+## Build 22 preparation — September 7, 2026
+
+Version 1.0.11 build 22 incorporates the BLN-19 observation-lifecycle repair.
+App, helper and intent-extension build numbers advance together. Validate a
+clean frozen checkout; retain build 21 installed until the new candidate's
+local gates and signed packaging pass. Its source change invalidates earlier
+candidate-bound certificates. No public release or production feed activation
+is authorized by packaging alone, and the original BLN-17 input miss remains
+unattributed. The independent site/support review does not substitute for app
+runtime, physical-device or accessibility acceptance.
+
 ## Search, groups and observation lifecycle — September 7, 2026
 
 Installed build 21 passed temporary group create/save/reopen, rename/save/reopen
