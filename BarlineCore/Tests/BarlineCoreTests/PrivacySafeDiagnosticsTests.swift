@@ -3,6 +3,26 @@ import Foundation
 import Testing
 
 struct PrivacySafeDiagnosticsTests {
+    @Test func activationHandoffFailuresUseExactClosedCodes() {
+        let cases = [
+            ("source application resolution", "source_app_unresolved"),
+            ("menu bar drag synthesis", "drag_synthesis_unavailable"),
+            ("menu bar event delivery", "event_delivery_unavailable"),
+        ]
+        for (reason, expected) in cases {
+            #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.unavailableCapability(reason)) == expected)
+            #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.unavailableCapability(
+                reason + " /Users/private"
+            )) == "capability_unavailable")
+        }
+        #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
+            "User input did not become idle"
+        )) == "input_idle_timeout")
+        #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
+            "User input did not become idle /Users/private"
+        )) == "operation_failed")
+    }
+
     @Test func recoveryPreviewFailuresUseClosedCodes() {
         let failures: [WorkspaceRecoveryPlanner.Failure] = [
             .ambiguousIdentity, .displayTopologyChanged, .itemChangedDisplay,

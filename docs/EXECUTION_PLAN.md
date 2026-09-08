@@ -1,5 +1,21 @@
 # Barline execution plan
 
+## Build 30 activation release blocker — September 8, 2026
+
+The installed signed update passed preservation checks and the maintainer
+confirmed first-click shelf opening after a controlled restart, with a brief
+unmeasured loading message. Shelf activation subsequently failed: icons move
+into the main menu bar but require a second physical click to open their menus.
+The maintainer confirmed Time Machine, Google Drive, and all attempted items.
+This is not a successful activation or merely a false warning.
+
+Retained logs include one generic activation failure and one temporary-move
+capability rejection. Current diagnostic changes distinguish input-idle timeout,
+source-app resolution, drag synthesis and event delivery with exact closed codes;
+unknown payloads remain redacted. Eight focused diagnostic tests passed. No
+behavioral fix or build 30 activation qualification is claimed. Do not weaken
+source-process resolution safeguards or suppress failures to clear this gate.
+
 ## Build 30 preparation — September 8, 2026
 
 Build 30 advances all six shipping target configurations together for the next

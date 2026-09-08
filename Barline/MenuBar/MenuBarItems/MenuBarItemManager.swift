@@ -671,7 +671,8 @@ extension MenuBarItemManager {
             }
             try await Task.sleep(for: .milliseconds(250))
         }
-        throw EventError.cannotComplete
+        logger.error("Item input idle wait expired")
+        throw MenuBarBackendError.operationFailed("User input did not become idle")
     }
 
     private nonisolated func eventSleep(for duration: Duration = .milliseconds(25)) async {
