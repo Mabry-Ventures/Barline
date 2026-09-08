@@ -189,7 +189,7 @@ struct ProfilesSettingsPane: View {
                     .accessibilityIdentifier("discard-archived-focus-recovery")
                 }
                 if let token = manager.interruptedFocusRecoveryToken {
-                    Text("An interrupted Focus layout is awaiting recovery. Restore its saved pre-Focus layout and appearance only if you want to replace the current arrangement.")
+                    Text("A saved pre-Focus checkpoint is available for recovery. It may belong to an interrupted transaction or a previous partial recovery. Restore its layout and appearance only if you want to replace the current arrangement.")
                         .foregroundStyle(.secondary)
                     Button("Restore Pre-Focus Layout…") {
                         confirmedRecoveryToken = token

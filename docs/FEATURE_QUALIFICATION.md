@@ -1,7 +1,7 @@
 # Reliability-first feature qualification
 
-Installed qualification candidate: **1.0.11, build 28** (September 8, 2026).
-Source: `b73150a5a96f6a986805cd71a9203037f2158ef1`.
+Installed qualification candidate: **1.0.11, build 29** (September 8, 2026).
+Source: `e05e577f383ea7b41cfe95ce3abdfdc40e0ed993`.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
@@ -40,7 +40,7 @@ Failed attempts remain in local evidence; do not replace them with a later pass.
 
 ## Current boundary
 
-Build 28 passed clean local nonfocus qualification: 354 Core tests, 168 fixture
+Build 29 passed clean local nonfocus qualification: 357 Core tests, 168 fixture
 checks, four Xcode UI tests, Debug/Release compilation, static analysis and
 the automated accessibility/privacy gates. The exact commit also passed the
 Linux repository-hygiene check. These automated checks do not certify the
@@ -48,19 +48,27 @@ installed physical scenarios in the table above.
 
 The Developer ID package passed nested-signature/entitlement checks, Apple
 notarization, stapling and Gatekeeper assessment. A real signed Sparkle update
-from build 27 to 28 preserved semantic preferences and the canonical production
+from build 28 to 29 preserved semantic preferences and the canonical production
 feed, with one running installed instance verified after the upgrade.
 Installed executable SHA-256:
-`b73f8550b5d3acea1de96dcc3ff0631a7a4ecca2a23001c4718d44fce99369a5`.
+`8b55f05964256f692afb47cb83788b23865fb38c04aff96c55c56ed797b9c0d9`.
 
-The installed available-item recovery preview reported one unavailable saved
-item and was canceled without applying recovery. The original checkpoint is
-retained. Explicit partial recovery, native Work Focus on/off, restart behavior,
-the remaining interaction/accessibility matrix, and the second-device display
-lane still require installed evidence. Build 28 is not a public-release GO.
+Build 28's explicitly approved available-item recovery completed and survived a
+restart. Its original checkpoint remains archived and was preserved by the
+build 29 update. Build 29 rejected a stale native Work layout once without
+repeating the error over a 50-second observation window; Work-off cleared its
+requested state. A newer layout then activated through native Work Focus and
+created a checkpoint. Work-off cleared active authority and the checkpoint
+without logged operation failures. The manual archive remained unchanged.
+
+These observations do not independently prove restored item-order equivalence,
+manual override, build 29 relaunch behavior, the remaining interaction and
+accessibility matrix, or the second-device display lane. Recovery wording has a
+pending source correction; installed build 29 evidence does not certify that
+changed source. Build 29 is not a public-release GO.
 
 The candidate's local receipts are retained under ignored `.artifacts/ci/`,
-`.artifacts/release/` and `.artifacts/build28-installed/` paths in its frozen
+`.artifacts/release/` and `.artifacts/build29-installed/` paths in its frozen
 qualification worktree. Do not substitute earlier candidates' receipts.
 
 ## Historical findings and evidence

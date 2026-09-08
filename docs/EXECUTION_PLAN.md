@@ -1,5 +1,23 @@
 # Barline execution plan
 
+## Build 29 native Focus runtime checkpoint — September 8, 2026
+
+Installed source `e05e577f383ea7b41cfe95ce3abdfdc40e0ed993` passed the
+stale-layout no-retry observation: one rejection and no repeat over 50 seconds.
+Work-off cleared requested Focus state. A second cycle using the post-recovery
+layout activated successfully and created authority/checkpoint state; Work-off
+cleared both without a logged operation failure. The original manual archive
+hash was unchanged throughout. Receipts are retained in ignored local acceptance
+artifacts as `build29-work-on-stale-regression.md` and
+`build29-valid-focus-cycle.md`. These checks do not independently prove restored
+item-order equivalence, manual override, relaunch, or other-device behavior.
+
+Runtime inspection also found the shared recovery controls called an archived
+checkpoint an interrupted Focus. The pending copy-only correction describes both
+supported checkpoint sources without changing recovery selection, persistence,
+confirmation, or mutation behavior. It requires new candidate qualification;
+build 29 evidence remains bound to the installed source above.
+
 ## Work Focus stale-item rejection — September 8, 2026
 
 The next qualification candidate is **1.0.11 build 29**, including this correction
