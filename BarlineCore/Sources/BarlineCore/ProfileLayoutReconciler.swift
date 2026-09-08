@@ -26,11 +26,17 @@ public enum ProfileLayoutReconciler {
     public struct DisplayPlan: Equatable, Sendable {
         public let targets: [ScopedTarget]
         public let operations: [MenuBarMoveOperation]
+        public let isGloballyScoped: Bool
 
         /// Validate the complete admitted target, including preserved anchors.
         /// A new or missing item during execution invalidates this transaction.
         public func matches(items: [MenuBarItemDescriptor]) -> Bool {
             guard Set(items.map(\.id)).count == items.count else { return false }
+            if isGloballyScoped,
+               Set(items.map(\.id)) != Set(targets.flatMap { $0.layout.allItemIDs })
+            {
+                return false
+            }
             return targets.allSatisfy { target in
                 ProfileLayoutReconciler.observedLayout(
                     items: items.filter { $0.displayID == target.displayID }
@@ -72,6 +78,33 @@ public enum ProfileLayoutReconciler {
             hidden: ordered.filter { $0.section == .hidden }.map(\.id),
             alwaysHidden: ordered.filter { $0.section == .alwaysHidden }.map(\.id)
         )
+    }
+
+    // Separators are draggable in the native menu bar, but moving one changes
+    // section membership for neighboring items. A saved-layout transaction must
+    // move items across these boundaries, never move the boundaries themselves.
+    private static func canReposition(_ item: MenuBarItemDescriptor) -> Bool {
+        item.isMovable && !item.isBarlineControlItem
+    }
+
+    private static func validateBoundaryOrder(
+        _ ids: [MenuBarItemID], section: MenuBarSection,
+        known: [MenuBarItemID: MenuBarItemDescriptor]
+    ) throws {
+        let title: String
+        switch section {
+        case .visible: return
+        case .hidden: title = "Barline.ControlItem.Hidden"
+        case .alwaysHidden: title = "Barline.ControlItem.AlwaysHidden"
+        }
+        for display in Set(ids.compactMap { known[$0] }.map(\.displayID)) {
+            let local = ids.filter { known[$0]?.displayID == display }
+            let boundaries = local.filter { known[$0]?.isBarlineControlItem == true && known[$0]?.title == title }
+            guard boundaries.count <= 1 else { throw Failure.ambiguousIdentity }
+            if let boundary = boundaries.first, local.last != boundary {
+                throw Failure.unsupportedDestination
+            }
+        }
     }
 
     /// Compose display-local plans while translating each operation against the
@@ -134,7 +167,7 @@ public enum ProfileLayoutReconciler {
                 ))
             }
         }
-        return DisplayPlan(targets: targets, operations: operations)
+        return DisplayPlan(targets: targets, operations: operations, isGloballyScoped: displayID == nil)
     }
 
     /// Plan one display's layout using the helper's pre-removal insertion indices.
@@ -159,7 +192,7 @@ public enum ProfileLayoutReconciler {
         ] {
             for position in desired.indices.reversed() {
                 let id = desired[position]
-                guard selected.contains(id), known[id]?.isMovable == true else { continue }
+                guard selected.contains(id), let item = known[id], canReposition(item) else { continue }
                 guard let sourceSection = current.first(where: { $0.value.contains(id) })?.key,
                       let sourcePosition = current[sourceSection]?.firstIndex(of: id)
                 else { throw Failure.missingItem }
@@ -214,7 +247,7 @@ public enum ProfileLayoutReconciler {
         for (section, desired) in sections {
             for id in desired {
                 guard let item = known[id] else { throw Failure.missingItem }
-                if !item.isMovable, item.section != section {
+                if !canReposition(item), item.section != section {
                     throw Failure.immovableSectionChange
                 }
                 if section != .visible, !item.canBeHidden, item.section != section {
@@ -225,16 +258,16 @@ public enum ProfileLayoutReconciler {
         var merged = [MenuBarSection: [MenuBarItemID]]()
         for (section, desired) in sections {
             let anchors = items.filter {
-                $0.section == section && (!selected.contains($0.id) || !$0.isMovable)
+                $0.section == section && (!selected.contains($0.id) || !canReposition($0))
             }.sorted { $0.order < $1.order }.map(\.id)
-            let fixedRequested = desired.filter { known[$0]?.isMovable == false }
+            let fixedRequested = desired.filter { known[$0].map { !canReposition($0) } == true }
             guard anchors.filter({ selected.contains($0) }) == fixedRequested else {
                 throw Failure.immovableOrderChange
             }
             var result = [MenuBarItemID]()
             var anchorIndex = 0
             for id in desired {
-                if known[id]?.isMovable == false {
+                if known[id].map({ !canReposition($0) }) == true {
                     // Preserve newly discovered anchors before this fixed item.
                     while anchorIndex < anchors.count {
                         let anchor = anchors[anchorIndex]
@@ -249,6 +282,7 @@ public enum ProfileLayoutReconciler {
                 }
             }
             result.append(contentsOf: anchors.dropFirst(anchorIndex))
+            try validateBoundaryOrder(result, section: section, known: known)
             merged[section] = result
         }
         return ProfileLayout(

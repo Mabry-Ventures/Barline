@@ -6,6 +6,8 @@
   preserving display ownership and avoiding redundant drag operations.
 - Verify complete layout results before committing profile authority; reject
   unsupported physical destinations before changing workspace settings.
+- Keep Barline's section dividers fixed during saved-layout application and
+  reject unadmitted display changes or impossible divider ordering.
 - Retain observed workspace presentation during pending Focus recovery instead
   of clearing the evidence needed for safe restoration.
 

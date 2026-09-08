@@ -700,6 +700,9 @@ public actor MenuBarStateCoordinator {
                         }
                     }
                 }
+                if layoutPlan.isGloballyScoped, snapshot.displayIDs != before.displayIDs {
+                    throw MenuBarBackendError.operationFailed("profile display topology changed during activation")
+                }
                 try validateProfileResult(layoutPlan, in: snapshot)
                 try await admission?()
                 if let appliedWorkspaceRevision,

@@ -4,6 +4,59 @@ import Testing
 
 @Suite("Saved layout and fixed-anchor reconciliation")
 struct ProfileLayoutReconcilerTests {
+    @Test("Base plans reject new displays while display overrides retain their explicit scope")
+    func verifiesDisplayScope() throws {
+        let left = MenuBarDisplayID("left")
+        let right = MenuBarDisplayID("right")
+        let original = MenuBarItemDescriptor(id: id("a"), section: .visible, order: 0, displayID: left)
+        let added = MenuBarItemDescriptor(id: id("new"), section: .visible, order: 1, displayID: right)
+        let layout = ProfileLayout(visible: [original.id])
+        let base = try ProfileLayoutReconciler.planAcrossDisplays(layout: layout, items: [original])
+        let scoped = try ProfileLayoutReconciler.planAcrossDisplays(layout: layout, items: [original], displayID: left)
+        #expect(!base.matches(items: [original, added]))
+        #expect(scoped.matches(items: [original, added]))
+        #expect(!base.matches(items: [added]))
+        #expect(!scoped.matches(items: [added]))
+    }
+
+    @Test("Draggable section controls remain fixed during saved-layout activation", arguments: [MenuBarSection.hidden, .alwaysHidden])
+    func preservesSectionControls(section: MenuBarSection) throws {
+        let control = MenuBarItemDescriptor(
+            id: id("control"), section: section, order: 2,
+            isBarlineControlItem: true,
+            title: section == .hidden ? "Barline.ControlItem.Hidden" : "Barline.ControlItem.AlwaysHidden",
+            isMovable: true
+        )
+        let items = [item("a", 0, section: section), item("new", 1, section: section), control]
+        let saved = ProfileLayout(
+            hidden: section == .hidden ? [id("a"), control.id] : [],
+            alwaysHidden: section == .alwaysHidden ? [id("a"), control.id] : []
+        )
+        let plan = try ProfileLayoutReconciler.planAcrossDisplays(layout: saved, items: items)
+        #expect(plan.operations.isEmpty)
+        #expect(plan.matches(items: items))
+        #expect(ProfileLayoutReconciler.matches(layout: saved, items: items))
+        let impossible = ProfileLayout(
+            hidden: section == .hidden ? [control.id, id("a")] : [],
+            alwaysHidden: section == .alwaysHidden ? [control.id, id("a")] : []
+        )
+        #expect(throws: ProfileLayoutReconciler.Failure.unsupportedDestination) {
+            try ProfileLayoutReconciler.planAcrossDisplays(layout: impossible, items: items)
+        }
+        let duplicate = MenuBarItemDescriptor(
+            id: id("duplicate-control"), section: section, order: 3,
+            isBarlineControlItem: true, title: control.title, isMovable: true
+        )
+        #expect(throws: ProfileLayoutReconciler.Failure.ambiguousIdentity) {
+            try ProfileLayoutReconciler.planAcrossDisplays(layout: saved, items: items + [duplicate])
+        }
+        #expect(throws: ProfileLayoutReconciler.Failure.immovableSectionChange) {
+            try ProfileLayoutReconciler.planAcrossDisplays(
+                layout: ProfileLayout(visible: [control.id]), items: items
+            )
+        }
+    }
+
     @Test("Older capability payloads retain physical destination requirements")
     func legacyDestinationCapability() throws {
         let data = Data(#"{"canSnapshot":true,"canMove":true,"canReveal":true,"canActivate":true,"canRestore":true,"canCapture":false}"#.utf8)

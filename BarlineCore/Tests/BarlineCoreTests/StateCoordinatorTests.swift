@@ -9,6 +9,25 @@ import Testing
 
 @Suite("Transactional state coordinator")
 struct StateCoordinatorTests {
+    @Test("A base layout cannot commit across an unadmitted empty-display connection")
+    func rejectsBaseTopologyChange() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let after = MenuBarSnapshot(
+            generation: 2, capturedAt: before.capturedAt, items: before.items,
+            displayIDs: before.displayIDs.union([MenuBarDisplayID("new-empty-display")]), activeSpaceIsValid: true
+        )
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        await #expect(throws: MenuBarBackendError.operationFailed("profile display topology changed during activation")) {
+            try await coordinator.activate(
+                profile: BarlineProfile(name: "Base", layout: ProfileLayout(visible: before.items.map(\.id))),
+                now: before.capturedAt
+            )
+        }
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await backend.moveOperations.isEmpty)
+    }
+
     @Test("Physical profile destinations are checked before checkpoint or workspace effects")
     func rejectsEmptyPhysicalDestinationBeforeEffects() async throws {
         let before = makeSnapshot(generation: 1, count: 1)

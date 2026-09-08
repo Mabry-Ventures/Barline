@@ -1,5 +1,23 @@
 # Barline execution plan
 
+## Build 24 independent-review corrections — September 7, 2026
+
+The preliminary clean candidate `d342b85` passed the complete nonfocus suite and
+Linux repository hygiene, but independent review found two correctness gaps.
+Production Barline separators are manually movable and were therefore being
+planned as ordinary saved items; dragging a separator changes neighboring
+section classification. Planning now treats Barline controls as anchors without
+changing their manual movability. Exact hidden/always-hidden separator identities
+must remain last in their display-local section; duplicates and impossible saved
+ordering fail before mutation. Fourteen planner tests pass, including both
+separator types with their actual movable descriptor flags.
+
+Base plans now validate the complete admitted item set and unchanged display
+topology. Explicit display overrides retain their bounded scope. Regression
+coverage includes a new display with items and an empty connected display.
+The corrected source needs fresh clean qualification; no signing, notarization,
+installed update, or public release occurred for the preliminary candidate.
+
 ## Build 24 candidate freeze — September 7, 2026
 
 Version 1.0.11 build 24 incorporates the fixed-anchor activation and retained
