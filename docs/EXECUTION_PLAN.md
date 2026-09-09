@@ -1,17 +1,27 @@
 # Barline execution plan
 
-## Build 33 public-release closure — September 9, 2026
+## Build 34 cold-launch Accessibility closeout — September 9, 2026
 
-Barline 1.0.11 build 33 is the final public-release candidate. Build 32 passed
+Barline 1.0.11 build 34 is the final public-release candidate. Build 33 passed
 the complete local gate, signed packaging, Apple notarization, stapling,
-Gatekeeper, signed update, clean installation, source-bound target journeys,
-helper interruption and bounded performance checks. Because the launch metadata
-and site conversion change the source, build 33 must repeat those gates on its
-exact merge commit. The build increment also permits a real build-32-to-33
-Sparkle update. Publication is allowed only after both localized reviewers,
-hosted repository checks, exact-merge qualification and installed validation
-pass. macOS 27 runtime qualification, the extended soak, and the second notched
-device remain explicitly deferred and are not launch claims.
+Gatekeeper, signed update, installed target journeys, helper interruption and
+bounded performance checks. Its true clean-install cold launch ordered a
+visible shelf but failed to expose that shelf in Barline's Accessibility window
+list, so publication remained blocked.
+
+Build 34 preserves the existing nonactivating, non-key pointer presentation and
+publishes its committed panel with explicit window semantics and a window-created
+Accessibility notification. The UI smoke regression requires the shelf
+in both the window server and Accessibility tree while Barline remains inactive
+and nonfrontmost. Build 34 must repeat the complete gate and all distribution
+and installed checks on its exact merge commit, including a real build-33-to-34
+Sparkle update and true clean install. Publication is allowed only after both
+localized reviewers, hosted repository checks, exact-merge qualification and
+installed validation pass. macOS 27 runtime qualification, the extended soak,
+and the second notched device remain explicitly deferred and are not launch
+claims.
+
+## Build 33 public-release closure — September 9, 2026
 
 ## Build 32 localized-review refinement — September 9, 2026
 
