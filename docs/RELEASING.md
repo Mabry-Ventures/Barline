@@ -42,6 +42,9 @@ Set `BARLINE_APP_PROVISIONING_PROFILE_SPECIFIER` and
 so File Provider metadata from a synced workspace cannot invalidate code signing.
 
 Use `--notary-profile NAME` or `BARLINE_NOTARY_PROFILE` to select an existing
-notarytool Keychain profile; never pass a password. When profiles or credentials
-are absent, only `--unsigned` may pass and is not a release claim. Clean install
-and update-from-previous remain separately recorded manual gates.
+notarytool Keychain profile; never pass a password. The release script passes an
+explicit Keychain path so a same-named credential in another Keychain backend
+cannot be selected. It defaults to the login Keychain and may be overridden with
+`--notary-keychain PATH` or `BARLINE_NOTARY_KEYCHAIN`. When profiles or
+credentials are absent, only `--unsigned` may pass and is not a release claim.
+Clean install and update-from-previous remain separately recorded manual gates.

@@ -141,12 +141,37 @@ public struct MenuBarRect: Codable, Hashable, Sendable {
     }
 }
 
+/// The source application is distinct from the WindowServer host. On macOS 26,
+/// Control Center hosts third-party items; an unresolved host is not a system item.
+public enum MenuBarSourceOwnership: String, Codable, Hashable, Sendable {
+    case unknown
+    case system
+    case application
+}
+
+/// Keep unknown observation fail-closed without requiring AppKit in the domain.
+public enum MenuBarTrackingPolicy {
+    public static func isTransientInterface(role: String?, subrole: String?) -> Bool {
+        role == "AXMenu" || role == "AXPopover" || subrole == "AXPopover"
+    }
+
+    public static func blocksMutation(
+        sceneIsAvailable: Bool,
+        nativeMenuIsVisible: Bool,
+        sourceInterfaceIsVisible: Bool
+    ) -> Bool {
+        !sceneIsAvailable || nativeMenuIsVisible || sourceInterfaceIsVisible
+    }
+}
+
 public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
     public let id: MenuBarItemID
     public let section: MenuBarSection
     public let order: Int
     public let displayID: MenuBarDisplayID?
     public let isSystemItem: Bool
+    /// Optional for decoding archives written before ownership was explicit.
+    public let sourceOwnership: MenuBarSourceOwnership?
     public let isBarlineControlItem: Bool
     public let tagNamespace: String?
     public let title: String?
@@ -167,6 +192,7 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         order: Int,
         displayID: MenuBarDisplayID? = nil,
         isSystemItem: Bool = false,
+        sourceOwnership: MenuBarSourceOwnership? = nil,
         isBarlineControlItem: Bool = false,
         tagNamespace: String? = nil,
         title: String? = nil,
@@ -186,6 +212,7 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         self.order = order
         self.displayID = displayID
         self.isSystemItem = isSystemItem
+        self.sourceOwnership = sourceOwnership
         self.isBarlineControlItem = isBarlineControlItem
         self.tagNamespace = tagNamespace
         self.title = title
@@ -199,6 +226,10 @@ public struct MenuBarItemDescriptor: Codable, Hashable, Sendable {
         self.isBentoBox = isBentoBox
         self.isSystemClone = isSystemClone
         self.isResponsive = isResponsive
+    }
+
+    public var isConfirmedSystemItem: Bool {
+        sourceOwnership.map { $0 == .system } ?? isSystemItem
     }
 }
 
@@ -232,6 +263,28 @@ public struct MenuBarSnapshot: Codable, Hashable, Sendable {
     public func displayIdentity(for runtimeID: MenuBarDisplayID) -> MenuBarDisplayIdentity? {
         displayIdentities?.first { $0.runtimeID == runtimeID }
     }
+
+    /// Resolves pre-hosted-identity profiles without guessing among duplicate
+    /// items. Source bundle, title and semantic fingerprint must all agree;
+    /// occurrence aliases are not evidence of identity after process relaunch.
+    public func resolvedItemID(for storedID: MenuBarItemID) -> MenuBarItemID? {
+        if items.contains(where: { $0.id == storedID }) {
+            return storedID
+        }
+        guard let title = storedID.title,
+              let fingerprint = storedID.fallbackFingerprint
+        else { return nil }
+        let matches = items.filter { item in
+            guard item.id.bundleIdentifier == "barline.hosted-menu-item",
+                  item.id.title == title,
+                  item.id.fallbackFingerprint == fingerprint
+            else { return false }
+            let resolvedSource = item.tagNamespace?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return resolvedSource == storedID.bundleIdentifier ||
+                storedID.bundleIdentifier == "com.apple.controlcenter"
+        }
+        return matches.count == 1 ? matches[0].id : nil
+    }
 }
 
 public struct MenuBarMovePlanner: Sendable {
@@ -257,16 +310,47 @@ public struct MenuBarMovePlanner: Sendable {
 
     public func resultMatches(
         _ operation: MenuBarMoveOperation,
-        in snapshot: MenuBarSnapshot
+        in snapshot: MenuBarSnapshot,
+        from previousSnapshot: MenuBarSnapshot
     ) -> Bool {
         let candidates = snapshot.items.filter { $0.section == operation.section }
-        guard !candidates.isEmpty else { return false }
-        let expectedIndex = min(max(operation.index, 0), candidates.count - 1)
-        return candidates.indices.contains(expectedIndex)
-            && candidates[expectedIndex].id == operation.itemID
-            && operation.destinationDisplayID.map {
-                candidates[expectedIndex].displayID == $0
-            } != false
+        guard let itemIndex = candidates.firstIndex(where: { $0.id == operation.itemID }) else {
+            return false
+        }
+        guard operation.destinationDisplayID.map({ candidates[itemIndex].displayID == $0 }) != false else {
+            return false
+        }
+        let previousCandidates = previousSnapshot.items.filter {
+            $0.section == operation.section
+        }
+        var insertionIndex = min(max(operation.index, 0), previousCandidates.count)
+        if let sourceIndex = previousCandidates.firstIndex(where: { $0.id == operation.itemID }),
+           sourceIndex < insertionIndex
+        {
+            // The operation index is an insertion offset in the pre-move
+            // section. Removing an earlier source shifts that offset left.
+            insertionIndex -= 1
+        }
+        let destinationCandidates = previousCandidates.filter { $0.id != operation.itemID }
+        insertionIndex = min(insertionIndex, destinationCandidates.count)
+
+        // Validate against the stable neighbor that defined the insertion
+        // slot. Absolute ordinals can shift when macOS adds or removes an
+        // unrelated status item while the move is in flight.
+        if insertionIndex < destinationCandidates.count {
+            let rightAnchorID = destinationCandidates[insertionIndex].id
+            guard let anchorIndex = candidates.firstIndex(where: { $0.id == rightAnchorID }) else {
+                return false
+            }
+            return itemIndex + 1 == anchorIndex
+        }
+        if let leftAnchorID = destinationCandidates.last?.id {
+            guard let anchorIndex = candidates.firstIndex(where: { $0.id == leftAnchorID }) else {
+                return false
+            }
+            return itemIndex == anchorIndex + 1
+        }
+        return itemIndex == 0
     }
 
     public func restoreOperations(for snapshot: MenuBarSnapshot) -> [MenuBarMoveOperation] {

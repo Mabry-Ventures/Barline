@@ -14,6 +14,8 @@ struct GeneralSettingsPane: View {
     @State private var presentedError: LocalizedErrorWrapper?
     @State private var isApplyingItemSpacingOffset = false
     @State private var tempItemSpacingOffset: CGFloat = 0
+    @State private var iconImportTask: Task<Void, Never>?
+    @State private var iconImportSequence: UInt64 = 0
 
     private var itemSpacingOffsetKey: LocalizedStringKey {
         switch tempItemSpacingOffset {
@@ -54,6 +56,11 @@ struct GeneralSettingsPane: View {
                 spacingOptions
             }
         }
+        .onDisappear {
+            iconImportSequence &+= 1
+            iconImportTask?.cancel()
+            iconImportTask = nil
+        }
     }
 
     // MARK: App Options
@@ -61,6 +68,8 @@ struct GeneralSettingsPane: View {
     @ViewBuilder
     private var appOptions: some View {
         LaunchAtLogin.Toggle()
+        Toggle("Hide Dock icon", isOn: $settings.hideDockIcon)
+            .annotation("Keep Barline out of the Dock, including while Settings is open.")
     }
 
     // MARK: Barline Icon Options
@@ -73,7 +82,6 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var showBarlineIcon: some View {
         Toggle("Show Barline icon", isOn: $settings.showBarlineIcon)
             .annotation("Click to show hidden menu bar items. Right-click to access Barline's settings.")
@@ -118,16 +126,24 @@ struct GeneralSettingsPane: View {
             isPresented: $isImportingCustomBarlineIcon,
             allowedContentTypes: [.image]
         ) { result in
-            do {
-                let url = try result.get()
-                if url.startAccessingSecurityScopedResource() {
-                    defer { url.stopAccessingSecurityScopedResource() }
-                    let data = try Data(contentsOf: url)
+            iconImportTask?.cancel()
+            iconImportSequence &+= 1
+            let sequence = iconImportSequence
+            iconImportTask = Task {
+                do {
+                    let url = try result.get()
+                    let data = try await BoundedIconImporter.shared.load(from: url)
+                    guard !Task.isCancelled, sequence == iconImportSequence else { return }
                     settings.barlineIcon = ControlItemImageSet(name: .custom, image: .data(data))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled, sequence == iconImportSequence else { return }
+                    // Avoid surfacing system error strings containing full paths.
+                    let displayError = error as? BoundedIconImporter.ImportError ?? .unsupportedImage
+                    presentedError = LocalizedErrorWrapper(displayError)
+                    isPresentingError = true
                 }
-            } catch {
-                presentedError = LocalizedErrorWrapper(error)
-                isPresentingError = true
             }
         }
         .alert(isPresented: $isPresentingError, error: presentedError) {
@@ -152,7 +168,6 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private func barlineIconMenuItem(for imageSet: ControlItemImageSet) -> some View {
         Label {
             Text(imageSet.name.rawValue)
@@ -180,13 +195,14 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var useBarlineShelf: some View {
         Toggle("Use Barline Bar", isOn: $settings.useBarlineShelf)
-            .annotation("Show hidden menu bar items in a separate bar below the menu bar.")
+            .annotation {
+                Text("Show hidden menu bar items in a separate bar below the menu bar.")
+                Text("When macOS automatically hides the menu bar, Barline reveals items directly in the system menu bar instead. The Barline Bar and drag layout editor require an always-visible menu bar.")
+            }
     }
 
-    @ViewBuilder
     private var barlineShelfLocationPicker: some View {
         BarlinePicker("Location", selection: $settings.barlineShelfLocation) {
             ForEach(BarlineShelfLocation.allCases) { location in
@@ -227,12 +243,10 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var autoRehide: some View {
         Toggle("Automatically rehide", isOn: $settings.autoRehide)
     }
 
-    @ViewBuilder
     private var rehideStrategyPicker: some View {
         VStack {
             BarlinePicker("Strategy", selection: $settings.rehideStrategy) {
@@ -255,7 +269,7 @@ struct GeneralSettingsPane: View {
                 BarlineSlider(
                     rehideIntervalKey,
                     value: $settings.rehideInterval,
-                    in: 0...30,
+                    in: 0 ... 30,
                     step: 1
                 )
             }
@@ -264,13 +278,12 @@ struct GeneralSettingsPane: View {
 
     // MARK: Spacing Options
 
-    @ViewBuilder
     private var spacingOptions: some View {
         LabeledContent {
             BarlineSlider(
                 itemSpacingOffsetKey,
                 value: $tempItemSpacingOffset,
-                in: -16...16,
+                in: -16 ... 16,
                 step: 2
             )
             .disabled(isApplyingItemSpacingOffset)

@@ -20,7 +20,7 @@ report_matches() {
 report_matches "direct private symbol declarations are forbidden; use DynamicSymbolResolver" \
     rg -n '@_silgen_name' --glob '*.swift' .
 
-private_pattern='\b(CGS(MainConnectionID|CopyWindowsWithOptionsAndTags|CopyWindowProperty|SetWindowProperty|GetWindowOwner|GetWindowBounds|GetWindowLevel|GetActiveSpace|GetSpaceForWindow|GetWindowCount|GetWindowList|GetOnScreenWindowList|GetOnScreenWindowCount|IsWindowOnScreen|GetWindowTags|OrderWindow|SetWindowTags|ClearWindowTags)|GetProcessForPID)\b'
+private_pattern='\b(CGS(MainConnectionID|CopyManagedDisplayForWindow|CopyWindowsWithOptionsAndTags|CopyWindowProperty|SetWindowProperty|GetWindowOwner|GetWindowBounds|GetWindowLevel|GetActiveSpace|GetSpaceForWindow|GetWindowCount|GetWindowList|GetOnScreenWindowList|GetOnScreenWindowCount|IsWindowOnScreen|GetWindowTags|OrderWindow|SetWindowTags|ClearWindowTags)|GetProcessForPID)\b'
 matches="$(rg -n "$private_pattern" --glob '*.swift' . || true)"
 if [[ -n "$matches" ]]; then
     outside="$(printf '%s\n' "$matches" | grep -v '^\./BarlineMenuService/' || true)"

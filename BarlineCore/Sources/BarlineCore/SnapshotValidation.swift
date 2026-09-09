@@ -136,9 +136,14 @@ public struct SnapshotValidator: Sendable {
                 }
             }
 
-            let previousSystemItemCount = previous.items.count(where: \.isSystemItem)
+            let previousSystemIDs = Set(previous.items.filter(\.isConfirmedSystemItem).map(\.id))
+            let previousSystemItemCount = previousSystemIDs.count
             if previousSystemItemCount > 0 {
-                let candidateSystemItemCount = candidate.items.count(where: \.isSystemItem)
+                // Continuity protects inventory, not a provisional ownership
+                // classification. Retaining the same identity while its source
+                // resolves must not freeze all later mutations. Conversely,
+                // unrelated new system items cannot mask loss of known ones.
+                let candidateSystemItemCount = previousSystemIDs.intersection(seen).count
                 let retainedRatio = Double(candidateSystemItemCount) / Double(previousSystemItemCount)
                 if retainedRatio < 1 - policy.maximumSystemItemCollapseRatio {
                     return .failure(

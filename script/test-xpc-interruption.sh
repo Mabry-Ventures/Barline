@@ -12,7 +12,7 @@ RECOVERY_PROBE="runtime-smoke"
 APP_PID=""
 
 usage() {
-    printf 'usage: %s [--reuse-running] [--recovery-probe runtime-smoke|apple-event-reopen]\n' "$0"
+    printf 'usage: %s [--reuse-running] [--recovery-probe runtime-smoke|status-item-click|apple-event-reopen]\n' "$0"
 }
 
 while (($#)); do
@@ -29,7 +29,12 @@ while (($#)); do
     shift
 done
 
-[[ "$RECOVERY_PROBE" == runtime-smoke || "$RECOVERY_PROBE" == apple-event-reopen ]] || { usage >&2; exit 2; }
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]] && ! "$REUSE_RUNNING"; then
+    printf 'error: installed evidence requires --reuse-running\n' >&2
+    exit 2
+fi
+
+[[ "$RECOVERY_PROBE" == runtime-smoke || "$RECOVERY_PROBE" == status-item-click || "$RECOVERY_PROBE" == apple-event-reopen ]] || { usage >&2; exit 2; }
 
 cleanup() {
     if ! "$REUSE_RUNNING"; then
@@ -40,6 +45,10 @@ cleanup() {
 trap cleanup EXIT
 
 if "$REUSE_RUNNING"; then
+    if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+        source "$ROOT/script/lib/installed-candidate.sh"
+        barline_verify_installed_candidate
+    fi
     APP_PID="$(/usr/bin/pgrep -x "$APP_NAME" | head -1 || true)"
     [[ -n "$APP_PID" ]] || {
         printf 'error: --reuse-running requires an active Barline process\n' >&2
@@ -59,6 +68,16 @@ if [[ -z "$helper_pid" ]]; then
     printf 'error: embedded XPC helper did not start; required app permissions may be unavailable, so interruption recovery is not verified\n' >&2
     exit 1
 fi
+[[ "$(/usr/bin/pgrep -x "$HELPER_NAME")" == "$helper_pid" ]] || {
+    printf 'error: multiple helpers; interruption target is ambiguous\n' >&2
+    exit 1
+}
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+    [[ "$(ps -p "$helper_pid" -o comm=)" == "$BARLINE_CANDIDATE_APP/Contents/XPCServices/BarlineMenuService.xpc/Contents/MacOS/BarlineMenuService" ]] || {
+        printf 'error: helper does not belong to the installed candidate\n' >&2
+        exit 1
+    }
+fi
 
 /bin/kill -KILL "$helper_pid"
 for _ in {1..20}; do
@@ -75,9 +94,16 @@ fi
 }
 
 if "$REUSE_RUNNING"; then
-    if [[ "$RECOVERY_PROBE" == apple-event-reopen ]]; then
-        BARLINE_PERFORMANCE_CYCLES=1 BARLINE_PERFORMANCE_WARMUPS=1 \
-            "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe apple-event-reopen
+    if [[ "$RECOVERY_PROBE" == apple-event-reopen || "$RECOVERY_PROBE" == status-item-click ]]; then
+        if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+            [[ "$RECOVERY_PROBE" == status-item-click ]] || exit 2
+            BARLINE_EVIDENCE_OUTPUT="" BARLINE_PERFORMANCE_CYCLES=1 BARLINE_PERFORMANCE_WARMUPS=1 \
+                "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe "$RECOVERY_PROBE" \
+                | tee "$BARLINE_EVIDENCE_OUTPUT.log"
+        else
+            BARLINE_PERFORMANCE_CYCLES=1 BARLINE_PERFORMANCE_WARMUPS=1 \
+                "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe "$RECOVERY_PROBE"
+        fi
     else
         # Exercise the DEBUG-only user path in the development interruption gate.
         APP_BUNDLE_ID="$(barline_resolve_app_bundle_identifier "$ROOT" Debug)"
@@ -109,3 +135,10 @@ if [[ -n "$APP_PID" && "$(/usr/bin/pgrep -x "$APP_NAME" | head -1 || true)" != "
 fi
 
 printf 'PASS: XPC helper interruption preserved the app and produced a replacement helper process\n'
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+    barline_verify_installed_candidate
+    [[ "$(ps -p "$replacement_pid" -o comm=)" == "$BARLINE_CANDIDATE_APP/Contents/XPCServices/BarlineMenuService.xpc/Contents/MacOS/BarlineMenuService" ]] || exit 1
+    printf '%s\n' '{"helperTerminatedObserved":true,"appProcessPreserved":true,"replacementHelperObserved":true,"recoveryInteractionObserved":true,"recoveryProbe":"status-item-click"}' | tee -a "$BARLINE_EVIDENCE_OUTPUT.log"
+    ruby "$ROOT/script/write-installed-evidence.rb" --kind xpc-interruption \
+        --log "$BARLINE_EVIDENCE_OUTPUT.log" --output "$BARLINE_EVIDENCE_OUTPUT"
+fi

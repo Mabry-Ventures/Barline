@@ -8,6 +8,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ProfilesSettingsPane: View {
+    private static let focusSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.Focus-Settings.extension"
+    )!
+
     @EnvironmentObject var appState: AppState
     @ObservedObject var manager: ProfileManager
     @State private var profileName = "Work"
@@ -15,20 +19,44 @@ struct ProfilesSettingsPane: View {
     @State private var exportDocument: ProfileArchiveDocument?
     @State private var showsArchiveExporter = false
     @State private var showsArchiveImporter = false
+    @State private var focusLayoutID: UUID?
+    @State private var confirmedRecoveryToken: UUID?
+    @State private var showsFocusRecoveryConfirmation = false
+    @State private var availableRecovery: MenuBarPreparedWorkspaceRecovery?
+    @State private var showsAvailableRecoveryConfirmation = false
+    @State private var archivedRecoveryToken: UUID?
+    @State private var showsArchiveRemovalConfirmation = false
+
+    private var focusLayout: BarlineProfile? {
+        manager.profiles.first { $0.id == focusLayoutID }
+    }
 
     var body: some View {
         Form {
-            Section("Saved Profiles") {
+            focusSetupSection
+
+            Section("Menu Bar Layouts") {
                 if manager.profiles.isEmpty {
                     ContentUnavailableView(
-                        "No Profiles",
-                        systemImage: "person.crop.rectangle.stack",
-                        description: Text("Capture the current menu bar layout to create one.")
+                        "No Saved Layouts",
+                        systemImage: "rectangle.topthird.inset.filled",
+                        description: Text(
+                            "Capture a menu bar layout, then assign it to a macOS Focus using Focus Settings."
+                        )
                     )
+                    .frame(maxWidth: .infinity)
+                    .gridCellColumns(2)
                 } else {
                     ForEach(manager.profiles) { profile in
                         HStack {
-                            Label(profile.name, systemImage: profile.symbol ?? "menubar.rectangle")
+                            VStack(alignment: .leading, spacing: 3) {
+                                Label(profile.name, systemImage: profile.symbol ?? "menubar.rectangle")
+                                if !profile.displayOverrides.isEmpty {
+                                    Text("\(profile.displayOverrides.count) saved display variants · Review in Edit")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                             Spacer()
                             if manager.activeProfileID == profile.id {
                                 Text("Active").foregroundStyle(.secondary)
@@ -47,17 +75,13 @@ struct ProfilesSettingsPane: View {
                 }
             }
 
-            Section("Create") {
-                TextField("Profile name", text: $profileName)
+            Section("Create Menu Bar Layout") {
+                TextField("Layout name", text: $profileName)
                 HStack {
                     Button("Capture Current Layout") {
                         Task { await manager.captureCurrentProfile(named: profileName) }
                     }
                     .disabled(profileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .disabled(!appState.permissions.accessibility.hasPermission)
-                    Button("Create Presentation Profile") {
-                        Task { await manager.createPresentationProfile() }
-                    }
                     .disabled(!appState.permissions.accessibility.hasPermission)
                 }
                 if !appState.permissions.accessibility.hasPermission {
@@ -66,16 +90,20 @@ struct ProfilesSettingsPane: View {
                 }
             }
 
+            displayLayoutsSection
+
+            ContextualRulesSection(manager: appState.contextualRules, profiles: manager.profiles)
+
             Section("Import and Export") {
                 HStack {
                     Button("Import from Ice…") {
                         Task { await manager.discoverIceImports() }
                     }
                     .disabled(!appState.permissions.accessibility.hasPermission)
-                    Button("Import Archive…") {
+                    Button("Import Layout Archive…") {
                         showsArchiveImporter = true
                     }
-                    Button("Export All Profiles…") {
+                    Button("Export All Layouts…") {
                         Task {
                             guard let data = await manager.archiveData() else { return }
                             exportDocument = ProfileArchiveDocument(data: data)
@@ -141,7 +169,7 @@ struct ProfilesSettingsPane: View {
                                 Task { await manager.commitArchiveImport(replacingExisting: true) }
                             }
                         } else {
-                            Button("Import Profiles") {
+                            Button("Import Layouts") {
                                 Task { await manager.commitArchiveImport(replacingExisting: false) }
                             }
                         }
@@ -150,6 +178,35 @@ struct ProfilesSettingsPane: View {
             }
 
             Section("Recovery") {
+                TemporaryItemRecoveryView(manager: appState.itemManager)
+                if let token = manager.archivedFocusRecoveryToken {
+                    Text("A previous partial recovery checkpoint is kept for manual recovery. It is not an active Focus. Discard it only if you no longer need the original arrangement; a new partial recovery will not overwrite it.")
+                        .foregroundStyle(.secondary)
+                    Button("Discard Archived Checkpoint…") {
+                        archivedRecoveryToken = token
+                        showsArchiveRemovalConfirmation = true
+                    }
+                    .accessibilityIdentifier("discard-archived-focus-recovery")
+                }
+                if let token = manager.interruptedFocusRecoveryToken {
+                    Text("A saved pre-Focus checkpoint is available for recovery. It may belong to an interrupted transaction or a previous partial recovery. Restore its layout and appearance only if you want to replace the current arrangement.")
+                        .foregroundStyle(.secondary)
+                    Button("Restore Pre-Focus Layout…") {
+                        confirmedRecoveryToken = token
+                        showsFocusRecoveryConfirmation = true
+                    }
+                    .disabled(!appState.permissions.accessibility.hasPermission)
+                    .accessibilityIdentifier("restore-interrupted-focus-layout")
+                    Button("Review Available-Item Recovery…") {
+                        confirmedRecoveryToken = token
+                        Task {
+                            availableRecovery = await manager.previewAvailableFocusRecovery(confirmedToken: token)
+                            showsAvailableRecoveryConfirmation = availableRecovery != nil
+                        }
+                    }
+                    .disabled(!appState.permissions.accessibility.hasPermission)
+                    .accessibilityIdentifier("preview-available-focus-recovery")
+                }
                 HStack {
                     Button("Undo Layout Change") {
                         Task { await manager.undoLayoutChange() }
@@ -168,17 +225,45 @@ struct ProfilesSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Automation") {
-                Text("Shortcuts and Focus pass only stable profile identifiers through the App Intents extension. Barline validates and applies the profile transactionally in the app process.")
-                    .foregroundStyle(.secondary)
-            }
-
             if let statusMessage = manager.statusMessage {
                 Section { Text(statusMessage).accessibilityIdentifier("profile-status") }
             }
         }
         .formStyle(.grouped)
         .disabled(manager.isBusy)
+        .confirmationDialog("Restore the pre-Focus layout?", isPresented: $showsFocusRecoveryConfirmation) {
+            Button("Restore Pre-Focus Layout") {
+                guard let token = confirmedRecoveryToken else { return }
+                Task { await manager.restoreInterruptedFocusLayout(confirmedToken: token) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces the current menu bar arrangement and layout settings with the saved pre-Focus checkpoint. Saved layouts are not deleted. If restoration cannot be verified, the checkpoint is retained.")
+        }
+        .alert("Restore available items?", isPresented: $showsAvailableRecoveryConfirmation) {
+            Button("Restore Available Items") {
+                guard let token = confirmedRecoveryToken, let prepared = availableRecovery else { return }
+                availableRecovery = nil
+                Task { await manager.restoreAvailableFocusLayout(confirmedToken: token, prepared: prepared) }
+            }
+            Button("Cancel", role: .cancel) { availableRecovery = nil }
+        } message: {
+            Text("\(availableRecovery?.preview.missingItemIDs.count ?? 0) saved items are unavailable; \(availableRecovery?.preview.addedItemIDs.count ?? 0) new items will be preserved. This replaces the available items’ arrangement and layout settings. The original checkpoint stays available. Any change since this preview cancels recovery.")
+        }
+        .confirmationDialog("Discard the archived recovery checkpoint?", isPresented: $showsArchiveRemovalConfirmation) {
+            Button("Discard Archived Checkpoint", role: .destructive) {
+                guard let token = archivedRecoveryToken else { return }
+                manager.discardArchivedFocusRecovery(confirmedToken: token)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes only the previous partial recovery checkpoint. The current arrangement, saved layouts, and any newer interrupted Focus transaction are preserved.")
+        }
+        .onChange(of: manager.profiles.map(\.id), initial: true) {
+            guard focusLayout == nil else { return }
+            focusLayoutID = manager.profiles.first { $0.id == manager.activeProfileID }?.id
+                ?? manager.profiles.first?.id
+        }
         .onChange(of: appState.navigationState.requestedProfileEditorID, initial: true) {
             guard let profileID = appState.navigationState.requestedProfileEditorID,
                   let profile = manager.profiles.first(where: { $0.id == profileID })
@@ -190,18 +275,19 @@ struct ProfilesSettingsPane: View {
             ProfileEditorSheet(
                 profile: profile,
                 canResetFromWorkspace: appState.permissions.accessibility.hasPermission
-            ) { name, symbol, groups, spacers in
-                Task {
-                    await manager.update(
-                        profile,
-                        name: name,
-                        symbol: symbol,
-                        groups: groups,
-                        spacers: spacers
-                    )
-                }
+            ) { name, symbol, groups, spacers, variants in
+                await manager.update(
+                    profile,
+                    name: name,
+                    symbol: symbol,
+                    groups: groups,
+                    spacers: spacers,
+                    displayOverrides: variants
+                )
             } onReset: {
                 Task { await manager.resetFromCurrentWorkspace(profile) }
+            } onCapture: { draft in
+                try await appState.compatibilityCoordinator.captureDisplayVariant(profile: draft)
             }
         }
         .fileImporter(
@@ -221,7 +307,7 @@ struct ProfilesSettingsPane: View {
             isPresented: $showsArchiveExporter,
             document: exportDocument,
             contentType: .barlineProfileArchive,
-            defaultFilename: "Barline Profiles.json"
+            defaultFilename: "Barline Layouts.json"
         ) { result in
             exportDocument = nil
             switch result {
@@ -229,6 +315,119 @@ struct ProfilesSettingsPane: View {
                 manager.statusMessage = "Profile archive exported."
             case .failure:
                 manager.statusMessage = "The profile archive was not saved."
+            }
+        }
+    }
+
+    private var focusSetupSection: some View {
+        Section("Use a Layout with macOS Focus") {
+            Text("Focus modes stay in System Settings. Barline uses Apple's Focus Filters; it does not create or list your Focus modes.")
+                .foregroundStyle(.secondary)
+
+            FocusSetupStep(number: 1, title: "Choose a saved menu bar layout") {
+                if manager.profiles.isEmpty {
+                    Text("Arrange your menu bar, then use Capture Current Layout below. Give it a name you will recognize in Focus Settings.")
+                } else {
+                    Picker("Layout for setup", selection: $focusLayoutID) {
+                        Text("Choose a layout").tag(UUID?.none)
+                        ForEach(manager.profiles) { profile in
+                            Text(profile.name).tag(Optional(profile.id))
+                        }
+                    }
+                    .accessibilityIdentifier("focus-setup-layout")
+                    Text("This selection is a setup reference, not a Focus assignment.")
+                        .font(.caption)
+                }
+            }
+
+            FocusSetupStep(number: 2, title: "Open your Focus in System Settings") {
+                Text("Choose the Focus you want to configure, then find Focus Filters and add a filter.")
+                Link("Open Focus Settings", destination: Self.focusSettingsURL)
+                    .accessibilityIdentifier("open-native-focus-settings")
+            }
+
+            FocusSetupStep(number: 3, title: "Add Barline's Menu Bar Layout filter") {
+                if let focusLayout {
+                    Text("Choose Barline, set Menu Bar Layout to “\(focusLayout.name)”, then save the filter in System Settings.")
+                } else {
+                    Text("Save and choose a layout in step 1 first. Then select that layout in Barline's Menu Bar Layout filter.")
+                }
+                Text("Repeat these steps inside each Focus you want to use with Barline.")
+            }
+
+            DisclosureGroup("Verify your setup") {
+                Text("Turn that Focus on and check the menu bar layout. Turn it off and check that the previous workspace returns. If a change is blocked, review the status and Recovery sections below.")
+                    .foregroundStyle(.secondary)
+                Text("Barline cannot confirm the filter assignment from this screen. Opening Focus Settings or choosing a layout here does not complete the setup.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var displayLayoutsSection: some View {
+        Section("Layouts for Different Displays") {
+            Text("For a laptop and a desk setup, arrange each workspace and capture a separately named layout. Use Apply when you want to switch, or assign a saved layout through a native Focus Filter above.")
+                .foregroundStyle(.secondary)
+            Text("Connecting a display does not select a different saved layout. To capture a display-specific variant within a saved layout, choose Edit, then Capture Current Menu Bar Display. Review or remove variants there; changes are saved only when you click Save.")
+                .foregroundStyle(.secondary)
+            if let activeID = manager.activeProfileID,
+               let activeProfile = manager.profiles.first(where: { $0.id == activeID }),
+               let presentation = manager.activePresentation
+            {
+                LabeledContent("Current presentation") {
+                    switch presentation.source {
+                    case .base:
+                        Text("\(activeProfile.name) · Base layout")
+                    case .displayOverride:
+                        Text("\(activeProfile.name) · Display variant")
+                    }
+                }
+                Button("Review Active Layout…") { editedProfile = activeProfile }
+            }
+        }
+    }
+}
+
+private struct FocusSetupStep<Content: View>: View {
+    let number: Int
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(number). \(title)")
+                .font(.headline)
+            content()
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct TemporaryItemRecoveryView: View {
+    @ObservedObject var manager: MenuBarItemManager
+    @State private var confirmsCurrentPositions = false
+
+    var body: some View {
+        if manager.hasPendingRestorations {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("An item was temporarily revealed. Restore it before applying another layout.")
+                    .foregroundStyle(.secondary)
+                Button("Retry Item Restoration") {
+                    Task { await manager.retryPendingRestorations() }
+                }
+                .disabled(!manager.allowsPickerPresentation || manager.recoveryRecordsUnavailable)
+                Button("Keep Current Item Positions…") { confirmsCurrentPositions = true }
+                    .disabled(!manager.allowsPickerPresentation)
+            }
+            .alert("Keep current item positions?", isPresented: $confirmsCurrentPositions) {
+                Button("Keep Positions", role: .destructive) {
+                    Task { await manager.keepCurrentItemPositions() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This cancels pending item restoration without moving any icons. Old recovery records are archived, not deleted.")
             }
         }
     }

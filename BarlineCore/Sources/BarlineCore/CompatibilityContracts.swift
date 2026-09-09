@@ -5,6 +5,11 @@
 
 import Foundation
 
+public enum MenuBarMoveDestinationSupport: String, Codable, Sendable {
+    case existingItemRequired
+    case emptySectionAllowed
+}
+
 public struct MenuBarCapabilities: Codable, Equatable, Sendable {
     public let canSnapshot: Bool
     public let canMove: Bool
@@ -12,6 +17,8 @@ public struct MenuBarCapabilities: Codable, Equatable, Sendable {
     public let canActivate: Bool
     public let canRestore: Bool
     public let canCapture: Bool
+    /// Missing on older peers means a physical destination item is required.
+    public let moveDestinationSupport: MenuBarMoveDestinationSupport?
 
     public init(
         canSnapshot: Bool,
@@ -19,7 +26,8 @@ public struct MenuBarCapabilities: Codable, Equatable, Sendable {
         canReveal: Bool,
         canActivate: Bool,
         canRestore: Bool,
-        canCapture: Bool = false
+        canCapture: Bool = false,
+        moveDestinationSupport: MenuBarMoveDestinationSupport? = nil
     ) {
         self.canSnapshot = canSnapshot
         self.canMove = canMove
@@ -27,6 +35,7 @@ public struct MenuBarCapabilities: Codable, Equatable, Sendable {
         self.canActivate = canActivate
         self.canRestore = canRestore
         self.canCapture = canCapture
+        self.moveDestinationSupport = moveDestinationSupport
     }
 
     public static let fallback = MenuBarCapabilities(
@@ -111,6 +120,42 @@ public struct MenuBarPointContext: Codable, Equatable, Sendable {
     }
 }
 
+/// A stable, domain-level request to inspect Barline's shelf surface.
+///
+/// The helper resolves the role to its private WindowServer representation;
+/// no window number or other ephemeral WindowServer identity crosses XPC.
+public struct MenuBarShelfPresentationProbe: Codable, Equatable, Sendable {
+    public let ownerProcessIdentifier: Int32
+    public let targetDisplayID: UInt32
+
+    public init(ownerProcessIdentifier: Int32, targetDisplayID: UInt32) {
+        self.ownerProcessIdentifier = ownerProcessIdentifier
+        self.targetDisplayID = targetDisplayID
+    }
+}
+
+public struct MenuBarShelfPresentationObservation: Codable, Equatable, Sendable {
+    public let roleIsPresentOnscreen: Bool
+    public let ownerMatches: Bool
+    public let intersectsTargetDisplay: Bool
+
+    public init(
+        roleIsPresentOnscreen: Bool,
+        ownerMatches: Bool,
+        intersectsTargetDisplay: Bool
+    ) {
+        self.roleIsPresentOnscreen = roleIsPresentOnscreen
+        self.ownerMatches = ownerMatches
+        self.intersectsTargetDisplay = intersectsTargetDisplay
+    }
+
+    public static let unavailable = MenuBarShelfPresentationObservation(
+        roleIsPresentOnscreen: false,
+        ownerMatches: false,
+        intersectsTargetDisplay: false
+    )
+}
+
 public struct MenuBarRevealObservationToken: Codable, Equatable, Hashable, Sendable {
     public let value: UUID
 
@@ -173,6 +218,26 @@ public struct MenuBarBackendHealth: Codable, Equatable, Sendable {
     }
 }
 
+/// Stable capability reasons shared by the helper and privacy-safe diagnostics.
+public enum MenuBarBackendCapabilityReason {
+    public static let sourceApplicationResolution = "source application resolution"
+    public static let dragSynthesis = "menu bar drag synthesis"
+    public static let eventDelivery = "menu bar event delivery"
+}
+
+/// A local input guard expired before Barline could safely synthesize an event.
+public struct MenuBarInputIdleTimeoutError: Error, Equatable, LocalizedError, Sendable {
+    public init() {}
+
+    public var errorDescription: String? {
+        "Operation could not be completed"
+    }
+
+    public var recoverySuggestion: String? {
+        "Stop moving the pointer or pressing keys, then try again."
+    }
+}
+
 public enum MenuBarBackendError: Error, Codable, Equatable, Sendable {
     case unavailableCapability(String)
     case staleItem(MenuBarItemID)
@@ -203,6 +268,7 @@ public enum MenuBarServiceRequest: Codable, Equatable, Sendable {
     case environment
     case configureCursorInBackground(Bool)
     case pointContext(MenuBarPoint)
+    case shelfPresentationObservation(MenuBarShelfPresentationProbe)
     case beginRevealObservation(MenuBarItemID)
     case revealObservationIsVisible(MenuBarRevealObservationToken)
     case endRevealObservation(MenuBarRevealObservationToken)
@@ -220,6 +286,7 @@ public enum MenuBarServiceResponse: Codable, Equatable, Sendable {
     case background(MenuBarBackgroundCapture)
     case environment(MenuBarEnvironmentSnapshot)
     case pointContext(MenuBarPointContext)
+    case shelfPresentationObservation(MenuBarShelfPresentationObservation)
     case revealObservation(MenuBarRevealObservationToken)
     case boolean(Bool)
     case health(MenuBarBackendHealth)

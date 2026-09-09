@@ -24,7 +24,7 @@ LaunchAtLogin-Modern 1.1.0 is MIT-licensed. Copyright (c) Sindre Sorhus
 
 ## Sparkle
 
-Sparkle 2.8.0 is MIT-licensed. Copyright holders include Andy Matuschak,
+Sparkle 2.9.6 is MIT-licensed. Copyright holders include Andy Matuschak,
 Elgato Systems GmbH, Kornel Lesinski, Mayur Pawashe, C.W. Betts, Petroules
 Corporation, and Big Nerd Ranch. Sparkle also incorporates separately noticed
 code from bsdiff, sais-lite, orlp/ed25519, and Mark Hamlin. The complete notices

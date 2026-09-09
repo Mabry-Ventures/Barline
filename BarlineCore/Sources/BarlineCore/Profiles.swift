@@ -496,6 +496,45 @@ public struct ResolvedProfilePresentation: Codable, Hashable, Sendable {
         self.groups = groups
         self.spacers = spacers
     }
+
+    /// Resolve old source-based IDs at the point of use. Archives remain intact,
+    /// and ambiguity fails before any layout or workspace mutation starts.
+    public func resolvingItemIdentities(
+        in snapshot: MenuBarSnapshot,
+        requireCompleteInventory: Bool = true
+    ) throws -> Self {
+        var mapping = [MenuBarItemID: MenuBarItemID]()
+        var resolvedIDs = Set<MenuBarItemID>()
+        for storedID in layout.allItemIDs {
+            let resolvedID = snapshot.resolvedItemID(for: storedID)
+            guard resolvedID != nil || !requireCompleteInventory,
+                  resolvedIDs.insert(resolvedID ?? storedID).inserted
+            else { throw MenuBarBackendError.staleItem(storedID) }
+            mapping[storedID] = resolvedID ?? storedID
+        }
+        func resolve(_ id: MenuBarItemID) -> MenuBarItemID {
+            mapping[id] ?? id
+        }
+        var result = self
+        result.layout = ProfileLayout(
+            visible: layout.visible.map(resolve),
+            hidden: layout.hidden.map(resolve),
+            alwaysHidden: layout.alwaysHidden.map(resolve)
+        )
+        result.groups = groups.map { group in
+            var result = group
+            result.itemIDs = group.itemIDs.map(resolve)
+            return result
+        }
+        result.spacers = spacers.map { spacer in
+            var result = spacer
+            if case let .after(id) = spacer.placement {
+                result.placement = .after(resolve(id))
+            }
+            return result
+        }
+        return result
+    }
 }
 
 public enum ProfileDisplayMatchMethod: String, Codable, Hashable, Sendable {
@@ -531,9 +570,16 @@ public struct DisplayProfileOverrideResolver: Sendable {
         persisted: ResolvedProfilePresentation,
         snapshot: MenuBarSnapshot
     ) -> ResolvedProfilePresentation? {
+        // Display reconnection can run before a full item census. Unresolved IDs
+        // stay unchanged here; authority matching and activation require every ID.
+        guard let persisted = try? persisted.resolvingItemIdentities(
+            in: snapshot, requireCompleteInventory: false
+        ) else { return nil }
         switch persisted.source {
         case .base:
-            let current = profile.resolvedPresentation(for: nil)
+            guard let current = try? profile.resolvedPresentation(for: nil)
+                .resolvingItemIdentities(in: snapshot, requireCompleteInventory: false)
+            else { return nil }
             return current == persisted ? current : nil
         case let .displayOverride(storedID):
             let storedOverrideStillExists = profile.displayOverrides.contains {
@@ -544,9 +590,12 @@ public struct DisplayProfileOverrideResolver: Sendable {
                 acceptedOverrideID = storedID
             } else {
                 let payloadMatches = profile.displayOverrides.filter {
-                    $0.layout == persisted.layout
-                        && $0.groups == persisted.groups
-                        && $0.spacers == persisted.spacers
+                    guard let presentation = try? profile.resolvedPresentation(for: $0.displayID)
+                        .resolvingItemIdentities(in: snapshot, requireCompleteInventory: false)
+                    else { return false }
+                    return presentation.layout == persisted.layout
+                        && presentation.groups == persisted.groups
+                        && presentation.spacers == persisted.spacers
                 }
                 guard payloadMatches.count == 1 else { return nil }
                 acceptedOverrideID = payloadMatches[0].displayID
@@ -559,7 +608,9 @@ public struct DisplayProfileOverrideResolver: Sendable {
                 )
             }.filter { $0.override.displayID == acceptedOverrideID }
             guard matches.count == 1 else { return nil }
-            let resolved = profile.resolvedPresentation(using: matches[0])
+            guard let resolved = try? profile.resolvedPresentation(using: matches[0])
+                .resolvingItemIdentities(in: snapshot, requireCompleteInventory: false)
+            else { return nil }
             var normalizedPersisted = persisted
             if !storedOverrideStillExists {
                 normalizedPersisted.source = resolved.source
@@ -763,22 +814,19 @@ public enum ProfileAuthorityMatcher {
                 snapshot: checkpoint.snapshot
             )
         }
-        let presentation = profile.resolvedPresentation(using: match)
+        guard let presentation = try? profile.resolvedPresentation(using: match)
+            .resolvingItemIdentities(in: checkpoint.snapshot)
+        else { return false }
         var expectedWorkspace = ProfileWorkspaceState(profile: profile)
         expectedWorkspace.presentation = presentation
         guard expectedWorkspace == checkpoint.workspace else {
             return false
         }
-        let scopedItems = presentation.destinationDisplayID.map { activeDisplayID in
-            checkpoint.snapshot.items.filter { $0.displayID == activeDisplayID }
-        } ?? checkpoint.snapshot.items
-        let visible = scopedItems.filter { $0.section == .visible }.map(\.id)
-        let hidden = scopedItems.filter { $0.section == .hidden }.map(\.id)
-        let alwaysHidden = scopedItems.filter { $0.section == .alwaysHidden }.map(\.id)
-        let layout = presentation.layout
-        return visible.starts(with: layout.visible)
-            && hidden.starts(with: layout.hidden)
-            && alwaysHidden.starts(with: layout.alwaysHidden)
+        return ProfileLayoutReconciler.matches(
+            layout: presentation.layout,
+            items: checkpoint.snapshot.items,
+            displayID: presentation.destinationDisplayID
+        )
     }
 }
 
@@ -928,6 +976,7 @@ public struct BarlineProfile: Codable, Hashable, Sendable, Identifiable {
 
 public enum ProfileActivationSource: String, Codable, CaseIterable, Sendable {
     case configuredDefault
+    case contextualRule
     case focus
     case shortcut
     case appIntent
@@ -937,13 +986,14 @@ public enum ProfileActivationSource: String, Codable, CaseIterable, Sendable {
     public var retainsArbitrationRequestWhileActive: Bool {
         switch self {
         case .configuredDefault, .focus: true
-        case .shortcut, .appIntent, .manual, .recovery: false
+        case .contextualRule, .shortcut, .appIntent, .manual, .recovery: false
         }
     }
 
     public var precedence: Int {
         switch self {
         case .configuredDefault: 0
+        case .contextualRule: 50
         case .focus: 100
         case .shortcut: 200
         case .appIntent: 300

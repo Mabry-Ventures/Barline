@@ -1,9 +1,112 @@
 # Changelog
 
+## 1.0.11 (build 27) — candidate
+
+- Recheck temporarily unavailable helper capabilities on later requests, with
+  bounded probing and no background retry loop, instead of retaining a failed
+  startup probe permanently. Installed recovery qualification remains pending.
+
+- Distinguish interrupted Focus transaction failures from final verification
+  failures using fixed privacy-safe diagnostic codes. Recovery qualification
+  remains pending; this instrumentation does not itself fix restoration.
+
+- Keep clock, Control Center and other non-hideable status items out of
+  empty-space click and hover handling. Preserve genuine empty-space clicks
+  around Barline's noninteractive layout separators.
+- Reject delayed empty-space click results after a newer click.
+- Offer an explicit, confirmation-gated restore for an interrupted Focus
+  checkpoint; retain the checkpoint when restoration cannot be verified.
+
+- Plan saved layouts around fixed system items and newly discovered items,
+  preserving display ownership and avoiding redundant drag operations.
+- Verify complete layout results before committing profile authority; reject
+  unsupported physical destinations before changing workspace settings.
+- Keep Barline's section dividers fixed during saved-layout application and
+  reject unadmitted display changes or impossible divider ordering.
+- Retain observed workspace presentation during pending Focus recovery instead
+  of clearing the evidence needed for safe restoration.
+
+- Correct the macOS Focus Filter extension's launch and embedding topology;
+  add regression gates for registration and extracted intent metadata.
+- Cancel superseded status-item window/screen observations and clear detached
+  geometry instead of allowing stale owners to overwrite current state.
+
+- Restore baseline target-process routing for matched shelf clicks before
+  acknowledging session delivery, without replaying a mouse-down.
+- Correct display-variant authoring guidance in Layouts & Focus.
+- Allow deleting the final saved layout; persist an empty local catalog without
+  weakening validation for imported/exported archives.
+
+- Capture and edit verified display-specific layout variants without replacing
+  the base layout or silently discarding a failed-save draft.
+- Add optional, event-driven frontmost-app and power/battery layout rules using
+  the existing transaction and rollback path. Configured Focus layouts and
+  manual changes take priority; rules start paused after relaunch.
+- Add per-item global shortcuts, once-per-release dispatch, conflict reporting,
+  and private atomic storage. Failed changes preserve prior assignments.
+- Harden shortcut suspension, teardown, and registration recovery.
+- Improve visitor documentation, privacy guidance, issue intake and verified
+  private security reporting. Preserve Ice attribution and GPL notices.
+- Make the shelf timing probe reject failed closes immediately and reacquire
+  its target before each click, so later samples cannot hide a failed cycle.
+
+This candidate is not published or runtime-qualified. Installed feature,
+physical display, accessibility, upgrade, and release gates remain mandatory.
+
+## 1.0.10 (build 19) — candidate
+
+- Collapse and expand valid shelf groups without rearranging physical menu bar
+  items; preserve access when group membership is ambiguous.
+- Add local search favorites and aliases with bounded, private, atomic storage.
+- Guide saved layouts through native macOS Focus Filter setup and clarify
+  existing display-variant behavior.
+- Keep optional support confined to About and disabled until the canonical
+  site is live. No subscription, tracking, paid unlock, or payment reminders.
+
+This candidate is not yet qualified or published. Contextual auto-application
+and per-item global shortcuts remain future work, not release features.
+
+## 1.0.9 (build 18)
+
+- Prevent delayed drag callbacks from posting after cancellation or timeout.
+- Complete hosted item drags before evaluating their final placement, even
+  when macOS does not report an intermediate geometry transition.
+
+- Bind delayed rehide work to its originating presentation, so an old click,
+  hover, or timer cannot dismiss a newer shelf.
+- Give the primary control window exclusive ownership of its clicks and use
+  captured event coordinates for empty-space click arbitration.
+- Exclude windowless hosted control clicks from smart rehide, independently
+  of asynchronously cached menu-bar geometry.
+
+- Restore temporarily revealed items to their original section/display even if
+  neighboring icons disappear or move.
+- Resolve hidden items' logical display ownership independently of their
+  off-screen coordinates before activation or restoration.
+- Preserve interrupted restoration across restarts and expose Retry Item
+  Restoration in Layouts & Focus. Pause after three unsuccessful attempts.
+- Keep pending restoration intact when a competing layout operation cannot
+  proceed safely.
+- Require exact-candidate target-action, performance and helper-recovery receipts
+  before installed qualification passes.
+- Match macOS-hosted status-item geometry consistently in performance probes,
+  with regression tests for the observed two-point source/host width difference.
+
 Barline has not published a binary release. Changes below describe the active
 development line and are not release certification.
 
 ## Unreleased
+
+### 1.0.8 local candidate corrections
+
+- Route shelf-item clicks through the macOS session event stream with ordered
+  source-queue barriers; do not mistake direct-process receipt for activation.
+- Keep temporarily revealed native items out of the shelf until restoration,
+  without changing saved layout positions.
+- Prevent picker presentation during reveal/restore and avoid automatically
+  reopening it over an unconfirmed or delayed target interface.
+- Verify physical display geometry before treating a hosted item as visible;
+  a stale macOS on-screen flag can otherwise skip reveal and click off-display.
 
 ### Added
 
@@ -20,6 +123,8 @@ development line and are not release certification.
 - Saved profile editing/import/export, transactional activation, Focus and App
   Intent delivery, Presentation templates, opaque display reconnect aliases,
   operational shelf groups/spacers, and last-known-good recovery.
+- A General setting that keeps Barline out of the Dock even while its Settings
+  window is open.
 - Contextual permissions and degraded settings/search/diagnostics behavior.
 - Privacy-safe reviewed support-bundle export and a deterministic fixture app.
 - Release-only Sparkle trust configuration and credentialed packaging tooling.
@@ -33,13 +138,21 @@ development line and are not release certification.
 - Product-facing Ice names and identifiers were replaced with Barline; Ice
   remains in provenance, attribution, historical migration keys, and historical
   documentation where necessary.
-- Profile and Focus changes now serialize layout, workspace settings, and
-  resolved group/spacer presentation as one verified transaction, retain a
-  crash-stable pre-Presentation journal, and clear authority when rollback or a
-  restored profile definition cannot be proven current.
+- Apple's Focus settings now select any saved Barline Profile directly instead
+  of enabling a Barline-specific Presentation mode. Profile and Focus changes
+  serialize layout, workspace settings, and resolved group/spacer presentation
+  as one verified transaction, retain a crash-stable pre-Focus journal, and
+  clear authority when rollback or a restored profile definition cannot be
+  proven current.
 - Menu-bar restoration now uses global cross-display planning, section-relative
   postconditions, explicit stable destination-display targeting,
   already-correct no-op handling, and monotonic helper generation rebasing.
+- The hidden-item shelf now keeps a valid AppKit presentation ordered while an
+  unrelated compatibility-helper request delays WindowServer observation.
+  Helper confirmation remains stronger evidence and recovery input, but helper
+  availability can no longer erase a delivered status-item click.
+- Background launch no longer opens permission or Settings windows from a
+  transient permission read; permission UI remains contextual.
 - Release evidence now preserves a strict build-metadata whitelist instead of
   raw Xcode settings containing machine paths or signing configuration.
 

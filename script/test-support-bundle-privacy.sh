@@ -15,10 +15,19 @@ fi
 if ruby -e '
   patterns = /NSHomeDirectory|homeDirectoryForCurrentUser|NSUserName|userName|ProcessInfo\.processInfo\.(arguments|environment)|NSWorkspace\.shared\.runningApplications/
   findings = []
-  Dir.glob("Barline/**/*.swift").each do |path|
+  runtime_patterns = /\\\((?:error(?:\.localizedDescription)?(?:,|\))|(?:\w+\.)?(?:tag|stableID|displayName|title)(?:,|\))|(?:\w+\.)?(?:items|excluded)(?:,|\))|(?:item|app)\.logString)/
+  unsafe_examples = [
+    %q{logger.error("failed: \(error, privacy: .public)")},
+    %q{logger.error("failed: \(error.localizedDescription)")},
+    %q{logger.notice("excluded: \(compositeResult.excluded, privacy: .public)")},
+    %q{logger.log("item: \(item.stableID, privacy: .public)")},
+    %q{logger.log("item: \(item.logString, privacy: .public)")}
+  ]
+  abort "runtime log privacy scanner self-test failed" unless unsafe_examples.all? { |sample| sample.match?(runtime_patterns) }
+  Dir.glob("{Barline,BarlineMenuService}/**/*.swift").each do |path|
     lines = File.readlines(path)
     lines.each_with_index do |line, index|
-      next unless line.match?(/logger\.(debug|info|notice|warning|error|fault)|Logger\.[A-Za-z]+\.(debug|info|notice|warning|error|fault)/)
+      next unless line.match?(/logger\.(log|debug|info|notice|warning|error|fault)|Logger\.[A-Za-z]+\.(log|debug|info|notice|warning|error|fault)/)
       statement = ""
       balance = 0
       lines[index, 12].each do |part|
@@ -26,11 +35,11 @@ if ruby -e '
         balance += part.count("(") - part.count(")")
         break if balance <= 0
       end
-      findings << "#{path}:#{index + 1}" if statement.match?(patterns)
+      findings << "#{path}:#{index + 1}" if statement.match?(patterns) || statement.match?(runtime_patterns)
     end
   end
   if findings.any?
-    warn "sensitive host/process data is reachable from a logging statement: #{findings.join(", ")}"
+    warn "unsanitized metadata or error is reachable from a runtime logging statement: #{findings.join(", ")}"
     exit 1
   end
 '; then

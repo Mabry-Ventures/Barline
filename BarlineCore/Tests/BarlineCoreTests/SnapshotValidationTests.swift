@@ -349,6 +349,203 @@ struct SnapshotValidationTests {
         )
     }
 
+    @Test("Late source ownership resolution does not masquerade as inventory loss")
+    func acceptsSourceOwnershipRefinement() {
+        let capturedAt = Date()
+        let previous = ownershipSnapshot(
+            generation: 1,
+            ownership: Array(repeating: .unknown, count: 15),
+            capturedAt: capturedAt,
+            legacySystemFlag: true
+        )
+        let candidate = ownershipSnapshot(
+            generation: 2,
+            ownership: Array(repeating: .system, count: 4) + Array(repeating: .application, count: 11),
+            capturedAt: capturedAt
+        )
+        #expect(previous.items.allSatisfy { !$0.isConfirmedSystemItem })
+        #expect(SnapshotValidator().validate(candidate, previous: previous, now: capturedAt) == .success(candidate))
+        let unresolvedAgain = ownershipSnapshot(
+            generation: 3,
+            ownership: Array(repeating: .unknown, count: 15),
+            capturedAt: capturedAt
+        )
+        #expect(SnapshotValidator().validate(
+            unresolvedAgain, previous: candidate, now: capturedAt
+        ) == .success(unresolvedAgain))
+    }
+
+    @Test("Refining a legacy host-system classification preserves the accepted inventory")
+    func acceptsLegacyClassificationCorrection() {
+        let capturedAt = Date()
+        let previous = ownershipSnapshot(
+            generation: 1,
+            ownership: Array(repeating: nil, count: 15),
+            capturedAt: capturedAt,
+            legacySystemFlag: true
+        )
+        let candidate = ownershipSnapshot(
+            generation: 2,
+            ownership: Array(repeating: .system, count: 4) + Array(repeating: .application, count: 11),
+            capturedAt: capturedAt
+        )
+        #expect(SnapshotValidator().validate(candidate, previous: previous, now: capturedAt) == .success(candidate))
+    }
+
+    @Test("Unrelated new system items cannot disguise loss of confirmed system identities")
+    func rejectsReplacementSystemInventory() {
+        let capturedAt = Date()
+        let previous = ownershipSnapshot(
+            generation: 1, ownership: Array(repeating: .system, count: 4), capturedAt: capturedAt
+        )
+        let candidate = MenuBarSnapshot(
+            generation: 2,
+            capturedAt: capturedAt,
+            items: (10 ..< 14).map {
+                MenuBarItemDescriptor(id: itemID($0), section: .visible, order: $0, sourceOwnership: .system)
+            },
+            displayIDs: [displayID],
+            activeSpaceIsValid: true
+        )
+        #expect(SnapshotValidator().validate(candidate, previous: previous, now: capturedAt)
+            == .failure(.implausibleSystemItemCollapse(previous: 4, candidate: 0)))
+    }
+
+    @Test("Legacy descriptors decode without explicit ownership")
+    func decodesLegacyOwnership() throws {
+        let descriptor = descriptor(id: itemID(0), order: 0)
+        let encoded = try JSONEncoder().encode(descriptor)
+        #expect(try #require(String(data: encoded, encoding: .utf8)).contains("sourceOwnership") == false)
+        let decoded = try JSONDecoder().decode(MenuBarItemDescriptor.self, from: encoded)
+        #expect(decoded.sourceOwnership == nil)
+        #expect(decoded == descriptor)
+    }
+
+    @Test("Unknown scenes, native menus, and custom interfaces all defer mutations")
+    func menuTrackingDeferral() {
+        #expect(!MenuBarTrackingPolicy.isTransientInterface(role: "AXWindow", subrole: "AXFloatingWindow"))
+        #expect(MenuBarTrackingPolicy.isTransientInterface(role: "AXMenu", subrole: nil))
+        #expect(MenuBarTrackingPolicy.isTransientInterface(role: "AXPopover", subrole: nil))
+        #expect(MenuBarTrackingPolicy.isTransientInterface(role: "AXWindow", subrole: "AXPopover"))
+        for sceneIsAvailable in [false, true] {
+            for nativeMenu in [false, true] {
+                for sourceInterface in [false, true] {
+                    #expect(MenuBarTrackingPolicy.blocksMutation(
+                        sceneIsAvailable: sceneIsAvailable,
+                        nativeMenuIsVisible: nativeMenu,
+                        sourceInterfaceIsVisible: sourceInterface
+                    ) == (!sceneIsAvailable || nativeMenu || sourceInterface))
+                }
+            }
+        }
+    }
+
+    @Test("Old saved-layout IDs reconnect through unique source and semantic identity")
+    func reconnectsLegacySavedLayout() throws {
+        let legacyID = MenuBarItemID(
+            bundleIdentifier: "com.example.utility",
+            title: "status",
+            fallbackFingerprint: "Control Center:status:25"
+        )
+        let hostedID = MenuBarItemID(
+            bundleIdentifier: "barline.hosted-menu-item",
+            title: "status",
+            fallbackFingerprint: "Control Center:status:25"
+        )
+        let snapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(
+                    id: hostedID,
+                    section: .hidden,
+                    order: 0,
+                    sourceOwnership: .application,
+                    tagNamespace: "com.example.utility"
+                ),
+            ],
+            displayIDs: [displayID],
+            activeSpaceIsValid: true
+        )
+        let profile = BarlineProfile(
+            name: "Saved before upgrade",
+            layout: ProfileLayout(hidden: [legacyID]),
+            groups: [ProfileGroup(name: "Group", itemIDs: [legacyID])],
+            spacers: [ProfileSpacer(placement: .after(legacyID))]
+        )
+        let stored = profile.resolvedPresentation(for: nil)
+        let resolved = try stored.resolvingItemIdentities(in: snapshot)
+        #expect(resolved.layout.hidden == [hostedID])
+        #expect(resolved.groups[0].itemIDs == [hostedID])
+        #expect(resolved.spacers[0].placement == .after(hostedID))
+        #expect(profile.layout.hidden == [legacyID])
+        #expect(DisplayProfileOverrideResolver().resolvePersistedPresentation(
+            profile: profile, persisted: stored, snapshot: snapshot
+        ) == resolved)
+        #expect(DisplayProfileOverrideResolver().resolvePersistedPresentation(
+            profile: profile, persisted: resolved, snapshot: snapshot
+        ) == resolved)
+    }
+
+    @Test("Legacy migration never guesses between identical hosted items")
+    func rejectsAmbiguousLegacyItems() {
+        let legacyID = MenuBarItemID(
+            bundleIdentifier: "com.example.utility",
+            title: "status",
+            fallbackFingerprint: "Control Center:status:25"
+        )
+        let candidates = (0 ..< 2).map { index in
+            MenuBarItemDescriptor(
+                id: MenuBarItemID(
+                    bundleIdentifier: "barline.hosted-menu-item",
+                    title: "status",
+                    alias: "occurrence-\(index)",
+                    fallbackFingerprint: legacyID.fallbackFingerprint
+                ),
+                section: .visible,
+                order: index,
+                sourceOwnership: .application,
+                tagNamespace: "com.example.utility"
+            )
+        }
+        let snapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: candidates,
+            displayIDs: [displayID],
+            activeSpaceIsValid: true
+        )
+        #expect(snapshot.resolvedItemID(for: legacyID) == nil)
+        let presentation = BarlineProfile(name: "Ambiguous", layout: ProfileLayout(visible: [legacyID]))
+            .resolvedPresentation(for: nil)
+        #expect(throws: MenuBarBackendError.staleItem(legacyID)) {
+            try presentation.resolvingItemIdentities(in: snapshot)
+        }
+    }
+
+    private func ownershipSnapshot(
+        generation: UInt64,
+        ownership: [MenuBarSourceOwnership?],
+        capturedAt: Date,
+        legacySystemFlag: Bool = false
+    ) -> MenuBarSnapshot {
+        MenuBarSnapshot(
+            generation: generation,
+            capturedAt: capturedAt,
+            items: ownership.enumerated().map { index, ownership in
+                MenuBarItemDescriptor(
+                    id: itemID(index),
+                    section: .visible,
+                    order: index,
+                    isSystemItem: legacySystemFlag || ownership == .system,
+                    sourceOwnership: ownership
+                )
+            },
+            displayIDs: [displayID],
+            activeSpaceIsValid: true
+        )
+    }
+
     private func snapshot(generation: UInt64, itemCount: Int) -> MenuBarSnapshot {
         MenuBarSnapshot(
             generation: generation,

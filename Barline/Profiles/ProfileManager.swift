@@ -33,12 +33,37 @@ final class ProfileManager: ObservableObject {
     @Published private(set) var pendingArchiveImport: ProfileArchiveImportPreview?
     @Published private(set) var pendingIceImports = [IceImportPreview]()
     @Published private(set) var isBusy = false
+    @Published private(set) var interruptedFocusRecoveryToken: UUID?
     @Published var statusMessage: String?
+    @Published private(set) var lastOperationErrorCode: String?
+
+    var archivedFocusRecoveryToken: UUID? {
+        manualRecoveryStore.load()?.token
+    }
+
+    func discardArchivedFocusRecovery(confirmedToken: UUID) {
+        guard !isBusy, manualRecoveryStore.load()?.token == confirmedToken else { return }
+        manualRecoveryStore.remove(ifMatching: confirmedToken)
+        interruptedFocusRecoveryToken = recoverableFocusAuthority()?.token
+        statusMessage = "Archived checkpoint discarded. The current arrangement and saved layouts were not changed."
+    }
+
+    /// This is authority from Barline's configured native Focus Filter, not a
+    /// second Focus-mode catalog or inference from notification preferences.
+    var configuredFocusIsActive: Bool? {
+        guard bridgeDefaults != nil else { return nil }
+        return isProcessingBridgeCommands ||
+            processedDefaults.bool(forKey: Self.nativeFocusRequestedKey) ||
+            processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil ||
+            activationRequests[.focus] != nil
+    }
 
     private static let profileCatalogKey = "intent.profileCatalog"
+    private static let nativeFocusRequestedKey = "focus.nativeFilterRequested"
     private static let processedCommandIDsKey = "intent.processedCommandIDs"
     private static let profileBeforeFocusIDKey = "focus.profileBeforeFocusID"
     private static let presentationProfileIDKey = "focus.presentationProfileID"
+    private static let activeFocusProfileIDKey = "focus.activeProfileID"
     private static let presentationFocusActiveKey = "focus.presentationModeIsActive"
     private static let workspaceBeforeFocusKey = "focus.workspaceBeforeFocus"
     private static let activeProfileAuthorityTokenKey = "profiles.activeAuthorityToken"
@@ -55,6 +80,9 @@ final class ProfileManager: ObservableObject {
         defaults: processedDefaults,
         key: Self.activeProfileAuthorityKey
     )
+    private lazy var manualRecoveryStore = ManualFocusRecoveryStore(
+        defaults: processedDefaults, key: "profiles.manualFocusRecovery"
+    )
     private weak var appState: AppState?
     private var cancellables = Set<AnyCancellable>()
     private var profileBeforeFocusID: UUID?
@@ -66,6 +94,7 @@ final class ProfileManager: ObservableObject {
     private var isProcessingBridgeCommands = false
     private var needsBridgeCommandRescan = false
     private var workspaceRevision: UInt64 = 0
+    private var isApplyingWorkspaceSettings = false
 
     init(
         fileManager: FileManager = .default,
@@ -181,14 +210,19 @@ final class ProfileManager: ObservableObject {
         source: ProfileActivationSource = .manual,
         expectedGeneration: UInt64? = nil,
         authorityToken: UUID? = nil,
+        admission: (@Sendable () async throws -> Void)? = nil,
         prepareCheckpoint: (
             @Sendable (MenuBarWorkspaceCheckpoint, ResolvedProfilePresentation) async throws -> Void
-        )? = nil
+        )? = nil,
+        onFailure: ((any Error) -> Void)? = nil
     ) async -> Bool {
         guard let appState else { return false }
+        if [.manual, .shortcut, .appIntent, .recovery].contains(source) {
+            appState.contextualRules.pauseForManualChange()
+        }
         let resolvedAuthorityToken = authorityToken ?? UUID()
         var didActivate = false
-        await performOperation(successMessage: "Profile applied.") {
+        await performOperation(successMessage: "Profile applied.", onFailure: onFailure) {
             let priorRequest = self.activationRequests[source]
             self.activationRequests[source] = ProfileActivationRequest(
                 profileID: profile.id,
@@ -211,6 +245,7 @@ final class ProfileManager: ObservableObject {
                     profile: resolvedProfile,
                     expectedGeneration: expectedGeneration,
                     workspaceTransaction: self.workspaceTransaction(),
+                    admission: admission,
                     prepareCheckpoint: prepareCheckpoint
                 )
                 let reconciledProfiles = self.profilesReconcilingDisplayAliases(
@@ -256,7 +291,9 @@ final class ProfileManager: ObservableObject {
                 if self.pendingFocusAuthority(matching: resolvedAuthorityToken) != nil {
                     self.activeProfileID = nil
                     self.activeProfileActivatedAt = nil
-                    self.activePresentation = nil
+                    // Keep the workspace presentation actually left by apply/rollback.
+                    // Clearing profile authority must not fabricate a nil workspace:
+                    // pending recovery compares this live state with its checkpoint.
                     self.processedDefaults.removeObject(
                         forKey: Self.activeProfileAuthorityTokenKey
                     )
@@ -285,19 +322,27 @@ final class ProfileManager: ObservableObject {
         return didActivate
     }
 
+    @discardableResult
     func update(
         _ profile: BarlineProfile,
         name: String,
         symbol: String?,
         groups: [ProfileGroup],
-        spacers: [ProfileSpacer]
-    ) async {
+        spacers: [ProfileSpacer],
+        displayOverrides: [DisplayProfileOverride]? = nil
+    ) async -> Bool {
+        var didSave = false
+        appState?.contextualRules.pauseForManualChange()
         await performOperation(successMessage: "Profile updated.") {
             guard let index = self.profiles.firstIndex(where: { $0.id == profile.id }) else {
                 throw MenuBarBackendError.operationFailed("profile is unavailable")
             }
             let current = self.profiles[index]
-            if current.groups != groups || current.spacers != spacers {
+            guard current == profile else {
+                throw MenuBarBackendError.operationFailed("layout changed while editing; reopen the editor")
+            }
+            let variants = displayOverrides ?? current.displayOverrides
+            if current.groups != groups || current.spacers != spacers || current.displayOverrides != variants {
                 try self.validateProfileDefinitionMutation(profileID: current.id)
             }
             let updatedProfile = BarlineProfile(
@@ -307,7 +352,7 @@ final class ProfileManager: ObservableObject {
                 layout: current.layout,
                 groups: groups,
                 spacers: spacers,
-                displayOverrides: current.displayOverrides,
+                displayOverrides: variants,
                 appearance: current.appearance,
                 shelfBehavior: current.shelfBehavior,
                 revealTriggers: current.revealTriggers,
@@ -320,7 +365,7 @@ final class ProfileManager: ObservableObject {
             var updated = self.profiles
             updated[index] = updatedProfile
             try await self.store.save(updated)
-            let presentationChanged = current.groups != groups || current.spacers != spacers
+            let presentationChanged = current.groups != groups || current.spacers != spacers || current.displayOverrides != variants
             let shouldInvalidatePublishedAuthority = presentationChanged
                 && self.activeProfileID == current.id
             let invalidatedCoordinatorAuthority = if presentationChanged,
@@ -338,6 +383,7 @@ final class ProfileManager: ObservableObject {
                     || invalidatedCoordinatorAuthority
             )
         } completion: { [weak self] saved in
+            didSave = true
             self?.profiles = saved.profiles
             if saved.invalidatedAuthority {
                 self?.activeProfileID = nil
@@ -355,9 +401,11 @@ final class ProfileManager: ObservableObject {
             }
             self?.publishCatalog()
         }
+        return didSave
     }
 
     func resetFromCurrentWorkspace(_ profile: BarlineProfile) async {
+        appState?.contextualRules.pauseForManualChange()
         guard let appState else { return }
         await performOperation(successMessage: "Profile reset from the current workspace.") {
             guard let index = self.profiles.firstIndex(where: { $0.id == profile.id }) else {
@@ -403,6 +451,7 @@ final class ProfileManager: ObservableObject {
     }
 
     func restoreLastKnownGoodLayout() async {
+        appState?.contextualRules.pauseForManualChange()
         guard let appState else { return }
         await performOperation(successMessage: "Last-known-good layout restored.") {
             _ = try await appState.compatibilityCoordinator.perform(.restoreLastKnownGood)
@@ -419,11 +468,102 @@ final class ProfileManager: ObservableObject {
         }
     }
 
+    /// A user-confirmed restore, not an automatic claim of Focus ownership.
+    /// Bind confirmation to the exact transaction so a newer journal cannot be restored.
+    func restoreInterruptedFocusLayout(confirmedToken: UUID) async {
+        guard let appState else { return }
+        appState.contextualRules.pauseForManualChange()
+        await performOperation(successMessage: "Pre-Focus layout restored.") {
+            guard let pending = self.recoverableFocusAuthority(matching: confirmedToken),
+                  let checkpoint = pending.checkpoint,
+                  let encoded = try? JSONEncoder().encode(checkpoint),
+                  self.decodeFocusCheckpoint(encoded) != nil
+            else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            do {
+                _ = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
+                    checkpoint,
+                    workspaceTransaction: self.workspaceTransaction()
+                )
+            } catch {
+                Logger(category: "Profiles").error("Focus recovery transaction failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
+                throw error
+            }
+            guard self.recoverableFocusAuthority(matching: confirmedToken) == pending,
+                  await self.currentWorkspaceMatches(checkpoint)
+            else {
+                Logger(category: "Profiles").error("Focus recovery final verification failed")
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            return checkpoint
+        } completion: { [weak self] checkpoint in
+            guard let self else { return }
+            restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
+            activationRequests.removeValue(forKey: .focus)
+            clearProfileBeforeFocus()
+            manualRecoveryStore.remove(ifMatching: confirmedToken)
+        }
+    }
+
+    func previewAvailableFocusRecovery(confirmedToken: UUID) async -> MenuBarPreparedWorkspaceRecovery? {
+        await profileOperationSemaphore.wait()
+        defer { profileOperationSemaphore.signal() }
+        guard let appState, let pending = recoverableFocusAuthority(matching: confirmedToken),
+              let checkpoint = pending.checkpoint else { return nil }
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let prepared = try await appState.compatibilityCoordinator.prepareAvailableWorkspaceRecovery(
+                checkpoint, workspaceTransaction: workspaceTransaction()
+            )
+            guard recoverableFocusAuthority(matching: confirmedToken) == pending else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            return prepared
+        } catch {
+            statusMessage = "Recovery cannot be previewed safely. Leave the menu bar idle and check that the original displays are connected."
+            return nil
+        }
+    }
+
+    func restoreAvailableFocusLayout(confirmedToken: UUID, prepared: MenuBarPreparedWorkspaceRecovery) async {
+        guard let appState else { return }
+        appState.contextualRules.pauseForManualChange()
+        await performOperation(successMessage: "Available items restored. The original checkpoint is retained because this is not an exact full restoration.") {
+            guard let pending = self.recoverableFocusAuthority(matching: confirmedToken),
+                  pending.checkpoint == prepared.checkpoint
+            else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            try self.manualRecoveryStore.validateArchiving(pending)
+            let restored = try await appState.compatibilityCoordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: self.workspaceTransaction()
+            )
+            guard self.recoverableFocusAuthority(matching: confirmedToken) == pending,
+                  await self.currentWorkspaceMatches(restored)
+            else {
+                throw MenuBarWorkspaceTransactionError.superseded
+            }
+            try self.manualRecoveryStore.archive(pending)
+            try self.finishArchivedFocusRecovery(pending)
+            return restored
+        } completion: { [weak self] restored in
+            guard let self else { return }
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            activePresentation = restored.workspace.presentation
+            activationRequests.removeValue(forKey: .focus)
+        }
+    }
+
     func undoLayoutChange() async {
+        appState?.contextualRules.pauseForManualChange()
         await performHistoryChange(isUndo: true)
     }
 
     func redoLayoutChange() async {
+        appState?.contextualRules.pauseForManualChange()
         await performHistoryChange(isUndo: false)
     }
 
@@ -601,12 +741,10 @@ final class ProfileManager: ObservableObject {
     }
 
     func delete(_ profile: BarlineProfile) async {
+        appState?.contextualRules.pauseForManualChange()
         await performOperation(successMessage: "Profile deleted.") {
             try self.validateProfileDefinitionMutation(profileID: profile.id)
             let remaining = self.profiles.filter { $0.id != profile.id }
-            guard !remaining.isEmpty else {
-                throw MenuBarBackendError.operationFailed("at least one profile is required")
-            }
             try await self.store.save(remaining)
             let invalidatedAuthority = await self.appState?.compatibilityCoordinator
                 .clearActiveProfileAuthority(ifMatches: profile.id) == true
@@ -691,6 +829,8 @@ final class ProfileManager: ObservableObject {
     }
 
     private func applyWorkspaceSettings(_ workspace: ProfileWorkspaceState) {
+        isApplyingWorkspaceSettings = true
+        defer { isApplyingWorkspaceSettings = false }
         guard let appState else { return }
         let general = appState.settings.general
         general.useBarlineShelf = workspace.shelfBehavior.isEnabled
@@ -748,6 +888,7 @@ final class ProfileManager: ObservableObject {
         _ workspace: ProfileWorkspaceState,
         expectedRevision: UInt64? = nil
     ) async throws -> UInt64 {
+        try Task.checkCancellation()
         guard let appState else {
             throw MenuBarBackendError.operationFailed("app state unavailable")
         }
@@ -781,6 +922,8 @@ final class ProfileManager: ObservableObject {
             }
             throw MenuBarWorkspaceTransactionError.superseded
         }
+        isApplyingWorkspaceSettings = true
+        defer { isApplyingWorkspaceSettings = false }
         appState.appearanceManager.configuration = try appearanceConfiguration(
             applying: workspace.appearance,
             to: appState.appearanceManager.configuration
@@ -1107,6 +1250,9 @@ final class ProfileManager: ObservableObject {
         Publishers.MergeMany(changes)
             .sink { [weak self] in
                 self?.workspaceRevision &+= 1
+                if self?.isApplyingWorkspaceSettings == false {
+                    self?.appState?.contextualRules.pauseForManualChange()
+                }
             }
             .store(in: &cancellables)
 
@@ -1307,7 +1453,11 @@ final class ProfileManager: ObservableObject {
         }
 
         isProcessingBridgeCommands = true
-        defer { isProcessingBridgeCommands = false }
+        appState.contextualRules.contextDidChange()
+        defer {
+            isProcessingBridgeCommands = false
+            appState.contextualRules.contextDidChange()
+        }
 
         repeat {
             needsBridgeCommandRescan = false
@@ -1332,10 +1482,21 @@ final class ProfileManager: ObservableObject {
                     scheduleBridgeRetry()
                     continue
                 }
-                guard await handle(command) else {
-                    if command.kind == .setPresentationMode,
+                var requiresReview = false
+                guard await handle(command, onFailure: {
+                    requiresReview = IntentCommandFailurePolicy.requiresUserReview($0)
+                }) else {
+                    if requiresReview {
+                        // Consume this rejected delivery, not the saved layout or
+                        // recovery journal. A fresh user command can try again.
+                        recordProcessed(command.id)
+                        try? await commandInbox.acknowledge(command.id)
+                        bridgeRetryAttempt = 0
+                        continue
+                    }
+                    if command.kind == .setFocusProfile || command.kind == .setPresentationMode,
                        commands.dropFirst(index + 1).contains(where: {
-                           $0.kind == .setPresentationMode
+                           $0.kind == .setFocusProfile || $0.kind == .setPresentationMode
                        })
                     {
                         recordProcessed(command.id)
@@ -1368,9 +1529,15 @@ final class ProfileManager: ObservableObject {
         }
     }
 
-    private func handle(_ command: BarlineIntentCommand) async -> Bool {
+    private func handle(
+        _ command: BarlineIntentCommand,
+        onFailure: ((any Error) -> Void)? = nil
+    ) async -> Bool {
         guard let appState else { return false }
 
+        if let requested = IntentCommandFailurePolicy.requestedFocusState(for: command) {
+            processedDefaults.set(requested, forKey: Self.nativeFocusRequestedKey)
+        }
         switch command.kind {
         case .openDestination:
             guard let destination = command.destination else { return true }
@@ -1394,22 +1561,25 @@ final class ProfileManager: ObservableObject {
                 statusMessage = "The profile requested by Shortcuts is no longer available."
                 return true
             }
-            return await activate(profile, source: .appIntent)
+            return await activate(profile, source: .appIntent, onFailure: onFailure)
+
+        case .setFocusProfile:
+            return await applyFocusProfile(command.profileID, onFailure: onFailure)
 
         case .setPresentationMode:
             guard let isEnabled = command.presentationModeEnabled else { return true }
-            return await applyPresentationMode(isEnabled)
+            return await applyFocusProfile(isEnabled ? resolvedPresentationProfile()?.id : nil, onFailure: onFailure)
         }
     }
 
-    private func applyPresentationMode(_ isEnabled: Bool) async -> Bool {
+    private func applyFocusProfile(_ profileID: UUID?, onFailure: ((any Error) -> Void)? = nil) async -> Bool {
         switch await recoverPendingFocusAuthority() {
         case .promoted:
-            if isEnabled {
+            if let profileID, activeFocusProfile()?.id == profileID {
                 return true
             }
         case .restored:
-            if !isEnabled {
+            if profileID == nil {
                 return true
             }
         case .failed:
@@ -1417,10 +1587,19 @@ final class ProfileManager: ObservableObject {
         case .none:
             break
         }
-        if isEnabled {
-            guard let presentation = resolvedPresentationProfile() else {
-                statusMessage = "Create a Presentation profile before enabling the Focus filter."
-                return false
+        if let profileID,
+           processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil,
+           let currentFocusProfile = activeFocusProfile(),
+           currentFocusProfile.id != profileID
+        {
+            guard await applyFocusProfile(nil, onFailure: onFailure) else { return false }
+            return await applyFocusProfile(profileID, onFailure: onFailure)
+        }
+
+        if let profileID {
+            guard let presentation = profiles.first(where: { $0.id == profileID }) else {
+                statusMessage = "The profile selected by this Focus is no longer available."
+                return true
             }
             // A persisted workspace journal is the durable source of truth. It is
             // written before activation so a crash at any later point cannot cause
@@ -1435,10 +1614,14 @@ final class ProfileManager: ObservableObject {
                    persistedProfileAuthority()?.activeAuthority?.profileID == presentation.id
                 {
                     processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+                    processedDefaults.set(
+                        presentation.id.uuidString,
+                        forKey: Self.activeFocusProfileIDKey
+                    )
                     return true
                 }
                 guard await currentWorkspaceMatches(checkpoint) else {
-                    statusMessage = "Presentation recovery evidence is incomplete."
+                    statusMessage = "Focus profile recovery evidence is incomplete."
                     return false
                 }
                 clearProfileBeforeFocus()
@@ -1489,7 +1672,8 @@ final class ProfileManager: ObservableObject {
                 presentation,
                 source: .focus,
                 authorityToken: focusAuthorityToken,
-                prepareCheckpoint: journal
+                prepareCheckpoint: journal,
+                onFailure: onFailure
             ) else {
                 activationRequests.removeValue(forKey: .focus)
                 if let data = processedDefaults.data(forKey: Self.workspaceBeforeFocusKey),
@@ -1502,6 +1686,7 @@ final class ProfileManager: ObservableObject {
                 return false
             }
             processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+            processedDefaults.set(presentation.id.uuidString, forKey: Self.activeFocusProfileIDKey)
             return true
         }
 
@@ -1511,11 +1696,11 @@ final class ProfileManager: ObservableObject {
                 activationRequests.removeValue(forKey: .focus)
                 return true
             }
-            statusMessage = "The pre-Presentation workspace checkpoint is unavailable."
+            statusMessage = "The pre-Focus workspace checkpoint is unavailable."
             return false
         }
         guard let checkpoint = decodeFocusCheckpoint(data) else {
-            statusMessage = "The pre-Presentation workspace checkpoint is unavailable."
+            statusMessage = "The pre-Focus workspace checkpoint is unavailable."
             return false
         }
         if !processedDefaults.bool(forKey: Self.presentationFocusActiveKey),
@@ -1525,7 +1710,7 @@ final class ProfileManager: ObservableObject {
             clearProfileBeforeFocus()
             return true
         }
-        guard let presentation = resolvedPresentationProfile() else {
+        guard let presentation = activeFocusProfile() else {
             activationRequests.removeValue(forKey: .focus)
             clearProfileBeforeFocus()
             return true
@@ -1535,7 +1720,7 @@ final class ProfileManager: ObservableObject {
         let authorityIsCurrent = focusAuthorityToken != nil
             && activeProfileAuthorityToken() == focusAuthorityToken
         var didFinish = false
-        await performOperation(successMessage: nil) {
+        await performOperation(successMessage: nil, onFailure: onFailure) {
             let result = try await appState.compatibilityCoordinator.restoreWorkspaceCheckpoint(
                 checkpoint,
                 ifCurrentMatches: presentation,
@@ -1572,7 +1757,7 @@ final class ProfileManager: ObservableObject {
             didFinish = true
         }
         guard didFinish else {
-            statusMessage = "Barline could not restore the pre-Presentation workspace."
+            statusMessage = "Barline could not restore the pre-Focus workspace."
             return false
         }
         activationRequests.removeValue(forKey: .focus)
@@ -1721,12 +1906,13 @@ final class ProfileManager: ObservableObject {
     private func clearProfileBeforeFocus() {
         processedDefaults.set(false, forKey: Self.presentationFocusActiveKey)
         guard !processedDefaults.bool(forKey: Self.presentationFocusActiveKey) else {
-            statusMessage = "Presentation mode state could not be cleared."
+            statusMessage = "Focus profile state could not be cleared."
             return
         }
         profileBeforeFocusID = nil
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusIDKey)
         processedDefaults.removeObject(forKey: Self.workspaceBeforeFocusKey)
+        processedDefaults.removeObject(forKey: Self.activeFocusProfileIDKey)
         processedDefaults.removeObject(forKey: Self.focusAuthorityTokenKey)
         processedDefaults.removeObject(forKey: Self.profileBeforeFocusAuthorityTokenKey)
     }
@@ -1751,6 +1937,13 @@ final class ProfileManager: ObservableObject {
 
     private func persistProfileAuthority(_ authority: ProfileAuthorityEnvelope) throws {
         try authorityStore.save(authority)
+    }
+
+    private func recoverableFocusAuthority(matching token: UUID? = nil) -> ProfileAuthorityEnvelope? {
+        // A newer active transaction takes priority over an older manual receipt.
+        let value = pendingFocusAuthority() ?? manualRecoveryStore.load()
+        guard token == nil || value?.token == token else { return nil }
+        return value
     }
 
     private func pendingFocusAuthority(matching token: UUID? = nil) -> ProfileAuthorityEnvelope? {
@@ -1815,8 +2008,33 @@ final class ProfileManager: ObservableObject {
         }
     }
 
+    private func finishArchivedFocusRecovery(_ pending: ProfileAuthorityEnvelope) throws {
+        guard manualRecoveryStore.load() == pending else { throw MenuBarWorkspaceTransactionError.superseded }
+        // Clear the journal first. A crash before removing pending authority is
+        // recognized by the matching manual receipt and resumes only cleanup.
+        clearProfileBeforeFocus()
+        guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) == nil,
+              processedDefaults.string(forKey: Self.activeFocusProfileIDKey) == nil,
+              !processedDefaults.bool(forKey: Self.presentationFocusActiveKey)
+        else {
+            throw MenuBarBackendError.operationFailed("partial recovery lifecycle cleanup failed")
+        }
+        setActiveProfileAuthorityToken(nil)
+    }
+
     private func recoverPendingFocusAuthority() async -> PendingFocusRecoveryOutcome {
+        defer { interruptedFocusRecoveryToken = recoverableFocusAuthority()?.token }
         guard let appState, let pending = pendingFocusAuthority() else { return .none }
+        // Crash after writing the manual receipt but before clearing active keys:
+        // finish cleanup, never replay the already-completed partial transaction.
+        if manualRecoveryStore.load() == pending {
+            activeProfileID = nil
+            activeProfileActivatedAt = nil
+            do {
+                try finishArchivedFocusRecovery(pending)
+                return .none
+            } catch { return .failed }
+        }
         guard let checkpoint = pending.checkpoint,
               let encodedCheckpoint = try? JSONEncoder().encode(checkpoint),
               decodeFocusCheckpoint(encodedCheckpoint) != nil,
@@ -1826,7 +2044,7 @@ final class ProfileManager: ObservableObject {
               || pending.priorAuthority == nil
         else {
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-            statusMessage = "Presentation recovery evidence is inconsistent."
+            statusMessage = "Focus profile recovery evidence is inconsistent."
             return .failed
         }
         if let currentToken = activeProfileAuthorityToken(),
@@ -1834,7 +2052,7 @@ final class ProfileManager: ObservableObject {
            currentToken != pending.priorAuthority?.token
         {
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-            statusMessage = "Presentation recovery authority is inconsistent."
+            statusMessage = "Focus profile recovery authority is inconsistent."
             return .failed
         }
         do {
@@ -1878,6 +2096,7 @@ final class ProfileManager: ObservableObject {
                     presentation: presentation
                 )))
                 processedDefaults.set(true, forKey: Self.presentationFocusActiveKey)
+                processedDefaults.set(profile.id.uuidString, forKey: Self.activeFocusProfileIDKey)
                 return .promoted
             case .restored:
                 restorePriorAuthorityAfterVerifiedRollback(checkpoint: checkpoint)
@@ -1890,17 +2109,18 @@ final class ProfileManager: ObservableObject {
             case .inconclusive:
                 activeProfileID = nil
                 activeProfileActivatedAt = nil
-                activePresentation = nil
+                // Inconclusive is not a workspace mutation. Retain its observed
+                // presentation so a later verified recovery can still compare it.
                 processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-                statusMessage = "Barline preserved an interrupted Presentation recovery for review."
+                statusMessage = "Barline preserved an interrupted Focus profile recovery for review."
                 return .failed
             }
         } catch {
             activeProfileID = nil
             activeProfileActivatedAt = nil
-            activePresentation = nil
+            // Recovery failure cannot author a replacement workspace either.
             processedDefaults.removeObject(forKey: Self.activeProfileAuthorityTokenKey)
-            statusMessage = "Barline could not recover an interrupted Presentation activation."
+            statusMessage = "Barline could not recover an interrupted Focus profile activation."
             return .failed
         }
     }
@@ -1992,17 +2212,25 @@ final class ProfileManager: ObservableObject {
         return nil
     }
 
+    private func activeFocusProfile() -> BarlineProfile? {
+        if let profileID = processedDefaults.string(forKey: Self.activeFocusProfileIDKey)
+            .flatMap(UUID.init(uuidString:))
+        {
+            return profiles.first(where: { $0.id == profileID })
+        }
+        return pendingFocusAuthority()?.pendingProfile ?? resolvedPresentationProfile()
+    }
+
     private func validateProfileDefinitionMutation(profileID: UUID) throws {
         guard processedDefaults.data(forKey: Self.workspaceBeforeFocusKey) != nil else {
             return
         }
-        let protectedProfileID = processedDefaults.string(forKey: Self.presentationProfileIDKey)
+        let protectedProfileID = processedDefaults.string(forKey: Self.activeFocusProfileIDKey)
             .flatMap(UUID.init(uuidString:))
-            ?? resolvedPresentationProfile()?.id
-            ?? PresentationProfileTemplateBuilder.profileID
+            ?? pendingFocusAuthority()?.profileID
         if profileID == protectedProfileID {
             throw MenuBarBackendError.operationFailed(
-                "disable or recover Presentation mode before changing its profile"
+                "disable or recover the active Focus before changing its profile"
             )
         }
     }
@@ -2033,20 +2261,33 @@ final class ProfileManager: ObservableObject {
 
     private func performOperation<Value: Sendable>(
         successMessage: String?,
+        onFailure: ((any Error) -> Void)? = nil,
         operation: () async throws -> Value,
         completion: (Value) -> Void
     ) async {
         await profileOperationSemaphore.wait()
         defer { profileOperationSemaphore.signal() }
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            isBusy = false
+            interruptedFocusRecoveryToken = recoverableFocusAuthority()?.token
+        }
         do {
             let value = try await operation()
             completion(value)
+            lastOperationErrorCode = nil
             statusMessage = successMessage
         } catch {
-            statusMessage = "The profile operation could not be completed."
-            Logger(category: "Profiles").error("Profile operation failed")
+            onFailure?(error)
+            lastOperationErrorCode = PrivacySafeDiagnostics.errorCode(error)
+            statusMessage = IntentCommandFailurePolicy.requiresUserReview(error)
+                ? "A saved menu bar item is unavailable. Open its app or update the saved layout, then try again. Automatic retries stopped; any recovery checkpoint is retained."
+                : error is WorkspaceRecoveryPlanner.Failure
+                ? "The saved layout no longer matches the available items or displays. Restoration could not be verified; the recovery checkpoint is retained."
+                : appState?.itemManager.hasPendingRestorations == true
+                ? "Finish item restoration in Recovery, then apply the layout again."
+                : "The profile operation could not be completed."
+            Logger(category: "Profiles").error("Profile operation failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
     }
 }

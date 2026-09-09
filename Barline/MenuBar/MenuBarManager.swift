@@ -66,12 +66,22 @@ final class MenuBarManager: ObservableObject {
     /// Performs the initial setup of the menu bar manager.
     func performSetup(with appState: AppState) {
         self.appState = appState
+        refreshSystemMenuBarConfiguration()
         configureCancellables()
         barlineShelfPanel.performSetup(with: appState)
         searchPanel.performSetup(with: appState)
         appearanceEditorPanel.performSetup(with: appState)
         for section in sections {
             section.performSetup(with: appState)
+        }
+    }
+
+    /// Configuration discovery must not depend on a status-item window already
+    /// existing: those windows attach asynchronously after manager setup.
+    func refreshSystemMenuBarConfiguration() {
+        let autoHideEnabled = Defaults.globalDomain["_HIHideMenuBar"] as? Bool ?? false
+        if isMenuBarHiddenBySystemUserDefaults != autoHideEnabled {
+            isMenuBarHiddenBySystemUserDefaults = autoHideEnabled
         }
     }
 
@@ -87,25 +97,36 @@ final class MenuBarManager: ObservableObject {
                 }
                 let hidden = options.contains(.hideMenuBar) || options.contains(.autoHideMenuBar)
                 isMenuBarHiddenBySystem = hidden
+                refreshSystemMenuBarConfiguration()
             }
             .store(in: &c)
 
-        if
-            let hiddenSection = section(withName: .alwaysHidden),
-            let window = hiddenSection.controlItem.window
-        {
-            window.publisher(for: \.frame)
-                .map(\.origin.y)
-                .removeDuplicates()
+        Publishers.Merge3(
+            NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification),
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification),
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+                .merge(with: NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification))
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            self?.refreshSystemMenuBarConfiguration()
+        }
+        .store(in: &c)
+
+        if let hiddenSection = section(withName: .alwaysHidden) {
+            hiddenSection.controlItem.$window
+                .map { window -> AnyPublisher<Void, Never> in
+                    guard let window else { return Empty().eraseToAnyPublisher() }
+                    return window.publisher(for: \.frame)
+                        .map(\.origin.y)
+                        .removeDuplicates()
+                        .map { _ in () }
+                        .eraseToAnyPublisher()
+                }
+                .switchToLatest()
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
-                    guard
-                        let self,
-                        let isMenuBarHidden = Defaults.globalDomain["_HIHideMenuBar"] as? Bool
-                    else {
-                        return
-                    }
-                    isMenuBarHiddenBySystemUserDefaults = isMenuBarHidden
+                    self?.refreshSystemMenuBarConfiguration()
                 }
                 .store(in: &c)
         }
@@ -122,9 +143,10 @@ final class MenuBarManager: ObservableObject {
                     let screen = appState.hidEventManager.bestScreen(appState: appState),
                     !appState.hidEventManager.isMouseInsideMenuBar(appState: appState, screen: screen)
                 {
+                    let lease = barlineShelfPanel.dismissalLease
                     Task {
                         try await Task.sleep(for: .seconds(0.1))
-                        hiddenSection.hide()
+                        hiddenSection.hide(ifOwnedBy: lease, reason: .focusedApplication)
                     }
                 }
             }
@@ -290,6 +312,11 @@ final class MenuBarManager: ObservableObject {
     func hideApplicationMenus() {
         guard let appState else {
             logger.error("Error hiding application menus: Missing app state")
+            return
+        }
+        guard !appState.settings.general.hideDockIcon else {
+            logger.info("Skipping application-menu hiding while the Dock icon is disabled")
+            isHidingApplicationMenus = false
             return
         }
         logger.info("Hiding application menus")

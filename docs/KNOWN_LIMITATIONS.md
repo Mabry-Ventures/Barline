@@ -1,53 +1,59 @@
-# Known limitations
+# Known limitations and release status
 
-This list describes the active development tree. It is not a release claim.
+This page describes the development tree, not a published release certificate.
+No public binary download is currently available. The next candidate remains
+blocked until its required tests pass on the final source and signed binary.
 
-## Product
+## Compatibility
 
-- Profile storage, capture, transactional activation, editing, archive import/
-  export, Presentation templates, App Intents/Focus delivery, and recovery are
-  wired, including explicit Ice import preview and bounded layout undo/redo.
-  Active-display overrides resolve through exact live IDs or unique opaque
-  hardware aliases after reconnect. Groups and spacers participate in
-  transactional authority and render in the Barline shelf. Physical reconnect
-  and ambiguous identical-display behavior still require candidate-bound
-  runtime validation.
-- A Developer ID candidate with matching Barline App Group provisioning profiles
-  has been produced and notarized. Real Focus and Shortcuts activation remains
-  unproven because it has not been exercised in a candidate-bound system pass.
-- Deterministic search, bounded Spotlight indexing, and typed on-device model
-  interpretation are connected. macOS 27 `SpotlightSearchTool` remains blocked
-  on the unavailable Xcode/macOS 27 lane.
+- The target platform is Apple Silicon running macOS 26. Intel is unsupported.
+- macOS 27 has not been runtime-qualified. Compilation or results on macOS 26
+  do not establish support for macOS 27.
+- The secondary shelf and graphical layout editor require an always-visible
+  menu bar. Auto-hide uses native reveal instead; see
+  [supported configurations](SUPPORTED_CONFIGURATIONS.md).
+- Cross-application arrangement relies on unsupported WindowServer behavior.
+  macOS updates and third-party item behavior can affect it. Missing or ambiguous
+  identities cannot safely authorize a layout mutation.
+- Multiple displays, notch/overflow, physical reconnect, sleep/wake, full-screen
+  Spaces, and actual permission changes require their own runtime evidence.
+  Synthetic tests alone do not certify those configurations.
 
-## Compatibility and quality
+## Features in qualification
 
-- The strict XPC compatibility firewall is complete and passing; private
-  symbols remain isolated inside the helper.
-- Fixture, unit, integration and UI targets plus an explicit test plan exist.
-  Developer Tools automation is enabled, but the latest fixture XCUITest could
-  not activate the background fixture and the semantic audit lacked current
-  Accessibility trust. Production UI/reopen execution remains pending because
-  it activates Barline on the operator's desktop.
-- Status-item smoke, bounded shelf responsiveness, and resource-sampled soak
-  automation exist. Full XCUITest, AX/VoiceOver, display, sleep/wake,
-  permission-revocation, representative-hardware, and release-duration soak
-  evidence have not passed on the exact launch SHA.
-- Xcode 27 is not installed and no macOS 27 runtime host has been used.
+Saved layouts, import/export, transactional activation, recovery, and native
+Focus Filter integration are implemented. Groups and search favorites/aliases
+have implementation and automated coverage, but their installed interaction,
+keyboard, accessibility, and persistence checks remain release requirements.
 
-## Distribution
+Display-layout authoring, explainable context rules, and per-item shortcuts now
+have implementation and local regression checks. They are not qualified release features. Native
+Focus activation/deactivation and manual-override behavior need real system
+execution; Barline does not provide an independent catalog of macOS Focus modes.
 
-- The release pipeline implements Developer ID, entitlement/profile,
-  notarization, stapling, Gatekeeper, Sparkle, checksum, SBOM, and source-archive
-  gates. A prior clean candidate passed the credentialed pipeline, but the
-  current source SHA has only an unsigned topology/privacy preflight and the
-  `barline-notary` Keychain profile must be restored before exact-head
-  notarization.
-- Sparkle is enabled only in Release with Barline's public key and canonical
-  GitHub appcast URL. No previous public Barline version exists for update proof.
-- The canonical public repository exists. Protected rules are active and the
-  exact-head local status remains pending while required foreground runtime,
-  physical-scenario, soak, and installation gates are incomplete.
+Automatic rules are optional and start paused after relaunch. Resume is explicit;
+manual layout changes pause them again. Rules never restart other applications
+to change system item spacing; such layouts must first be applied manually.
 
-Track candidate-specific results in [the test matrix](TEST_MATRIX.md), release
-requirements in [RELEASING.md](RELEASING.md), and architecture progress in
-[COMPATIBILITY_FIREWALL_STATUS.md](COMPATIBILITY_FIREWALL_STATUS.md).
+Deterministic search remains available without Apple Intelligence. Optional
+on-device interpretation and Spotlight behavior have separate availability and
+validation requirements; see [search architecture](SEARCH_AND_APPLE_INTELLIGENCE.md).
+
+## Current reliability and distribution boundary
+
+A shelf interaction timed out during installed qualification. Later successful
+diagnostic runs do not, by themselves, explain or resolve the original failure.
+The final candidate must demonstrate reliable open, close, target activation,
+and restoration behavior before publication.
+
+Signed/notarized candidates and local upgrade tests have been produced. Those
+results are source- and binary-specific, not blanket approval for new changes.
+Builds, automated regressions, installed journeys, physical scenarios,
+accessibility checks, and release-duration soak are distinct evidence classes.
+Any unavailable or deferred lane must be stated explicitly in release scope.
+
+The public support site and checkout have staging work, but staged website QA
+does not qualify the app or establish production-domain availability.
+
+See [release requirements](RELEASING.md), [the test matrix](TEST_MATRIX.md),
+and the [reliability-first acceptance contract](RELIABILITY_FIRST.md).

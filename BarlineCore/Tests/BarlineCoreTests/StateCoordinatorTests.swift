@@ -9,6 +9,482 @@ import Testing
 
 @Suite("Transactional state coordinator")
 struct StateCoordinatorTests {
+    @Test("A base layout cannot commit across an unadmitted empty-display connection")
+    func rejectsBaseTopologyChange() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let after = MenuBarSnapshot(
+            generation: 2, capturedAt: before.capturedAt, items: before.items,
+            displayIDs: before.displayIDs.union([MenuBarDisplayID("new-empty-display")]), activeSpaceIsValid: true
+        )
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        await #expect(throws: MenuBarBackendError.operationFailed("profile display topology changed during activation")) {
+            try await coordinator.activate(
+                profile: BarlineProfile(name: "Base", layout: ProfileLayout(visible: before.items.map(\.id))),
+                now: before.capturedAt
+            )
+        }
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await backend.moveOperations.isEmpty)
+    }
+
+    @Test("Physical profile destinations are checked before checkpoint or workspace effects")
+    func rejectsEmptyPhysicalDestinationBeforeEffects() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let backend = FakeBackend(
+            snapshots: [before],
+            capabilities: MenuBarCapabilities(
+                canSnapshot: true, canMove: true, canReveal: true, canActivate: true, canRestore: true
+            )
+        )
+        let workspace = WorkspaceRecorder(initial: ProfileWorkspaceState(profile: BarlineProfile(name: "Original")))
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        await #expect(throws: ProfileLayoutReconciler.Failure.unsupportedDestination) {
+            try await coordinator.activate(
+                profile: BarlineProfile(name: "Target", layout: ProfileLayout(hidden: before.items.map(\.id))),
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() }, apply: { try await workspace.apply($0) }
+                ),
+                prepareCheckpoint: { _, _ in Issue.record("Impossible plan must not create a checkpoint") }
+            )
+        }
+        #expect(await workspace.values.isEmpty)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Activation preserves newly discovered anchors and never drags fixed items")
+    func activatesAroundFixedAndNewItems() async throws {
+        let seed = makeSnapshot(generation: 1, count: 4)
+        let ids = seed.items.map(\.id)
+        func snapshot(_ generation: UInt64, indices: [Int]) -> MenuBarSnapshot {
+            MenuBarSnapshot(
+                generation: generation, capturedAt: seed.capturedAt,
+                items: indices.enumerated().map { order, index in
+                    MenuBarItemDescriptor(
+                        id: ids[index], section: .visible, order: order,
+                        displayID: seed.items[index].displayID, isMovable: index != 2
+                    )
+                },
+                displayIDs: seed.displayIDs, activeSpaceIsValid: true
+            )
+        }
+        let before = snapshot(1, indices: [3, 1, 2, 0])
+        let after = snapshot(2, indices: [0, 1, 2, 3])
+        let profile = BarlineProfile(name: "Saved", layout: ProfileLayout(visible: [ids[0], ids[2], ids[3]]))
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let result = try await coordinator.activate(profile: profile, now: after.capturedAt)
+        #expect(result == after)
+        #expect(await coordinator.activeProfileID == profile.id)
+        #expect(await backend.moveOperations.count == 2)
+        #expect(await backend.moveOperations.allSatisfy { $0.itemID != ids[1] && $0.itemID != ids[2] })
+        var workspace = ProfileWorkspaceState(profile: profile)
+        workspace.presentation = try profile.resolvedPresentation(using: nil).resolvingItemIdentities(in: after)
+        #expect(ProfileAuthorityMatcher.matches(
+            profile: profile,
+            checkpoint: MenuBarWorkspaceCheckpoint(snapshot: after, activeProfileID: profile.id, workspace: workspace)
+        ))
+    }
+
+    @Test("Rule authority denial occurs before any layout or workspace effect")
+    func ruleAdmissionDenialHasNoEffects() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(snapshots: [before])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(profile: profile, admission: { throw CancellationError() })
+        }
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.mutationGeneration == 0)
+    }
+
+    @Test("Rule authority revocation between moves compensates without publishing the layout")
+    func ruleAdmissionRevocationRollsBack() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let restored = makeSnapshot(generation: 3, count: 2)
+        let backend = FakeBackend(snapshots: [before, restored])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(profile: profile, admission: {
+                if await !backend.moveOperations.isEmpty {
+                    throw CancellationError()
+                }
+            })
+        }
+        #expect(await backend.moveOperations.count == 1)
+        #expect(await backend.restoredSnapshots.count == 1)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.currentSnapshot == restored)
+        #expect(await coordinator.canUndo == false)
+    }
+
+    @Test("Rule revocation after workspace apply restores workspace without moving items")
+    func ruleAdmissionRestoresWorkspace() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let restored = makeSnapshot(generation: 3, count: 2)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let workspace = WorkspaceRecorder(initial: original)
+        let backend = FakeBackend(snapshots: [before, live, restored])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(
+                profile: profile,
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() }, apply: { try await workspace.apply($0) }
+                ),
+                admission: {
+                    if await !workspace.values.isEmpty {
+                        throw CancellationError()
+                    }
+                }
+            )
+        }
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await workspace.values.count == 2)
+        #expect(await workspace.capture() == original)
+        #expect(await coordinator.currentSnapshot == restored)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Admission is rechecked after the asynchronous restoration journal guard")
+    func ruleAdmissionRecheckedAfterJournal() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(snapshots: [before])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let journal = RestorationGuardRecorder(rejects: false)
+        _ = try await coordinator.refresh()
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await journal.check() }
+        let profile = BarlineProfile(name: "Rule", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        await #expect(throws: CancellationError.self) {
+            try await coordinator.activate(profile: profile, admission: {
+                if await journal.calls > 0 {
+                    throw CancellationError()
+                }
+            })
+        }
+        #expect(await journal.calls == 1)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.mutationGeneration == 0)
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Pending restoration guard blocks manual layout effects without replacing authority")
+    func restorationGuardBlocksManualMutation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(snapshots: [before])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        _ = try await coordinator.refresh()
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            try await coordinator.perform(.move(MenuBarMoveOperation(
+                itemID: before.items[0].id, section: .hidden, index: 0
+            )))
+        }
+
+        #expect(await guardRecorder.calls == 1)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await coordinator.currentSnapshot == before)
+        #expect(await coordinator.lastKnownGoodSnapshot == before)
+        #expect(await coordinator.mutationGeneration == 0)
+        #expect(await coordinator.layoutAuthorityGeneration == 0)
+        #expect(await coordinator.canUndo == false)
+        #expect(await coordinator.canRedo == false)
+    }
+
+    @Test("Pending restoration guard blocks profile layout and workspace effects")
+    func restorationGuardBlocksProfileMutation() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let workspace = WorkspaceRecorder(initial: original)
+        let profile = BarlineProfile(name: "New", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        let backend = FakeBackend(snapshots: [before, live])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        _ = try await coordinator.refresh()
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            try await coordinator.activate(
+                profile: profile,
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() },
+                    apply: { try await workspace.apply($0) }
+                )
+            )
+        }
+
+        #expect(await guardRecorder.calls == 1)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        #expect(await workspace.values.isEmpty)
+        #expect(await workspace.capture() == original)
+        // History preflight may refresh physical evidence, but never changes its layout.
+        #expect(await coordinator.currentSnapshot == live)
+        #expect(await coordinator.lastKnownGoodSnapshot == live)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(await coordinator.mutationGeneration == 0)
+        #expect(await coordinator.layoutAuthorityGeneration == 0)
+        #expect(await coordinator.canUndo == false)
+    }
+
+    @Test("Pending restoration guard leaves undo and redo checkpoints intact", arguments: [false, true])
+    func restorationGuardBlocksHistoryMutation(redo: Bool) async throws {
+        let snapshots = (1 ... 6).map { makeSnapshot(generation: UInt64($0), count: 2) }
+        let backend = FakeBackend(snapshots: snapshots)
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        _ = try await coordinator.perform(.reveal(snapshots[0].items[0].id))
+        if redo {
+            _ = try await coordinator.undo()
+        }
+        let priorRestorations = await backend.restoredSnapshots
+        let priorMutationGeneration = await coordinator.mutationGeneration
+        let priorAuthorityGeneration = await coordinator.layoutAuthorityGeneration
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            if redo {
+                try await coordinator.redo()
+            } else {
+                try await coordinator.undo()
+            }
+        }
+
+        #expect(await guardRecorder.calls == 1)
+        #expect(await backend.restoredSnapshots == priorRestorations)
+        #expect(await backend.moveOperations.isEmpty)
+        #expect(await coordinator.currentSnapshot == snapshots[redo ? 4 : 2])
+        #expect(await coordinator.mutationGeneration == priorMutationGeneration)
+        #expect(await coordinator.layoutAuthorityGeneration == priorAuthorityGeneration)
+        #expect(await coordinator.canUndo == !redo)
+        #expect(await coordinator.canRedo == redo)
+    }
+
+    @Test("Transient restoration moves bypass the pending restoration guard")
+    func transientRestorationBypassesAuthorityGuard() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: true)
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+        let move = MenuBarMoveOperation(itemID: before.items[0].id, section: .visible, index: 0)
+
+        let result = try await coordinator.perform(.transientMove(move))
+
+        #expect(result == after)
+        #expect(await backend.moveOperations == [move])
+        #expect(await guardRecorder.calls == 0)
+        #expect(await coordinator.mutationGeneration == 1)
+        #expect(await coordinator.layoutAuthorityGeneration == 0)
+        #expect(await coordinator.canUndo == false)
+    }
+
+    @Test("A successful restoration guard advances authoritative layout generation")
+    func successfulRestorationGuardAdvancesAuthority() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let after = makeSnapshot(generation: 2, count: 2)
+        let backend = FakeBackend(snapshots: [before, after])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let guardRecorder = RestorationGuardRecorder(rejects: false)
+        await coordinator.setBeforeAuthoritativeLayoutMutation { try await guardRecorder.check() }
+        let move = MenuBarMoveOperation(itemID: before.items[0].id, section: .visible, index: 0)
+
+        let result = try await coordinator.perform(.move(move))
+
+        #expect(result == after)
+        #expect(await backend.moveOperations == [move])
+        #expect(await guardRecorder.calls == 1)
+        #expect(await coordinator.layoutAuthorityGeneration == 1)
+        #expect(await coordinator.mutationGeneration == 1)
+        #expect(await coordinator.canUndo)
+    }
+
+    @Test("Cancelled mutations compensate in a live task before a queued refresh can proceed")
+    func cancelledMutationCompensationIsSerialized() async throws {
+        let before = makeSnapshot(generation: 1, count: 2)
+        let backend = FakeBackend(
+            snapshots: (1 ... 3).map { makeSnapshot(generation: UInt64($0), count: 2) },
+            mutationDelay: .seconds(10),
+            checksCancellationDuringCompensation: true
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        _ = try await coordinator.refresh()
+        let mutation = Task { try await coordinator.perform(.reveal(before.items[0].id)) }
+        await backend.waitUntilMutationStarted()
+        let refresh = Task { try await coordinator.refresh() }
+        mutation.cancel()
+        await #expect(throws: CancellationError.self) { try await mutation.value }
+        #expect(try await refresh.value.generation == 3)
+        #expect(await backend.restoredSnapshots.count == 1)
+        #expect(await backend.restoreIsActive == false)
+        #expect(await coordinator.currentSnapshot?.generation == 3)
+    }
+
+    @Test("Cancelled profile application restores both cancellation-sensitive workspace and layout")
+    func cancelledProfileCompensatesWorkspaceAndLayout() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let profile = BarlineProfile(name: "New layout", layout: ProfileLayout(hidden: before.items.map(\.id)))
+        let original = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let workspace = WorkspaceRecorder(initial: original)
+        let backend = FakeBackend(
+            snapshots: [before, makeSnapshot(generation: 2, count: 1)],
+            checksCancellationDuringCompensation: true,
+            cancelOnMove: true
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let activation = Task {
+            try await coordinator.activate(
+                profile: profile,
+                workspaceTransaction: MenuBarWorkspaceTransaction(
+                    capture: { await workspace.capture() },
+                    apply: { value in
+                        try Task.checkCancellation()
+                        try await workspace.apply(value)
+                    }
+                )
+            )
+        }
+        await #expect(throws: CancellationError.self) { try await activation.value }
+        #expect(await workspace.capture() == original)
+        #expect(await workspace.values.count == 2)
+        #expect(await backend.restoredSnapshots == [before])
+        #expect(await coordinator.currentSnapshot?.generation == 2)
+    }
+
+    @Test("Compensation deadlines cancel and drain work instead of orphaning a rollback")
+    func compensationDeadlineDrainsBeforeRelease() async throws {
+        let before = makeSnapshot(generation: 1, count: 1)
+        let backend = FakeBackend(
+            snapshots: [before, makeSnapshot(generation: 2, count: 1)],
+            revealFailure: .interrupted,
+            checksCancellationDuringCompensation: true,
+            restoreDelay: .seconds(10)
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend, compensationTimeout: .milliseconds(20))
+        _ = try await coordinator.refresh()
+        await #expect(throws: (any Error).self) {
+            try await coordinator.perform(.reveal(before.items[0].id))
+        }
+        #expect(await backend.restoreIsActive == false)
+        #expect(await coordinator.currentSnapshot == nil)
+        #expect(try await coordinator.refresh().generation == 2)
+    }
+
+    @Test("An interaction lease excludes profile, history and background refresh while allowing its own moves")
+    func interactionLeaseProtectsWholeJourney() async throws {
+        let before = makeSnapshot(generation: 1, count: 3)
+        let backend = FakeBackend(snapshots: (1 ... 4).map { makeSnapshot(generation: UInt64($0), count: 3) })
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let profile = BarlineProfile(name: "Concurrent Focus", layout: ProfileLayout(visible: before.items.map(\.id)))
+        let expiredToken = try await coordinator.withItemInteraction { token in
+            let blocked = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
+                group.addTask {
+                    do {
+                        _ = try await coordinator.activate(profile: profile)
+                        return false
+                    } catch MenuBarBackendError.unsafeMenuTracking {
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+                group.addTask {
+                    do {
+                        _ = try await coordinator.undo()
+                        return false
+                    } catch MenuBarBackendError.unsafeMenuTracking {
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+                group.addTask {
+                    do {
+                        _ = try await coordinator.refresh()
+                        return false
+                    } catch MenuBarBackendError.unsafeMenuTracking {
+                        return true
+                    } catch {
+                        return false
+                    }
+                }
+                var values = [Bool]()
+                for await value in group {
+                    values.append(value)
+                }
+                return values
+            }
+            #expect(blocked == [true, true, true])
+            #expect(await backend.snapshotCallCount == 0)
+            #expect(await backend.moveOperations.isEmpty)
+            await #expect(throws: MenuBarBackendError.unsafeMenuTracking) {
+                try await coordinator.withItemInteraction { _ in true }
+            }
+            await #expect(throws: MenuBarBackendError.unsafeMenuTracking) {
+                try await coordinator.refresh(interactionID: UUID())
+            }
+            let refreshed = try await coordinator.refresh(interactionID: token)
+            let authority = try await coordinator.refreshAuthority(
+                expectedGeneration: refreshed.generation, interactionID: token
+            )
+            let moved = try await coordinator.perform(
+                .transientMove(MenuBarMoveOperation(itemID: before.items[0].id, section: .visible, index: 0)),
+                expectedGeneration: authority.generation,
+                interactionID: token
+            )
+            #expect(moved.generation == 3)
+            return token
+        }
+        await #expect(throws: MenuBarBackendError.unsafeMenuTracking) {
+            try await coordinator.refresh(interactionID: expiredToken)
+        }
+        #expect(try await coordinator.refresh().generation == 4)
+    }
+
+    @Test("Throwing and cancelled interaction bodies always release their lease")
+    func interactionLeaseReleasesOnFailureAndCancellation() async throws {
+        let backend = FakeBackend(snapshots: [makeSnapshot(generation: 1, count: 2)])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        await #expect(throws: MenuBarBackendError.interrupted) {
+            try await coordinator.withItemInteraction { _ -> Bool in
+                throw MenuBarBackendError.interrupted
+            }
+        }
+        let started = AsyncStream<Void>.makeStream()
+        let task = Task {
+            try await coordinator.withItemInteraction { _ in
+                started.continuation.yield(())
+                try await Task.sleep(for: .seconds(10))
+            }
+        }
+        for await _ in started.stream {
+            break
+        }
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        started.continuation.finish()
+        #expect(try await coordinator.refresh().generation == 1)
+        #expect(try await coordinator.withItemInteraction { _ in 42 } == 42)
+    }
+
     @Test("Refresh retries and keeps the first valid snapshot")
     func retryRefresh() async throws {
         let valid = makeSnapshot(generation: 1, count: 3)
@@ -261,6 +737,50 @@ struct StateCoordinatorTests {
         #expect(await backend.revealedItems.isEmpty)
     }
 
+    @Test("Non-hideable items are rejected before a hidden-section move")
+    func rejectsHidingNonHideableItem() async throws {
+        let display = MenuBarDisplayID("test-display")
+        let itemID = MenuBarItemID(
+            bundleIdentifier: "com.apple.screencaptureui",
+            accessibilityIdentifier: "Item-0"
+        )
+        let snapshot = MenuBarSnapshot(
+            generation: 1,
+            capturedAt: Date(),
+            items: [
+                MenuBarItemDescriptor(
+                    id: itemID,
+                    section: .visible,
+                    order: 0,
+                    displayID: display,
+                    isSystemItem: true,
+                    title: "Item-0",
+                    isOnScreen: true,
+                    isMovable: true,
+                    canBeHidden: false
+                ),
+            ],
+            displayIDs: [display],
+            activeSpaceIsValid: true
+        )
+        let backend = FakeBackend(snapshots: [snapshot])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+        _ = try await coordinator.refresh(now: snapshot.capturedAt)
+
+        await #expect(throws: MenuBarBackendError.operationFailed("menu bar item cannot be hidden")) {
+            try await coordinator.perform(.move(MenuBarMoveOperation(
+                itemID: itemID,
+                section: .hidden,
+                index: 0,
+                destinationDisplayID: display
+            )), now: snapshot.capturedAt)
+        }
+        #expect(await backend.moveOperations.isEmpty)
+    }
+
     @Test("Exhausted invalid refreshes preserve the last-known-good snapshot")
     func preservesLastKnownGoodAfterRetryExhaustion() async throws {
         let good = makeSnapshot(generation: 1, count: 3)
@@ -496,9 +1016,14 @@ struct StateCoordinatorTests {
         #expect(result == after)
         #expect(await coordinator.activeProfileID == profile.id)
         #expect(await backend.moveOperations == [
-            MenuBarMoveOperation(itemID: before.items[2].id, section: .visible, index: 0),
-            MenuBarMoveOperation(itemID: before.items[0].id, section: .hidden, index: 0),
-            MenuBarMoveOperation(itemID: before.items[1].id, section: .alwaysHidden, index: 0),
+            MenuBarMoveOperation(
+                itemID: before.items[0].id, section: .hidden, index: 0,
+                destinationDisplayID: before.items[0].displayID
+            ),
+            MenuBarMoveOperation(
+                itemID: before.items[1].id, section: .alwaysHidden, index: 0,
+                destinationDisplayID: before.items[1].displayID
+            ),
         ])
         #expect(await backend.restoredSnapshots.isEmpty)
     }
@@ -626,6 +1151,267 @@ struct StateCoordinatorTests {
         #expect(await coordinator.activeProfileID == nil)
         #expect(await recorder.values == [originalWorkspace])
         #expect(await backend.restoredSnapshots == [originalSnapshot])
+    }
+
+    @Test("Partial Focus recovery needs retained presentation evidence", arguments: [false, true])
+    func partialFocusRecoveryRequiresPresentationEvidence(retainsPresentation: Bool) async throws {
+        let originalSnapshot = makeSnapshot(generation: 1, count: 2)
+        let targetLayout = ProfileLayout(hidden: originalSnapshot.items.map(\.id))
+        let partialSnapshot = makeProfileSnapshot(
+            generation: 2,
+            layout: ProfileLayout(
+                visible: [originalSnapshot.items[1].id],
+                hidden: [originalSnapshot.items[0].id]
+            )
+        )
+        let restoredSnapshot = makeSnapshot(generation: 3, count: 2)
+        let profile = BarlineProfile(id: UUID(119), name: "Pending", layout: targetLayout)
+        let presentation = profile.resolvedPresentation(using: nil)
+        var liveWorkspace = ProfileWorkspaceState(profile: profile)
+        // ProfileManager currently clears this on its activation-error path.
+        // Do not substitute the journal's desired presentation for live evidence.
+        liveWorkspace.presentation = retainsPresentation ? presentation : nil
+        let originalWorkspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: liveWorkspace)
+        let backend = FakeBackend(snapshots: [partialSnapshot, restoredSnapshot])
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let result = try await coordinator.recoverPendingProfileActivation(
+            profile: profile,
+            persistedPresentation: presentation,
+            checkpoint: MenuBarWorkspaceCheckpoint(
+                snapshot: originalSnapshot,
+                activeProfileID: nil,
+                workspace: originalWorkspace
+            ),
+            workspaceTransaction: MenuBarWorkspaceTransaction(
+                capture: { await recorder.capture() },
+                apply: { try await recorder.apply($0) }
+            ),
+            now: partialSnapshot.capturedAt
+        )
+
+        if retainsPresentation {
+            #expect(result == .restored(restoredSnapshot))
+            #expect(await recorder.values == [originalWorkspace])
+            #expect(await backend.restoredSnapshots == [originalSnapshot])
+        } else {
+            #expect(result == .inconclusive)
+            #expect(await recorder.values.isEmpty)
+            #expect(await backend.restoredSnapshots.isEmpty)
+        }
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Explicit recovery after restart restores or compensates failure", arguments: [false, true])
+    func explicitCheckpointRecoveryAfterRestart(restoreFails: Bool) async throws {
+        let original = makeSnapshot(generation: 1, count: 2)
+        let partial = makeProfileSnapshot(
+            generation: 2,
+            layout: ProfileLayout(
+                visible: [original.items[1].id],
+                hidden: [original.items[0].id]
+            )
+        )
+        let restored = makeSnapshot(generation: 3, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        var liveWorkspace = workspace
+        liveWorkspace.shelfBehavior.isEnabled.toggle()
+        liveWorkspace.presentation = nil
+        let recorder = WorkspaceRecorder(initial: liveWorkspace)
+        let backend = FakeBackend(
+            snapshots: [partial, restoreFails ? partial : restored],
+            restoreFailures: restoreFails ? 1 : 0
+        )
+        let coordinator = MenuBarStateCoordinator(
+            backend: backend,
+            retryPolicy: RetryPolicy(maximumAttempts: 1, baseDelay: .zero, maximumDelay: .zero)
+        )
+
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: original,
+            activeProfileID: nil,
+            workspace: workspace
+        )
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() },
+            apply: { try await recorder.apply($0) }
+        )
+
+        if restoreFails {
+            await #expect(throws: MenuBarBackendError.interrupted) {
+                try await coordinator.restoreWorkspaceCheckpoint(
+                    checkpoint, workspaceTransaction: transaction, now: partial.capturedAt
+                )
+            }
+            #expect(await recorder.values == [workspace, liveWorkspace])
+            #expect(await backend.restoredSnapshots == [original, partial])
+            #expect(await coordinator.currentSnapshot == partial)
+        } else {
+            let result = try await coordinator.restoreWorkspaceCheckpoint(
+                checkpoint, workspaceTransaction: transaction, now: partial.capturedAt
+            )
+            #expect(result == restored)
+            #expect(await recorder.values == [workspace])
+            #expect(await backend.restoredSnapshots == [original])
+        }
+
+        #expect(await coordinator.activeProfileID == nil)
+    }
+
+    @Test("Explicit stale-checkpoint recovery fails before workspace or layout side effects")
+    func staleCheckpointPreflightHasNoSideEffects() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(snapshots: [live])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: original, activeProfileID: nil, workspace: workspace
+        )
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        await #expect(throws: WorkspaceRecoveryPlanner.Failure.incompleteInventory) {
+            try await coordinator.restoreWorkspaceCheckpoint(
+                checkpoint, workspaceTransaction: transaction, now: live.capturedAt
+            )
+        }
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
+    @Test("Confirmed available-item recovery retains original checkpoint and claims no profile")
+    func availableCheckpointRecovery() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let fresh = makeSnapshot(generation: 3, count: 2)
+        let after = makeSnapshot(generation: 4, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(
+            snapshots: [live, fresh, after],
+            environment: MenuBarEnvironmentSnapshot(
+                activeDisplayID: 1, activeStableDisplayID: MenuBarDisplayID("test-display"),
+                activeSpaceToken: 1, activeSpaceIsFullscreen: false
+            )
+        )
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let checkpoint = MenuBarWorkspaceCheckpoint(
+            snapshot: original, activeProfileID: UUID(), workspace: workspace
+        )
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            checkpoint, workspaceTransaction: transaction, now: live.capturedAt
+        )
+        #expect(prepared.preview.missingItemIDs.count == 1)
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+        let result = try await coordinator.restoreAvailableWorkspaceRecovery(
+            prepared, workspaceTransaction: transaction, now: after.capturedAt
+        )
+        #expect(result.snapshot == after)
+        #expect(result.activeDisplayID == MenuBarDisplayID("test-display"))
+        #expect(result.activeProfileID == nil)
+        #expect(await coordinator.activeProfileID == nil)
+        #expect(prepared.checkpoint == checkpoint)
+        #expect(await recorder.values == [workspace])
+        #expect(await backend.restoredSnapshots.count == 1)
+    }
+
+    @Test("A changed inventory invalidates partial-recovery confirmation without side effects")
+    func availableRecoveryRejectsChangedPreview() async throws {
+        let original = makeSnapshot(generation: 1, count: 4)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let changed = makeSnapshot(generation: 3, count: 3)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = WorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(snapshots: [live, changed])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            MenuBarWorkspaceCheckpoint(snapshot: original, activeProfileID: nil, workspace: workspace),
+            workspaceTransaction: transaction, now: live.capturedAt
+        )
+        await #expect(throws: (any Error).self) {
+            try await coordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: transaction, now: changed.capturedAt
+            )
+        }
+        #expect(await recorder.values.isEmpty)
+        #expect(await backend.restoredSnapshots.isEmpty)
+    }
+
+    @Test("Failed available-item verification compensates workspace and layout")
+    func availableRecoveryCompensatesFailedTarget() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let layout = ProfileLayout(visible: [original.items[0].id], hidden: [original.items[1].id])
+        let live = makeProfileSnapshot(generation: 2, layout: layout)
+        let fresh = makeProfileSnapshot(generation: 3, layout: layout)
+        let wrong = makeProfileSnapshot(generation: 4, layout: layout)
+        let rollback = makeProfileSnapshot(generation: 5, layout: layout)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        var liveWorkspace = workspace
+        liveWorkspace.shelfBehavior.isEnabled.toggle()
+        let recorder = WorkspaceRecorder(initial: liveWorkspace)
+        let backend = FakeBackend(snapshots: [live, fresh, wrong, rollback])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let checkpoint = MenuBarWorkspaceCheckpoint(snapshot: original, activeProfileID: nil, workspace: workspace)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { try await recorder.apply($0) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            checkpoint, workspaceTransaction: transaction, now: live.capturedAt
+        )
+        await #expect(throws: WorkspaceRecoveryPlanner.Failure.exactTargetUnavailable) {
+            try await coordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: transaction, now: rollback.capturedAt
+            )
+        }
+        #expect(await recorder.values == [workspace, liveWorkspace])
+        #expect(await backend.restoredSnapshots.count == 2)
+        #expect(await coordinator.currentSnapshot == rollback)
+        #expect(prepared.checkpoint == checkpoint)
+    }
+
+    @Test("Settings change-and-revert invalidates partial recovery confirmation")
+    func availableRecoveryRejectsNewWorkspaceRevision() async throws {
+        let original = makeSnapshot(generation: 1, count: 3)
+        let live = makeSnapshot(generation: 2, count: 2)
+        let fresh = makeSnapshot(generation: 3, count: 2)
+        let workspace = ProfileWorkspaceState(profile: BarlineProfile(name: "Original"))
+        let recorder = RevisionedWorkspaceRecorder(initial: workspace)
+        let backend = FakeBackend(snapshots: [live, fresh])
+        let coordinator = MenuBarStateCoordinator(backend: backend)
+        let transaction = MenuBarWorkspaceTransaction(
+            capture: { await recorder.capture() }, apply: { await recorder.apply($0) },
+            currentRevision: { await recorder.currentRevision() },
+            applyIfCurrent: { await recorder.apply($0, ifCurrentRevision: $1) },
+            rollbackSuperseded: { await recorder.rollbackSuperseded(from: $0, to: $1) }
+        )
+        let prepared = try await coordinator.prepareAvailableWorkspaceRecovery(
+            MenuBarWorkspaceCheckpoint(snapshot: original, activeProfileID: nil, workspace: workspace),
+            workspaceTransaction: transaction, now: live.capturedAt
+        )
+        var changed = workspace
+        changed.shelfBehavior.isEnabled.toggle()
+        await recorder.apply(changed)
+        await recorder.apply(workspace)
+        await #expect(throws: MenuBarWorkspaceTransactionError.superseded) {
+            try await coordinator.restoreAvailableWorkspaceRecovery(
+                prepared, workspaceTransaction: transaction, now: fresh.capturedAt
+            )
+        }
+        #expect(await recorder.currentRevision() == 2)
+        #expect(await backend.restoredSnapshots.isEmpty)
     }
 
     @Test("Pending no-op activation accepts the original state without mutation")
@@ -1087,7 +1873,7 @@ struct StateCoordinatorTests {
             displayOverrides: [
                 DisplayProfileOverride(
                     displayID: firstDisplay,
-                    layout: ProfileLayout(visible: [firstItem])
+                    layout: ProfileLayout(hidden: [firstItem])
                 ),
             ]
         )
@@ -1803,7 +2589,7 @@ struct StateCoordinatorTests {
             displayIdentities: [identity],
             activeSpaceIsValid: true
         )
-        let layout = ProfileLayout(visible: before.items.map(\.id))
+        let layout = ProfileLayout(visible: before.items.reversed().map(\.id))
         let rawAfter = makeProfileSnapshot(generation: 2, layout: layout)
         let after = MenuBarSnapshot(
             generation: rawAfter.generation,
@@ -1958,8 +2744,8 @@ struct StateCoordinatorTests {
 
         _ = try await coordinator.activate(profile: profile, now: after.capturedAt)
 
-        #expect(await backend.moveOperations.map(\.itemID) == profile.layout.allItemIDs)
-        #expect(await backend.moveOperations.allSatisfy { $0.destinationDisplayID == nil })
+        // Both displays already match; activation must not issue redundant drags.
+        #expect(await backend.moveOperations.isEmpty)
         #expect(await coordinator.activeProfileID == profile.id)
     }
 
@@ -1969,7 +2755,7 @@ struct StateCoordinatorTests {
         let profile = BarlineProfile(
             id: UUID(101),
             name: "Broken",
-            layout: ProfileLayout(visible: before.items.map(\.id))
+            layout: ProfileLayout(visible: before.items.reversed().map(\.id))
         )
         let verifiedRollback = makeSnapshot(generation: 2, count: 3)
         let backend = FakeBackend(snapshots: [before, verifiedRollback], failMoveAt: 2)
@@ -2623,7 +3409,7 @@ struct StateCoordinatorTests {
         let profile = BarlineProfile(
             id: UUID(102),
             name: "Invalid result",
-            layout: ProfileLayout(visible: before.items.map(\.id))
+            layout: ProfileLayout(visible: before.items.reversed().map(\.id))
         )
         let backend = FakeBackend(snapshots: [before, invalid, verifiedRollback])
         let coordinator = MenuBarStateCoordinator(
@@ -2719,6 +3505,22 @@ struct RetryPolicyTests {
         #expect(policy.delay(forAttempt: 1, jitterPermille: 200) == .milliseconds(240))
         #expect(policy.delay(forAttempt: 1, jitterPermille: 900) == .milliseconds(240))
         #expect(policy.delay(forAttempt: 3, jitterPermille: 200) == .milliseconds(450))
+    }
+}
+
+private actor RestorationGuardRecorder {
+    private let rejects: Bool
+    private(set) var calls = 0
+
+    init(rejects: Bool) {
+        self.rejects = rejects
+    }
+
+    func check() throws {
+        calls += 1
+        if rejects {
+            throw MenuBarBackendError.interrupted
+        }
     }
 }
 
@@ -2915,6 +3717,10 @@ private actor FakeBackend: MenuBarBackend {
     private var restoreFailuresRemaining: Int
     private let restoreFailureCallNumbers: Set<Int>
     private var restoreCallCount = 0
+    private let checksCancellationDuringCompensation: Bool
+    private let cancelOnMove: Bool
+    private let restoreDelay: Duration
+    private(set) var restoreIsActive = false
 
     init(
         snapshots: [MenuBarSnapshot],
@@ -2923,7 +3729,9 @@ private actor FakeBackend: MenuBarBackend {
             canMove: true,
             canReveal: true,
             canActivate: true,
-            canRestore: true
+            canRestore: true,
+            // This logical backend does not synthesize a drag to a physical item.
+            moveDestinationSupport: .emptySectionAllowed
         ),
         mutationDelay: Duration = .zero,
         restartDelay: Duration = .zero,
@@ -2932,7 +3740,10 @@ private actor FakeBackend: MenuBarBackend {
         environment: MenuBarEnvironmentSnapshot? = nil,
         snapshotFailures: Int = 0,
         restoreFailures: Int = 0,
-        restoreFailureCallNumbers: Set<Int> = []
+        restoreFailureCallNumbers: Set<Int> = [],
+        checksCancellationDuringCompensation: Bool = false,
+        cancelOnMove: Bool = false,
+        restoreDelay: Duration = .zero
     ) {
         self.snapshots = snapshots
         self.capabilities = capabilities
@@ -2944,9 +3755,15 @@ private actor FakeBackend: MenuBarBackend {
         snapshotFailuresRemaining = max(0, snapshotFailures)
         restoreFailuresRemaining = max(0, restoreFailures)
         self.restoreFailureCallNumbers = restoreFailureCallNumbers
+        self.checksCancellationDuringCompensation = checksCancellationDuringCompensation
+        self.cancelOnMove = cancelOnMove
+        self.restoreDelay = restoreDelay
     }
 
     func snapshot() throws -> MenuBarSnapshot {
+        if checksCancellationDuringCompensation {
+            try Task.checkCancellation()
+        }
         snapshotCallCount += 1
         if snapshotFailuresRemaining > 0 {
             snapshotFailuresRemaining -= 1
@@ -2959,6 +3776,9 @@ private actor FakeBackend: MenuBarBackend {
     }
 
     func move(_ operation: MenuBarMoveOperation) throws -> MenuBarMutationResult {
+        if cancelOnMove {
+            withUnsafeCurrentTask { $0?.cancel() }
+        }
         moveOperations.append(operation)
         if moveOperations.count == failMoveAt {
             throw MenuBarBackendError.operationFailed("injected move failure")
@@ -3002,9 +3822,17 @@ private actor FakeBackend: MenuBarBackend {
         return environmentSnapshot
     }
 
-    func restore(_ snapshot: MenuBarSnapshot) throws -> MenuBarMutationResult {
+    func restore(_ snapshot: MenuBarSnapshot) async throws -> MenuBarMutationResult {
+        if checksCancellationDuringCompensation {
+            try Task.checkCancellation()
+        }
+        restoreIsActive = true
+        defer { restoreIsActive = false }
         restoreCallCount += 1
         restoredSnapshots.append(snapshot)
+        if restoreDelay > .zero {
+            try await Task.sleep(for: restoreDelay)
+        }
         if restoreFailureCallNumbers.contains(restoreCallCount) || restoreFailuresRemaining > 0 {
             restoreFailuresRemaining -= 1
             throw MenuBarBackendError.interrupted

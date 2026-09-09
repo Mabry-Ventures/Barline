@@ -138,7 +138,9 @@ enum Defaults {
 extension Defaults {
     enum Key: String {
         // MARK: General Settings
+
         case showBarlineIcon = "ShowIceIcon"
+        case hideDockIcon = "HideDockIcon"
         case barlineIcon = "BarlineIcon"
         case customBarlineIconIsTemplate = "CustomIceIconIsTemplate"
         case useBarlineShelf = "UseBarlineShelf"
@@ -152,9 +154,11 @@ extension Defaults {
         case itemSpacingOffset = "ItemSpacingOffset"
 
         // MARK: Hotkeys Settings
+
         case hotkeys = "Hotkeys"
 
         // MARK: Advanced Settings
+
         case enableAlwaysHiddenSection = "EnableAlwaysHiddenSection"
         case showAllSectionsOnUserDrag = "ShowAllSectionsOnUserDrag"
         case sectionDividerStyle = "SectionDividerStyle"
@@ -164,17 +168,20 @@ extension Defaults {
         case tempShowInterval = "TempShowInterval"
 
         // MARK: Appearance Settings
+
         case menuBarAppearanceConfigurationV2 = "MenuBarAppearanceConfigurationV2"
 
         // MARK: Migration
-        case hasMigrated0_8_0 = "hasMigrated0_8_0"
-        case hasMigrated0_10_0 = "hasMigrated0_10_0"
-        case hasMigrated0_10_1 = "hasMigrated0_10_1"
-        case hasMigrated0_11_10 = "hasMigrated0_11_10"
-        case hasMigrated0_11_13 = "hasMigrated0_11_13"
-        case hasMigrated0_11_13_1 = "hasMigrated0_11_13_1"
+
+        case hasMigrated0_8_0
+        case hasMigrated0_10_0
+        case hasMigrated0_10_1
+        case hasMigrated0_11_10
+        case hasMigrated0_11_13
+        case hasMigrated0_11_13_1
 
         // MARK: Deprecated (Appearance Settings)
+
         case menuBarHasBorder = "MenuBarHasBorder"
         case menuBarBorderColor = "MenuBarBorderColor"
         case menuBarBorderWidth = "MenuBarBorderWidth"
@@ -188,10 +195,12 @@ extension Defaults {
         case menuBarAppearanceConfiguration = "MenuBarAppearanceConfiguration"
 
         // MARK: Deprecated (Advanced Settings)
+
         case showSectionDividers = "ShowSectionDividers"
         case canToggleAlwaysHiddenSection = "CanToggleAlwaysHiddenSection"
 
         // MARK: Deprecated (Other)
+
         case sections = "Sections"
     }
 }

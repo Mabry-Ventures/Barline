@@ -88,9 +88,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     object: nil
                 )
                 appState.performSetup()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                    self?.openSettingsWindow()
-                }
+                // Keep the probe in the same accessory-only, inactive state as
+                // a production status-item click. It must not rely on opening
+                // Settings to make the shelf visible.
+                NSApp.setActivationPolicy(.accessory)
+                NSApp.deactivate()
                 return
             }
         #endif
@@ -99,16 +101,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // available without Accessibility. Features that manage other apps'
         // status items request that grant only when the user chooses them.
         appState.performSetup()
-        if appState.permissions.permissionsState == .missing,
-           !CommandLine.arguments.contains("--barline-reopen-probe")
-        {
-            appState.permissions.logger.debug("Starting in degraded mode without Accessibility")
-            openSettingsWindow()
-        }
+        // Permission checks can transiently report missing while macOS is
+        // reconnecting a newly installed signed build. Launch remains an
+        // accessory-only operation; permission UI is presented contextually
+        // when the user chooses a feature that needs it.
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
-        Logger.default.debug("Handling reopen")
+        Logger.default.notice("Application reopen received")
         // Keep every reopen responsive even if a prior compatibility recovery
         // is still in flight. The opener coalesces bursts independently.
         scheduleSettingsOpen(acknowledgeReopenProbe: true)
@@ -388,6 +388,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         /// Gives a separate local probe a deterministic activation path without
         /// adding any behavior to Release builds.
         @objc private func toggleShelfForRuntimeSmoke() {
+            // Exercise the production menu-bar-agent state: the status item
+            // does not activate Barline, and hiding the Dock icon keeps the
+            // application accessory-only while the shelf is presented.
+            NSApp.setActivationPolicy(.accessory)
+            NSApp.deactivate()
             appState.menuBarManager.section(withName: .visible)?.toggle()
         }
     #endif

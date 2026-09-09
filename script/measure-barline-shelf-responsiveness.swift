@@ -13,6 +13,7 @@ private enum Configuration {
     static let openTimeout = Duration.milliseconds(1500)
     static let closeTimeout = Duration.milliseconds(1000)
     static let pollingIntervalMicroseconds: useconds_t = 10000
+    static let committedVisibilitySamples = 2
     static let probe = ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_PROBE"] ?? "runtime-smoke"
     static let enforceBudget = ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_ENFORCE_BUDGET"] != "0"
     static let appBundleIdentifier: String = {
@@ -44,6 +45,7 @@ private enum Configuration {
 }
 
 private struct WindowSnapshot {
+    let windowNumber: CGWindowID?
     let ownerProcessIdentifier: pid_t?
     let ownerName: String?
     let windowName: String?
@@ -65,6 +67,10 @@ private enum ProbeError: Error, CustomStringConvertible {
     case settingsBaselineTimedOut
     case barlineIconNotFound
     case unableToCloseBaseline
+    case unableToSynthesizeClick
+    case coldFirstClickTimedOut
+    case unexpectedForegroundUI
+    case openingTimedOut(Int)
 
     var description: String {
         switch self {
@@ -86,6 +92,14 @@ private enum ProbeError: Error, CustomStringConvertible {
             "No on-screen Barline.ControlItem.Visible window was found"
         case .unableToCloseBaseline:
             "The Barline Bar could not be closed before measurement"
+        case .unableToSynthesizeClick:
+            "The status-item click event could not be created"
+        case .coldFirstClickTimedOut:
+            "The cold first status-item click did not commit the Barline Bar"
+        case .unexpectedForegroundUI:
+            "Unexpected foreground UI interrupted the shelf probe; not a timing sample"
+        case let .openingTimedOut(cycle):
+            "Shelf opening timed out at cycle \(cycle); stopped without further clicks"
         }
     }
 }
@@ -214,6 +228,9 @@ private func windowSnapshots() -> [WindowSnapshot] {
         }
 
         return WindowSnapshot(
+            windowNumber: (row[kCGWindowNumber as String] as? NSNumber).map {
+                CGWindowID($0.uint32Value)
+            },
             ownerProcessIdentifier: (row[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
             ownerName: row[kCGWindowOwnerName as String] as? String,
             windowName: row[kCGWindowName as String] as? String,
@@ -237,11 +254,30 @@ private func expectedApplicationIsPresented(processIdentifier: pid_t) -> Bool {
 
 private func barlineIconCenter() throws -> CGPoint {
     let start = ContinuousClock.now
+    let expectedProcessIdentifier = ProcessInfo.processInfo.environment["BARLINE_EXPECTED_PID"]
+        .flatMap(pid_t.init)
+    guard let expectedProcessIdentifier,
+          NSRunningApplication(processIdentifier: expectedProcessIdentifier)?.bundleIdentifier == Configuration.appBundleIdentifier
+    else { throw ProbeError.applicationNotRunning }
     while start.duration(to: .now) < Configuration.iconTimeout {
-        if let icon = windowSnapshots().first(where: {
+        let candidates = windowSnapshots().filter {
             $0.windowName == "Barline.ControlItem.Visible" &&
                 $0.bounds.width > 0 &&
                 $0.bounds.width < 100
+        }
+        if let icon = candidates.first(where: { candidate in
+            if candidate.ownerProcessIdentifier == expectedProcessIdentifier {
+                return true
+            }
+            // macOS 26 hosts status windows in Control Center. Never trust only a
+            // title: prove an AX extras-bar child of the exact Barline process has
+            // the same geometry, and require the known system hosting process.
+            guard let owner = candidate.ownerProcessIdentifier,
+                  NSRunningApplication(processIdentifier: owner)?.bundleIdentifier == "com.apple.controlcenter"
+            else { return false }
+            return sourceStatusFrames(processIdentifier: expectedProcessIdentifier).contains {
+                StatusItemFrameMatching.matches(source: $0, hosted: candidate.bounds)
+            }
         }) {
             return CGPoint(x: icon.bounds.midX, y: icon.bounds.midY)
         }
@@ -250,13 +286,67 @@ private func barlineIconCenter() throws -> CGPoint {
     throw ProbeError.barlineIconNotFound
 }
 
-private func isBarlineShelfVisible() -> Bool {
-    windowSnapshots().contains {
-        $0.ownerName == "Barline" && $0.windowName == "Barline Bar"
+private func sourceStatusFrames(processIdentifier: pid_t) -> [CGRect] {
+    let application = AXUIElementCreateApplication(processIdentifier)
+    AXUIElementSetMessagingTimeout(application, 0.2)
+    var rawBar: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(application, "AXExtrasMenuBar" as CFString, &rawBar) == .success,
+          let rawBar, CFGetTypeID(rawBar) == AXUIElementGetTypeID()
+    else { return [] }
+    let bar = unsafeDowncast(rawBar, to: AXUIElement.self)
+    var rawChildren: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(bar, kAXChildrenAttribute as CFString, &rawChildren) == .success,
+          let children = rawChildren as? [AXUIElement]
+    else { return [] }
+    return children.compactMap { child in
+        var rawPosition: CFTypeRef?
+        var rawSize: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(child, kAXPositionAttribute as CFString, &rawPosition) == .success,
+              AXUIElementCopyAttributeValue(child, kAXSizeAttribute as CFString, &rawSize) == .success,
+              let rawPosition, let rawSize,
+              CFGetTypeID(rawPosition) == AXValueGetTypeID(), CFGetTypeID(rawSize) == AXValueGetTypeID()
+        else { return nil }
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(unsafeDowncast(rawPosition, to: AXValue.self), .cgPoint, &point),
+              AXValueGetValue(unsafeDowncast(rawSize, to: AXValue.self), .cgSize, &size)
+        else { return nil }
+        return CGRect(origin: point, size: size)
     }
 }
 
-private func click(at _: CGPoint) throws {
+private func isBarlineShelfVisible() -> Bool {
+    barlineShelfSnapshot() != nil
+}
+
+private func barlineShelfSnapshot() -> WindowSnapshot? {
+    let expectedProcessIdentifier = ProcessInfo.processInfo.environment["BARLINE_EXPECTED_PID"]
+        .flatMap(pid_t.init)
+    return windowSnapshots().first {
+        $0.ownerName == "Barline" &&
+            $0.windowName == "Barline Bar" &&
+            (expectedProcessIdentifier == nil || $0.ownerProcessIdentifier == expectedProcessIdentifier)
+    }
+}
+
+/// Buffer transport metadata rather than logging/querying windows in the hot
+/// path. No coordinates, app names, content, or input outside this probe are kept.
+private struct ClickDispatch: Codable {
+    let sequence: Int
+    let startedNanoseconds: UInt64
+    let completedNanoseconds: UInt64
+    let downTimestamp: UInt64
+    let upTimestamp: UInt64
+    let downFlags: UInt64
+    let upFlags: UInt64
+    let targetMoved: Bool
+}
+
+private let dispatchOriginUnixSeconds = Date().timeIntervalSince1970
+private let dispatchOriginNanoseconds = DispatchTime.now().uptimeNanoseconds
+private var clickDispatches = [ClickDispatch]()
+
+private func click(at point: CGPoint) throws {
     switch Configuration.probe {
     case "runtime-smoke":
         DistributedNotificationCenter.default().postNotificationName(
@@ -265,21 +355,105 @@ private func click(at _: CGPoint) throws {
             userInfo: nil,
             deliverImmediately: true
         )
+    case "status-item-click":
+        // Status items can move while Control Center relays out the bar. Resolve
+        // the exact app's current target for every dispatch, not once per burst.
+        let currentPoint = try barlineIconCenter()
+        if ProcessInfo.processInfo.environment["BARLINE_PERFORMANCE_TRACE"] == "1" {
+            let moved = hypot(currentPoint.x - point.x, currentPoint.y - point.y) > 1
+            print("TRACE click monotonic_ns=\(DispatchTime.now().uptimeNanoseconds) target_moved=\(moved) shelf_before=\(isBarlineShelfVisible())")
+            fflush(stdout)
+        }
+        guard
+            let mouseDown = CGEvent(
+                mouseEventSource: nil,
+                mouseType: .leftMouseDown,
+                mouseCursorPosition: currentPoint,
+                mouseButton: .left
+            ),
+            let mouseUp = CGEvent(
+                mouseEventSource: nil,
+                mouseType: .leftMouseUp,
+                mouseCursorPosition: currentPoint,
+                mouseButton: .left
+            )
+        else {
+            throw ProbeError.unableToSynthesizeClick
+        }
+        let started = DispatchTime.now().uptimeNanoseconds
+        mouseDown.post(tap: .cghidEventTap)
+        usleep(20000)
+        mouseUp.post(tap: .cghidEventTap)
+        if clickDispatches.count < 2004 {
+            clickDispatches.append(ClickDispatch(
+                sequence: clickDispatches.count + 1,
+                startedNanoseconds: started,
+                completedNanoseconds: DispatchTime.now().uptimeNanoseconds,
+                downTimestamp: mouseDown.timestamp, upTimestamp: mouseUp.timestamp,
+                downFlags: mouseDown.flags.rawValue, upFlags: mouseUp.flags.rawValue,
+                targetMoved: hypot(currentPoint.x - point.x, currentPoint.y - point.y) > 1
+            ))
+        }
     default:
-        fputs("error: shelf click is available only with the runtime-smoke probe\n", stderr)
+        fputs("error: shelf click requires runtime-smoke or status-item-click\n", stderr)
         exit(2)
     }
 }
 
-private func waitForVisibility(_ target: Bool, timeout: Duration) -> Duration? {
+private func waitForVisibility(_ target: Bool, timeout: Duration) throws -> Duration? {
     let start = ContinuousClock.now
+    var consecutiveSamples = 0
+    var committedWindowNumber: CGWindowID?
     while start.duration(to: .now) < timeout {
-        if isBarlineShelfVisible() == target {
-            return start.duration(to: .now)
+        if unexpectedForegroundUIPresent() {
+            throw ProbeError.unexpectedForegroundUI
         }
-        usleep(Configuration.pollingIntervalMicroseconds)
+        let shelfSnapshot = barlineShelfSnapshot()
+        let matchesTarget: Bool
+        if target, let shelfSnapshot {
+            if let committedWindowNumber {
+                matchesTarget = shelfSnapshot.windowNumber == committedWindowNumber
+            } else {
+                committedWindowNumber = shelfSnapshot.windowNumber
+                matchesTarget = shelfSnapshot.windowNumber != nil
+            }
+        } else {
+            matchesTarget = (shelfSnapshot != nil) == target
+        }
+
+        if matchesTarget {
+            consecutiveSamples += 1
+            if consecutiveSamples >= Configuration.committedVisibilitySamples {
+                return start.duration(to: .now)
+            }
+        } else {
+            consecutiveSamples = 0
+            committedWindowNumber = nil
+        }
+        usleep(max(Configuration.pollingIntervalMicroseconds, 16000))
     }
     return nil
+}
+
+private func unexpectedForegroundUIPresent() -> Bool {
+    guard Configuration.probe == "status-item-click" else {
+        return false
+    }
+    guard
+        let rawProcessIdentifier = ProcessInfo.processInfo.environment["BARLINE_EXPECTED_PID"],
+        let expectedProcessIdentifier = pid_t(rawProcessIdentifier)
+    else {
+        return true
+    }
+    if NSWorkspace.shared.frontmostApplication?.processIdentifier == expectedProcessIdentifier {
+        return true
+    }
+    return windowSnapshots().contains {
+        $0.ownerProcessIdentifier == expectedProcessIdentifier &&
+            $0.layer == 0 &&
+            $0.bounds.width > 0 &&
+            $0.bounds.height > 0
+    }
 }
 
 private func milliseconds(_ duration: Duration) -> Double {
@@ -301,38 +475,64 @@ private func ensureClosed(iconPoint: CGPoint) throws {
         return
     }
     try click(at: iconPoint)
-    guard waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+    guard try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
         throw ProbeError.unableToCloseBaseline
     }
 }
 
 private func runSingleClick(iconPoint: CGPoint) throws -> Double? {
-    try click(at: iconPoint)
-    guard let latency = waitForVisibility(true, timeout: Configuration.openTimeout) else {
-        return nil
-    }
-    try click(at: iconPoint)
-    _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
-    return milliseconds(latency)
+    let start = ContinuousClock.now
+    return try ShelfProbeCycle.run(
+        baselineClosed: { !isBarlineShelfVisible() },
+        click: { try click(at: iconPoint) },
+        waitForOpen: {
+            guard try waitForVisibility(true, timeout: Configuration.openTimeout) != nil else { return nil }
+            // Include dispatch and target lookup, not just the post-click poll.
+            return milliseconds(start.duration(to: .now))
+        },
+        waitForClose: { try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil }
+    )
 }
 
 private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool, silentCancellation: Bool) {
+    let start = ContinuousClock.now
     try click(at: iconPoint)
-    if waitForVisibility(true, timeout: Configuration.feedbackBudget) != nil {
+    if try waitForVisibility(true, timeout: Configuration.feedbackBudget) != nil {
+        let feedbackInBudget = start.duration(to: .now) <= Configuration.feedbackBudget
         try click(at: iconPoint)
-        _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
-        return (true, false)
+        guard try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+            throw ShelfProbeCycle.Failure.closeTimedOut
+        }
+        return (feedbackInBudget, false)
     }
 
     // Reproduce a user retrying because the first click produced no visible feedback.
     try click(at: iconPoint)
-    let silentCancellation = waitForVisibility(true, timeout: Configuration.closeTimeout) == nil
+    let silentCancellation = try waitForVisibility(true, timeout: Configuration.closeTimeout) == nil
 
     if isBarlineShelfVisible() {
         try click(at: iconPoint)
-        _ = waitForVisibility(false, timeout: Configuration.closeTimeout)
+        guard try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
+            throw ShelfProbeCycle.Failure.closeTimedOut
+        }
     }
     return (false, silentCancellation)
+}
+
+private let initialPointer = CGEvent(source: nil)?.location
+atexit {
+    if !clickDispatches.isEmpty {
+        print("DISPATCH_ORIGIN unix_seconds=\(dispatchOriginUnixSeconds) monotonic_ns=\(dispatchOriginNanoseconds)")
+        if let data = try? JSONEncoder().encode(clickDispatches) {
+            print("DISPATCH_TRACE \(String(decoding: data, as: UTF8.self))")
+        }
+    }
+    let restored = initialPointer.map { CGWarpMouseCursorPosition($0) == .success } ?? false
+    print("{\"originalPointerRestored\":\(restored)}")
+    if !restored {
+        fflush(stdout)
+        _exit(EXIT_FAILURE)
+    }
 }
 
 do {
@@ -399,30 +599,50 @@ do {
         )
         exit(passed || !Configuration.enforceBudget ? EXIT_SUCCESS : EXIT_FAILURE)
     }
-    guard Configuration.probe == "runtime-smoke" else {
-        fputs("error: BARLINE_PERFORMANCE_PROBE must be runtime-smoke or apple-event-reopen\n", stderr)
+    guard Configuration.probe == "runtime-smoke" || Configuration.probe == "status-item-click" else {
+        fputs(
+            "error: BARLINE_PERFORMANCE_PROBE must be runtime-smoke, status-item-click, or apple-event-reopen\n",
+            stderr
+        )
         exit(2)
     }
 
     let iconPoint = try barlineIconCenter()
 
+    guard !unexpectedForegroundUIPresent() else {
+        throw ProbeError.unexpectedForegroundUI
+    }
     try ensureClosed(iconPoint: iconPoint)
 
-    for _ in 0 ..< Configuration.warmupCycles {
-        _ = try runSingleClick(iconPoint: iconPoint)
+    var latencies = [Double]()
+    let timeouts = 0
+
+    let firstMeasuredCycle: Int
+    if Configuration.probe == "status-item-click" {
+        guard let coldLatency = try runSingleClick(iconPoint: iconPoint) else {
+            throw ProbeError.coldFirstClickTimedOut
+        }
+        latencies.append(coldLatency)
+        print(String(format: "cycle=%02d status=OK cold=true latency_ms=%.1f", 1, coldLatency))
+        firstMeasuredCycle = 2
+    } else {
+        for _ in 0 ..< Configuration.warmupCycles {
+            guard try runSingleClick(iconPoint: iconPoint) != nil else {
+                throw ProbeError.coldFirstClickTimedOut
+            }
+        }
+        firstMeasuredCycle = 1
     }
 
-    var latencies = [Double]()
-    var timeouts = 0
-
-    for cycle in 1 ... Configuration.measuredCycles {
-        if let latency = try runSingleClick(iconPoint: iconPoint) {
-            latencies.append(latency)
-            print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
-        } else {
-            timeouts += 1
-            print(String(format: "cycle=%02d status=TIMEOUT", cycle))
-            try ensureClosed(iconPoint: iconPoint)
+    if firstMeasuredCycle <= Configuration.measuredCycles {
+        for cycle in firstMeasuredCycle ... Configuration.measuredCycles {
+            if let latency = try runSingleClick(iconPoint: iconPoint) {
+                latencies.append(latency)
+                print(String(format: "cycle=%02d status=OK latency_ms=%.1f", cycle, latency))
+            } else {
+                print(String(format: "cycle=%02d status=TIMEOUT", cycle))
+                throw ProbeError.openingTimedOut(cycle)
+            }
         }
     }
 

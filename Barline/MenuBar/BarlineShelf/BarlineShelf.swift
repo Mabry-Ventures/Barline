@@ -11,6 +11,45 @@ import SwiftUI
 // MARK: - BarlineShelfPanel
 
 final class BarlineShelfPanel: NSPanel {
+    private var keyboardNavigationRequested = false
+
+    override var canBecomeKey: Bool {
+        true
+    }
+
+    override func cancelOperation(_: Any?) {
+        hide()
+    }
+
+    /// Only an explicit keyboard command claims keyboard focus, never hover or scroll.
+    func focusItemsForKeyboard() {
+        keyboardNavigationRequested = true
+        makeKey()
+        refreshKeyboardTraversal()
+    }
+
+    /// Rebuild after disclosure changes without claiming focus for pointer use.
+    fileprivate func refreshKeyboardTraversal() {
+        contentView?.layoutSubtreeIfNeeded()
+        func buttons(in view: NSView) -> [NSButton] {
+            guard !view.isHiddenOrHasHiddenAncestor else { return [] }
+            if let button = view as? NSButton {
+                return button.isEnabled ? [button] : []
+            }
+            return view.subviews.flatMap { buttons(in: $0) }
+        }
+        guard let contentView else { return }
+        let controls = buttons(in: contentView)
+        for index in controls.indices {
+            controls[index].nextKeyView = controls[(index + 1) % controls.count]
+        }
+        if keyboardNavigationRequested, isKeyWindow,
+           !controls.contains(where: { $0 === firstResponder }), let first = controls.first
+        {
+            makeFirstResponder(first)
+        }
+    }
+
     /// A token that identifies one request to present the Barline Bar.
     struct PresentationRequest {
         fileprivate let section: MenuBarSection.Name
@@ -24,6 +63,9 @@ final class BarlineShelfPanel: NSPanel {
     /// Manager for the Barline Bar's color.
     private let colorManager = BarlineShelfColorManager()
 
+    /// Confirms that AppKit ordering produced an onscreen WindowServer surface.
+    private let commitVerifier: any ShelfPresentationCommitVerifying
+
     /// The currently displayed section.
     private(set) var currentSection: MenuBarSection.Name?
 
@@ -31,16 +73,38 @@ final class BarlineShelfPanel: NSPanel {
     ///
     /// Cache updates in `show` suspend. Without an ownership token, an older
     /// show request can finish after `close` and reopen the panel.
-    private var presentationGeneration: UInt = 0
+    private var presentationEpoch = PresentationEpoch()
+
+    private var presentationGeneration: UInt {
+        presentationEpoch.generation
+    }
+
+    var dismissalLease: PresentationEpoch.Lease {
+        presentationEpoch.lease
+    }
+
+    func ownsDismissal(_ lease: PresentationEpoch.Lease) -> Bool {
+        presentationEpoch.owns(lease)
+    }
 
     /// The cache refresh associated with the active presentation.
     private var cacheRefreshTask: Task<Void, Never>?
 
+    /// Generations inside a bounded order-and-verify transaction.
+    private var committingPresentationGenerations = Set<UInt>()
+
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
 
+    /// Privacy-safe lifecycle diagnostics for accessory panel presentation.
+    private let logger = Logger(category: "BarlineShelf")
+
     /// Creates a new Barline Bar panel.
-    init() {
+    init(
+        commitVerifier: any ShelfPresentationCommitVerifying =
+            ShelfWindowCommitVerifier()
+    ) {
+        self.commitVerifier = commitVerifier
         super.init(
             contentRect: .zero,
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
@@ -52,11 +116,13 @@ final class BarlineShelfPanel: NSPanel {
         isMovableByWindowBackground = true
         allowsToolTipsWhenApplicationIsInactive = true
         isFloatingPanel = true
+        hidesOnDeactivate = false
+        canHide = false
         animationBehavior = .none
         backgroundColor = .clear
         hasShadow = false
         level = .mainMenu + 1
-        collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle, .moveToActiveSpace]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
     }
 
     /// Sets up the panel.
@@ -80,6 +146,22 @@ final class BarlineShelfPanel: NSPanel {
         }
         .store(in: &c)
 
+        publisher(for: \.isVisible)
+            .removeDuplicates()
+            .sink { [weak self] isVisible in
+                guard
+                    let self,
+                    !isVisible,
+                    committingPresentationGenerations.isEmpty,
+                    currentSection != nil
+                else {
+                    return
+                }
+                logger.error("Shelf ordered offscreen outside presentation transaction")
+                hide()
+            }
+            .store(in: &c)
+
         // Update the panel's origin whenever its size changes.
         publisher(for: \.frame).map(\.size)
             .removeDuplicates()
@@ -99,6 +181,10 @@ final class BarlineShelfPanel: NSPanel {
                 .throttle(for: 0.1, scheduler: DispatchQueue.main, latest: true)
                 .sink { [weak self] frame, screen in
                     guard let self else {
+                        return
+                    }
+
+                    guard committingPresentationGenerations.isEmpty else {
                         return
                     }
 
@@ -182,7 +268,7 @@ final class BarlineShelfPanel: NSPanel {
 
         cacheRefreshTask?.cancel()
         cacheRefreshTask = nil
-        presentationGeneration &+= 1
+        presentationEpoch.advance()
         let request = PresentationRequest(
             section: section,
             generation: presentationGeneration,
@@ -193,6 +279,10 @@ final class BarlineShelfPanel: NSPanel {
         // before updating the caches.
         appState.navigationState.isBarlineShelfPresented = true
         currentSection = section
+        let loggedGeneration = presentationGeneration
+        logger.notice(
+            "Shelf presentation began generation=\(loggedGeneration, privacy: .public)"
+        )
 
         return request
     }
@@ -201,12 +291,23 @@ final class BarlineShelfPanel: NSPanel {
     /// presentation request.
     @discardableResult
     func show(_ request: PresentationRequest, on screen: NSScreen) async -> Bool {
-        guard
-            let appState,
-            request.generation == presentationGeneration,
-            currentSection == request.section,
-            appState.navigationState.isBarlineShelfPresented
-        else {
+        guard let appState else {
+            logger.error("Shelf presentation rejected: missing app state")
+            return false
+        }
+        guard request.generation == presentationGeneration else {
+            let loggedGeneration = presentationGeneration
+            logger.notice(
+                "Shelf presentation rejected: stale generation request=\(request.generation, privacy: .public) current=\(loggedGeneration, privacy: .public)"
+            )
+            return false
+        }
+        guard currentSection == request.section else {
+            logger.notice("Shelf presentation rejected: section ownership changed")
+            return false
+        }
+        guard appState.navigationState.isBarlineShelfPresented else {
+            logger.notice("Shelf presentation rejected: navigation state closed")
             return false
         }
 
@@ -221,6 +322,7 @@ final class BarlineShelfPanel: NSPanel {
             let reusableView = contentView as? BarlineShelfHostingView,
             reusableView.matches(screen: screen, section: request.section)
         {
+            reusableView.beginPresentation(generation: request.generation)
             reusableView.setPreparing(needsLoadingState)
             hostingView = reusableView
         } else {
@@ -232,22 +334,26 @@ final class BarlineShelfPanel: NSPanel {
                 colorManager: colorManager,
                 screen: screen,
                 section: request.section,
+                presentationGeneration: request.generation,
                 isPreparing: true
             )
             contentView = hostingView
         }
 
-        updateOrigin(for: screen)
-
-        // Color manager must be updated after updating the panel's origin,
-        // but before it is shown.
-        //
-        // Color manager handles frame changes automatically, but does so on
-        // the main queue, so we need to update manually once before showing
-        // the panel to prevent the color from flashing.
-        colorManager.updateAllProperties(with: frame, screen: screen)
-
-        orderFrontRegardless()
+        guard await commitPresentation(
+            request,
+            hostingView: hostingView,
+            on: screen
+        ) else {
+            guard request.generation == presentationGeneration else {
+                return false
+            }
+            logger.error(
+                "Shelf presentation rolled back generation=\(request.generation, privacy: .public)"
+            )
+            hide()
+            return false
+        }
 
         let firstFrameLatency = request.start.duration(to: .now)
         Logger.default.debug(
@@ -270,6 +376,102 @@ final class BarlineShelfPanel: NSPanel {
         }
 
         return true
+    }
+
+    /// Orders the shelf and commits only after WindowServer confirms it.
+    private func commitPresentation(
+        _ request: PresentationRequest,
+        hostingView: BarlineShelfHostingView,
+        on screen: NSScreen
+    ) async -> Bool {
+        committingPresentationGenerations.insert(request.generation)
+        defer { committingPresentationGenerations.remove(request.generation) }
+
+        for attempt in 1 ... 2 {
+            guard
+                request.generation == presentationGeneration,
+                currentSection == request.section,
+                appState?.navigationState.isBarlineShelfPresented == true
+            else {
+                return false
+            }
+
+            hostingView.layoutSubtreeIfNeeded()
+            let fittingSize = hostingView.fittingSize
+            if fittingSize.width > 0, fittingSize.height > 0 {
+                setContentSize(
+                    NSSize(
+                        width: min(fittingSize.width, screen.frame.width),
+                        height: fittingSize.height
+                    )
+                )
+            }
+            updateOrigin(for: screen)
+
+            // The color manager's frame observer runs on the next main-queue
+            // turn, so update synchronously before the first visible frame.
+            colorManager.updateAllProperties(with: frame, screen: screen)
+
+            orderFrontRegardless()
+            displayIfNeeded()
+            logger.notice(
+                "Shelf ordered generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public)"
+            )
+
+            let result = await commitVerifier.waitForCommit(
+                panel: self,
+                targetScreen: screen
+            )
+
+            guard request.generation == presentationGeneration else {
+                return false
+            }
+
+            switch result {
+            case .committed:
+                if hiddenControlGeometryRequiresHide() {
+                    logger.error(
+                        "Shelf commit rejected by fresh control geometry generation=\(request.generation, privacy: .public)"
+                    )
+                    return false
+                }
+                logger.notice(
+                    "Shelf presentation committed generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public)"
+                )
+                return true
+            case let .locallyCommitted(lastFailure):
+                // The helper is an observer, not presentation authority. Keep
+                // a valid AppKit surface ordered while compatibility work is
+                // busy instead of rolling back the user's click.
+                logger.warning(
+                    "Shelf preserved with local commit generation=\(request.generation, privacy: .public) observerFailure=\(String(describing: lastFailure), privacy: .public)"
+                )
+                return true
+            case .cancelled:
+                return false
+            case let .timedOut(lastFailure):
+                logger.error(
+                    "Shelf presentation uncommitted generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public) failure=\(String(describing: lastFailure), privacy: .public)"
+                )
+                if attempt == 1 {
+                    orderOut(nil)
+                    await Task.yield()
+                }
+            }
+        }
+
+        return false
+    }
+
+    /// Rechecks the latest hidden-control geometry after a commit wait.
+    private func hiddenControlGeometryRequiresHide() -> Bool {
+        guard let controlItem = appState?.menuBarManager.controlItem(withName: .hidden) else {
+            return false
+        }
+        return MenuBarRecoveryPolicy.shouldHidePanel(
+            controlItemFrame: controlItem.frame,
+            screenFrame: controlItem.screen?.frame
+        )
     }
 
     /// Refreshes the caches after allowing the first panel frame to commit.
@@ -312,7 +514,7 @@ final class BarlineShelfPanel: NSPanel {
         } catch is CancellationError {
             return
         } catch {
-            Logger.default.error("Cache update failed when showing BarlineShelfPanel - \(error)")
+            Logger.default.error("Cache update failed when showing BarlineShelfPanel - \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
 
         guard
@@ -328,11 +530,17 @@ final class BarlineShelfPanel: NSPanel {
             hostingView.finishPreparing()
         }
 
+        if keyboardNavigationRequested {
+            contentView?.layoutSubtreeIfNeeded()
+            focusItemsForKeyboard()
+        }
+
         cacheRefreshTask = nil
     }
 
     /// Hides the panel.
     func hide() {
+        keyboardNavigationRequested = false
         if
             let name = currentSection,
             let section = appState?.menuBarManager.section(withName: name)
@@ -343,12 +551,16 @@ final class BarlineShelfPanel: NSPanel {
     }
 
     override func close() {
+        let loggedGeneration = presentationGeneration
+        logger.notice(
+            "Shelf close requested generation=\(loggedGeneration, privacy: .public)"
+        )
         cacheRefreshTask?.cancel()
         cacheRefreshTask = nil
-        presentationGeneration &+= 1
-        super.close()
+        presentationEpoch.advance()
         currentSection = nil
         appState?.navigationState.isBarlineShelfPresented = false
+        super.close()
     }
 }
 
@@ -367,6 +579,7 @@ private final class BarlineShelfHostingView: NSHostingView<BarlineShelfContentVi
         colorManager: BarlineShelfColorManager,
         screen: NSScreen,
         section: MenuBarSection.Name,
+        presentationGeneration: UInt,
         isPreparing: Bool
     ) {
         displayID = screen.displayID
@@ -377,8 +590,10 @@ private final class BarlineShelfHostingView: NSHostingView<BarlineShelfContentVi
             itemManager: appState.itemManager,
             imageCache: appState.imageCache,
             menuBarManager: appState.menuBarManager,
+            profileManager: appState.profileManager,
             screen: screen,
             section: section,
+            presentationGeneration: presentationGeneration,
             isPreparing: isPreparing
         )
         super.init(rootView: rootView)
@@ -387,6 +602,10 @@ private final class BarlineShelfHostingView: NSHostingView<BarlineShelfContentVi
     /// Returns whether the view can be reused for a new presentation.
     func matches(screen: NSScreen, section: MenuBarSection.Name) -> Bool {
         displayID == screen.displayID && self.section == section
+    }
+
+    func beginPresentation(generation: UInt) {
+        rootView.presentationGeneration = generation
     }
 
     /// Updates the transient loading state without replacing the hosting view.
@@ -427,11 +646,14 @@ private struct BarlineShelfContentView: View {
     @ObservedObject var itemManager: MenuBarItemManager
     @ObservedObject var imageCache: MenuBarItemImageCache
     @ObservedObject var menuBarManager: MenuBarManager
+    @ObservedObject var profileManager: ProfileManager
     @State private var frame = CGRect.zero
     @State private var scrollIndicatorsFlashTrigger = 0
+    @State private var collapsedGroupIDs = Set<UUID>()
 
     let screen: NSScreen
     let section: MenuBarSection.Name
+    var presentationGeneration: UInt
     var isPreparing: Bool
 
     private var items: [MenuBarItem] {
@@ -439,7 +661,7 @@ private struct BarlineShelfContentView: View {
     }
 
     private var presentation: ResolvedProfilePresentation? {
-        guard let presentation = appState.profileManager.activePresentation else { return nil }
+        guard let presentation = profileManager.activePresentation else { return nil }
         guard presentation.destinationDisplayID == nil
             || presentation.destinationDisplayID == stableDisplayID
         else {
@@ -449,10 +671,11 @@ private struct BarlineShelfContentView: View {
     }
 
     private var presentationElements: [ProfilePresentationElement] {
-        ProfilePresentationProjector().elements(
+        ShelfGroupPresentation.elements(
             presentation: presentation,
             section: coreSection,
-            orderedItemIDs: items.map(\.stableID)
+            orderedItemIDs: items.map(\.stableID),
+            collapsedGroupIDs: collapsedGroupIDs
         )
     }
 
@@ -517,17 +740,17 @@ private struct BarlineShelfContentView: View {
     }
 
     private var cachedContentWidth: CGFloat {
-        let itemByID = Dictionary(uniqueKeysWithValues: items.map { ($0.stableID, $0) })
+        let itemByID = Dictionary(items.map { ($0.stableID, $0) }, uniquingKeysWith: { first, _ in first })
         return presentationElements.reduce(into: 0) { width, element in
             switch element {
             case let .item(itemID):
                 if let item = itemByID[itemID] {
-                    width += imageCache.images[item.tag]?.scaledSize.width ?? 0
+                    width += imageCache.images[item.stableID]?.scaledSize.width ?? max(24, item.bounds.width)
                 }
             case let .spacer(_, spacerWidth):
                 width += spacerWidth
             case let .groupMarker(_, name, _):
-                width += min(CGFloat(name.count * 6 + 14), 120)
+                width += min(CGFloat(name.count * 6 + 32), 160)
             }
         }
     }
@@ -554,6 +777,16 @@ private struct BarlineShelfContentView: View {
         .frame(maxWidth: screen.frame.width)
         .fixedSize()
         .onFrameChange(update: $frame)
+        .onChange(of: presentationGeneration) { collapsedGroupIDs.removeAll() }
+        .onChange(of: profileManager.activeProfileID) { collapsedGroupIDs.removeAll() }
+        .onChange(of: presentation) { collapsedGroupIDs.removeAll() }
+        .onChange(of: presentationElements) {
+            // SwiftUI removes collapsed members before rebuilding the native
+            // key loop. Do not reopen the panel or activate the application.
+            DispatchQueue.main.async {
+                menuBarManager.barlineShelfPanel.refreshKeyboardTraversal()
+            }
+        }
     }
 
     @ViewBuilder
@@ -585,12 +818,15 @@ private struct BarlineShelfContentView: View {
             }
             .frame(minWidth: cachedContentWidth)
             .padding(.horizontal, 10)
-        } else if imageCache.cacheFailed(for: section) {
-            Text("Unable to display menu bar items")
-                .padding(.horizontal, 10)
         } else {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
+                    if let notice = itemManager.activationNotice {
+                        Text(notice)
+                            .font(.caption)
+                            .frame(maxWidth: 220)
+                            .padding(.horizontal, 8)
+                    }
                     ForEach(presentationElements) { element in
                         switch element {
                         case let .item(itemID):
@@ -607,20 +843,20 @@ private struct BarlineShelfContentView: View {
                             Color.clear
                                 .frame(width: width)
                                 .accessibilityHidden(true)
-                        case let .groupMarker(_, name, symbol):
-                            HStack(spacing: 2) {
-                                if let symbol, !symbol.isEmpty {
-                                    Image(systemName: symbol)
-                                }
-                                Text(name)
-                                    .lineLimit(1)
+                        case let .groupMarker(id, name, symbol):
+                            BarlineShelfGroupDisclosure(
+                                name: name,
+                                symbol: symbol,
+                                isExpanded: !collapsedGroupIDs.contains(id)
+                            ) {
+                                toggleGroup(id)
                             }
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(.white.opacity(0.16), in: Capsule())
-                            .accessibilityElement(children: .combine)
+                            .frame(width: min(CGFloat(name.count * 6 + 32), 160), height: contentHeight ?? 24)
+                            .accessibilityElement(children: .ignore)
                             .accessibilityLabel("Group: \(name)")
+                            .accessibilityValue(collapsedGroupIDs.contains(id) ? "Collapsed" : "Expanded")
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityAction { toggleGroup(id) }
                         }
                     }
                 }
@@ -632,6 +868,88 @@ private struct BarlineShelfContentView: View {
                 scrollIndicatorsFlashTrigger += 1
             }
         }
+    }
+
+    private func toggleGroup(_ id: UUID) {
+        if !collapsedGroupIDs.insert(id).inserted {
+            collapsedGroupIDs.remove(id)
+        }
+    }
+}
+
+// MARK: - BarlineShelfGroupDisclosure
+
+/// Joins the existing NSButton key loop; SwiftUI alone owns expansion state.
+private struct BarlineShelfGroupDisclosure: NSViewRepresentable {
+    private final class Represented: NSButton {
+        var toggle: () -> Void = {}
+        var isExpanded = true
+
+        init() {
+            super.init(frame: .zero)
+            isBordered = false
+            imagePosition = .imageLeading
+            font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            setButtonType(.momentaryPushIn)
+            target = self
+            action = #selector(toggleGroup)
+        }
+
+        @available(*, unavailable)
+        required init?(coder _: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        @objc private func toggleGroup() {
+            toggle()
+        }
+
+        override var acceptsFirstResponder: Bool {
+            true
+        }
+
+        override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+            true
+        }
+
+        override func keyDown(with event: NSEvent) {
+            switch event.keyCode {
+            case 53: window?.cancelOperation(nil)
+            case 123 where isExpanded, 124 where !isExpanded: performClick(self)
+            case 123, 126: window?.selectPreviousKeyView(self)
+            case 124, 125: window?.selectNextKeyView(self)
+            case 36, 49: performClick(self)
+            default: super.keyDown(with: event)
+            }
+        }
+    }
+
+    let name: String
+    let symbol: String?
+    let isExpanded: Bool
+    let toggle: () -> Void
+
+    func makeNSView(context _: Context) -> NSView {
+        Represented()
+    }
+
+    func updateNSView(_ view: NSView, context _: Context) {
+        guard let button = view as? Represented else { return }
+        button.toggle = toggle
+        button.isExpanded = isExpanded
+        let shortName = name.count > 30 ? String(name.prefix(27)) + "…" : name
+        if let symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+            button.title = (isExpanded ? "▾ " : "▸ ") + shortName
+            button.image = image
+        } else {
+            button.title = shortName
+            button.image = NSImage(systemSymbolName: isExpanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        }
+        button.toolTip = name
+        button.setAccessibilityLabel("Group: \(name)")
+        button.setAccessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        button.setAccessibilityHelp(isExpanded ? "Collapse group" : "Expand group")
+        button.setAccessibilityElement(true)
     }
 }
 
@@ -652,11 +970,8 @@ private struct BarlineShelfItemView: View {
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
-                try await Task.sleep(for: .milliseconds(25))
-                if item.isOnScreen {
-                    try await itemManager.click(item: item, with: .left)
-                } else {
-                    await itemManager.temporarilyShow(item: item, clickingWith: .left)
+                if await itemManager.activateItem(item.stableID, with: .left) == .failed {
+                    menuBarManager.section(withName: section)?.show()
                 }
             }
         }
@@ -669,66 +984,69 @@ private struct BarlineShelfItemView: View {
             }
             menuBarManager.section(withName: section)?.hide()
             Task {
-                try await Task.sleep(for: .milliseconds(25))
-                if item.isOnScreen {
-                    try await itemManager.click(item: item, with: .right)
-                } else {
-                    await itemManager.temporarilyShow(item: item, clickingWith: .right)
+                if await itemManager.activateItem(item.stableID, with: .right) == .failed {
+                    menuBarManager.section(withName: section)?.show()
                 }
             }
         }
     }
 
     private var image: NSImage? {
-        guard let cachedImage = imageCache.images[item.tag] else {
+        guard let cachedImage = imageCache.images[item.stableID] else {
             return nil
         }
         return cachedImage.nsImage
     }
 
     var body: some View {
-        if let image {
-            Image(nsImage: image)
-                .contentShape(Rectangle())
-                .overlay {
-                    BarlineShelfItemClickView(
-                        item: item,
-                        leftClickAction: leftClickAction,
-                        rightClickAction: rightClickAction
-                    )
-                }
-                .accessibilityLabel(item.displayName)
-                .accessibilityAction(named: "left click", leftClickAction)
-                .accessibilityAction(named: "right click", rightClickAction)
-        }
+        BarlineShelfItemClickView(
+            item: item,
+            image: image ?? NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil),
+            leftClickAction: leftClickAction,
+            rightClickAction: rightClickAction
+        )
+        .frame(
+            width: image?.size.width ?? max(24, item.bounds.width),
+            height: image?.size.height ?? 24
+        )
+        // SwiftUI's representable wrapper can expose a layout-only AX node
+        // instead of forwarding the image-only NSButton's semantics. Own one
+        // accessible control here while AppKit retains native pointer tracking.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.displayName)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { leftClickAction() }
+        .accessibilityAction(named: Text("Open context menu")) { rightClickAction() }
     }
 }
 
 // MARK: - BarlineShelfItemClickView
 
 private struct BarlineShelfItemClickView: NSViewRepresentable {
-    private final class Represented: NSView {
-        let item: MenuBarItem
-
-        let leftClickAction: () -> Void
-        let rightClickAction: () -> Void
-
-        private var lastLeftMouseDownDate = Date.now
-        private var lastRightMouseDownDate = Date.now
-
-        private var lastLeftMouseDownLocation = CGPoint.zero
-        private var lastRightMouseDownLocation = CGPoint.zero
+    private final class Represented: NSButton {
+        var leftClickAction: () -> Void
+        var rightClickAction: () -> Void
 
         init(
             item: MenuBarItem,
+            image: NSImage?,
             leftClickAction: @escaping () -> Void,
             rightClickAction: @escaping () -> Void
         ) {
-            self.item = item
             self.leftClickAction = leftClickAction
             self.rightClickAction = rightClickAction
             super.init(frame: .zero)
+            title = ""
+            isBordered = false
+            self.image = image
+            imagePosition = .imageOnly
+            imageScaling = .scaleProportionallyDown
+            setButtonType(.momentaryPushIn)
+            target = self
+            action = #selector(activateItem)
             toolTip = item.displayName
+            setAccessibilityLabel(item.displayName)
+            setAccessibilityElement(true)
         }
 
         @available(*, unavailable)
@@ -736,42 +1054,51 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
             fatalError("init(coder:) has not been implemented")
         }
 
-        override func mouseDown(with event: NSEvent) {
-            super.mouseDown(with: event)
-            lastLeftMouseDownDate = .now
-            lastLeftMouseDownLocation = NSEvent.mouseLocation
-        }
-
-        override func rightMouseDown(with event: NSEvent) {
-            super.rightMouseDown(with: event)
-            lastRightMouseDownDate = .now
-            lastRightMouseDownLocation = NSEvent.mouseLocation
-        }
-
-        override func mouseUp(with event: NSEvent) {
-            super.mouseUp(with: event)
-            guard
-                Date.now.timeIntervalSince(lastLeftMouseDownDate) < 0.5,
-                lastLeftMouseDownLocation.distance(to: NSEvent.mouseLocation) < 5
-            else {
-                return
-            }
+        @objc private func activateItem() {
             leftClickAction()
         }
 
-        override func rightMouseUp(with event: NSEvent) {
-            super.rightMouseUp(with: event)
-            guard
-                Date.now.timeIntervalSince(lastRightMouseDownDate) < 0.5,
-                lastRightMouseDownLocation.distance(to: NSEvent.mouseLocation) < 5
-            else {
-                return
+        override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+            true
+        }
+
+        override var acceptsFirstResponder: Bool {
+            true
+        }
+
+        override func keyDown(with event: NSEvent) {
+            switch event.keyCode {
+            case 53: window?.cancelOperation(nil)
+            case 123, 126: window?.selectPreviousKeyView(self)
+            case 124, 125: window?.selectNextKeyView(self)
+            case 36, 49:
+                if event.modifierFlags.contains(.control) {
+                    rightClickAction()
+                } else {
+                    performClick(self)
+                }
+            default: super.keyDown(with: event)
             }
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            if event.modifierFlags.contains(.control) {
+                rightClickAction()
+            } else {
+                super.mouseDown(with: event)
+            }
+        }
+
+        override func rightMouseDown(with _: NSEvent) {}
+
+        override func rightMouseUp(with event: NSEvent) {
+            guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
             rightClickAction()
         }
     }
 
     let item: MenuBarItem
+    let image: NSImage?
 
     let leftClickAction: () -> Void
     let rightClickAction: () -> Void
@@ -779,10 +1106,18 @@ private struct BarlineShelfItemClickView: NSViewRepresentable {
     func makeNSView(context _: Context) -> NSView {
         Represented(
             item: item,
+            image: image,
             leftClickAction: leftClickAction,
             rightClickAction: rightClickAction
         )
     }
 
-    func updateNSView(_: NSView, context _: Context) {}
+    func updateNSView(_ view: NSView, context _: Context) {
+        guard let button = view as? Represented else { return }
+        button.leftClickAction = leftClickAction
+        button.rightClickAction = rightClickAction
+        button.image = image
+        button.toolTip = item.displayName
+        button.setAccessibilityLabel(item.displayName)
+    }
 }

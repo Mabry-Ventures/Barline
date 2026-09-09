@@ -29,7 +29,6 @@ struct AboutSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private func contentForm(cornerStyle: RoundedCornerStyle) -> some View {
         BarlineForm(spacing: 0) {
             mainContent(containerShape: RoundedRectangle(cornerRadius: 20, style: cornerStyle))
@@ -38,7 +37,6 @@ struct AboutSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private func mainContent(containerShape: some InsettableShape) -> some View {
         BarlineSection(spacing: 0, options: .plain) {
             appIconAndCopyrightSection
@@ -59,7 +57,6 @@ struct AboutSettingsPane: View {
         .containerShape(containerShape)
     }
 
-    @ViewBuilder
     private var appIconAndCopyrightSection: some View {
         BarlineSection(options: .plain) {
             HStack(spacing: 10) {
@@ -88,7 +85,6 @@ struct AboutSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private var updatesSection: some View {
         BarlineSection(options: .hasDividers) {
             automaticallyCheckForUpdates
@@ -100,7 +96,6 @@ struct AboutSettingsPane: View {
         .frame(maxWidth: 600)
     }
 
-    @ViewBuilder
     private var automaticallyCheckForUpdates: some View {
         Toggle(
             "Automatically check for updates",
@@ -108,7 +103,6 @@ struct AboutSettingsPane: View {
         )
     }
 
-    @ViewBuilder
     private var automaticallyDownloadUpdates: some View {
         Toggle(
             "Automatically download updates",
@@ -116,7 +110,6 @@ struct AboutSettingsPane: View {
         )
     }
 
-    @ViewBuilder
     private var checkForUpdates: some View {
         HStack {
             Button("Check for Updates") {
@@ -128,7 +121,6 @@ struct AboutSettingsPane: View {
         }
     }
 
-    @ViewBuilder
     private func bottomBar(containerShape: some InsettableShape) -> some View {
         HStack {
             Button("Quit Barline") {
@@ -138,9 +130,12 @@ struct AboutSettingsPane: View {
             Button("Acknowledgements") {
                 NSWorkspace.shared.open(acknowledgementsURL)
             }
-            Text("Source and support links will accompany the first Barline release.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Link("Source", destination: URL(string: "https://github.com/Mabry-Ventures/Barline")!)
+            Link("Report a Problem", destination: URL(string: "https://github.com/Mabry-Ventures/Barline/issues")!)
+            if let supportURL = Constants.supportURL {
+                Link("Support Barline", destination: supportURL)
+                    .help("Optional support for development. Every feature is already included.")
+            }
         }
         .padding(8)
         .buttonStyle(BottomBarButtonStyle())

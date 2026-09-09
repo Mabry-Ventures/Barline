@@ -3,6 +3,7 @@
 //  Barline
 //
 
+import BarlineCore
 import Combine
 import OSLog
 import SwiftUI
@@ -16,9 +17,15 @@ final class GeneralSettings: ObservableObject {
     /// should be shown.
     @Published var showBarlineIcon = true
 
+    /// A Boolean value that keeps Barline out of the Dock even while its
+    /// settings and utility windows are visible.
+    @Published var hideDockIcon = false
+
     /// An icon to show in the menu bar, with a different image
     /// for when items are visible or hidden.
-    @Published var barlineIcon: ControlItemImageSet = .defaultBarlineIcon
+    @Published var barlineIcon: ControlItemImageSet = .defaultBarlineIcon {
+        didSet { iconSelectionRevision &+= 1 }
+    }
 
     /// The last user-selected custom Barline icon.
     @Published var lastCustomBarlineIcon: ControlItemImageSet?
@@ -66,8 +73,8 @@ final class GeneralSettings: ObservableObject {
     /// Encoder for properties.
     private let encoder = JSONEncoder()
 
-    /// Decoder for properties.
-    private let decoder = JSONDecoder()
+    /// A newer user selection always wins over asynchronous legacy-icon loading.
+    private var iconSelectionRevision: UInt64 = 0
 
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
@@ -85,6 +92,7 @@ final class GeneralSettings: ObservableObject {
     /// Loads the model's initial state.
     private func loadInitialState() {
         Defaults.ifPresent(key: .showBarlineIcon, assign: &showBarlineIcon)
+        Defaults.ifPresent(key: .hideDockIcon, assign: &hideDockIcon)
         Defaults.ifPresent(key: .customBarlineIconIsTemplate, assign: &customBarlineIconIsTemplate)
         Defaults.ifPresent(key: .useBarlineShelf, assign: &useBarlineShelf)
         Defaults.ifPresent(key: .showOnClick, assign: &showOnClick)
@@ -106,15 +114,36 @@ final class GeneralSettings: ObservableObject {
         }
 
         if let data = Defaults.data(forKey: .barlineIcon) {
-            do {
-                barlineIcon = try decoder.decode(ControlItemImageSet.self, from: data)
-            } catch {
-                Logger.serialization.error("Error decoding Barline icon: \(error, privacy: .public)")
-            }
-            if case .custom = barlineIcon.name {
-                lastCustomBarlineIcon = barlineIcon
+            let revision = iconSelectionRevision
+            Task { [weak self] in
+                do {
+                    let restored = try await Self.normalizedSavedIcon(from: data)
+                    guard let self, revision == iconSelectionRevision else { return }
+                    barlineIcon = restored
+                } catch {
+                    // Preserve the stored original if it cannot be normalized;
+                    // use the built-in fallback without decoding it on the UI actor.
+                    Logger.serialization.error("Saved Barline icon could not be normalized")
+                }
             }
         }
+    }
+
+    @concurrent
+    private nonisolated static func normalizedSavedIcon(from data: Data) async throws -> ControlItemImageSet {
+        // Old archives may contain two base64 copies of the same original image.
+        guard data.count <= BoundedIconImporter.maximumInputBytes * 3 else {
+            throw BoundedIconImporter.ImportError.tooLarge
+        }
+        let decoded = try JSONDecoder().decode(ControlItemImageSet.self, from: data)
+        let hidden = try await normalizeSavedImage(decoded.hidden)
+        let visible = decoded.visible == decoded.hidden ? hidden : try await normalizeSavedImage(decoded.visible)
+        return ControlItemImageSet(name: decoded.name, hidden: hidden, visible: visible)
+    }
+
+    private nonisolated static func normalizeSavedImage(_ image: ControlItemImage) async throws -> ControlItemImage {
+        guard case let .data(data) = image else { return image }
+        return try await .data(BoundedIconImporter.shared.normalizedPNG(from: data))
     }
 
     /// Configures the internal observers for the model.
@@ -128,7 +157,21 @@ final class GeneralSettings: ObservableObject {
             }
             .store(in: &c)
 
+        $hideDockIcon
+            .receive(on: DispatchQueue.main)
+            .sink { [weak appState] shouldHide in
+                Defaults.set(shouldHide, forKey: .hideDockIcon)
+                if shouldHide {
+                    appState?.settings.advanced.hideApplicationMenus = false
+                }
+                appState?.applyDockIconPreference()
+            }
+            .store(in: &c)
+
         $barlineIcon
+            // Do not overwrite a stored legacy icon with the temporary built-in
+            // placeholder while asynchronous normalization is still running.
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] barlineIcon in
                 guard let self else {
@@ -141,7 +184,7 @@ final class GeneralSettings: ObservableObject {
                     let data = try encoder.encode(barlineIcon)
                     Defaults.set(data, forKey: .barlineIcon)
                 } catch {
-                    Logger.serialization.error("Error encoding Barline icon: \(error, privacy: .public)")
+                    Logger.serialization.error("Error encoding Barline icon: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 }
             }
             .store(in: &c)
@@ -232,7 +275,9 @@ enum RehideStrategy: Int, CaseIterable, Identifiable {
     /// Menu bar items are rehidden when the focused app changes.
     case focusedApp = 2
 
-    var id: Int { rawValue }
+    var id: Int {
+        rawValue
+    }
 
     /// Localized string key representation.
     var localized: LocalizedStringKey {

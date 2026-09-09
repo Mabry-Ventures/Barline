@@ -5,6 +5,7 @@
 
 import Cocoa
 import Combine
+import OSLog
 
 // MARK: - ControlItem
 
@@ -53,7 +54,7 @@ final class ControlItem {
     /// A namespace for control item lengths.
     private enum Lengths {
         static let standard: CGFloat = NSStatusItem.variableLength
-        static let expanded: CGFloat = 10_000
+        static let expanded: CGFloat = 10000
     }
 
     /// Storage for a control item's underlying status item.
@@ -66,8 +67,8 @@ final class ControlItem {
         init(controlItem: ControlItem) {
             ControlItemDefaults.preflightSetup(for: controlItem)
 
-            self.statusItem = NSStatusBar.system.statusItem(withLength: 0)
-            self.statusItem.autosaveName = controlItem.identifier.rawValue
+            statusItem = NSStatusBar.system.statusItem(withLength: 0)
+            statusItem.autosaveName = controlItem.identifier.rawValue
 
             if let button = statusItem.button {
                 // This could break in a new macOS release, but we need this constraint in order to
@@ -85,14 +86,12 @@ final class ControlItem {
                     assert(constraints.filter(Predicates.controlItemConstraint(button: button)).count == 1)
                     self.constraint = constraint
                 } else {
-                    self.constraint = nil
+                    constraint = nil
                 }
 
-                button.target = controlItem
-                button.action = #selector(controlItem.performAction)
-                button.sendAction(on: [.leftMouseDown, .rightMouseUp])
+                controlItem.configureAction(for: button)
             } else {
-                self.constraint = nil
+                constraint = nil
             }
         }
 
@@ -137,6 +136,9 @@ final class ControlItem {
 
     /// Storage for internal observers.
     private var cancellables = Set<AnyCancellable>()
+
+    /// Privacy-safe lifecycle diagnostics for status-item action delivery.
+    private let logger = Logger(category: "ControlItem")
 
     /// The control item's underlying status item.
     private var statusItem: NSStatusItem {
@@ -210,41 +212,43 @@ final class ControlItem {
             }
             .store(in: &c)
 
-        statusItem.publisher(for: \.button).removeNil()
-            .flatMap { $0.publisher(for: \.window) }
-            .receive(on: DispatchQueue.main)
+        statusItem.publisher(for: \.button)
+            .handleEvents(receiveOutput: { [weak self] button in
+                if let button {
+                    self?.configureAction(for: button)
+                }
+            })
+            .removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.window).eraseToAnyPublisher() }
             .sink { [weak self] window in
                 self?.window = window
             }
             .store(in: &c)
 
-        $window.removeNil()
-            .flatMap { $0.publisher(for: \.frame) }
+        $window.removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.frame).map(Optional.some).eraseToAnyPublisher() }
             .removeDuplicates()
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] frame in
                 self?.frame = frame
             }
             .store(in: &c)
 
-        $window.removeNil()
-            .flatMap { $0.publisher(for: \.screen) }
-            .receive(on: DispatchQueue.main)
+        $window.removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.screen).eraseToAnyPublisher() }
             .sink { [weak self] screen in
                 self?.screen = screen
             }
             .store(in: &c)
 
-        $screen.removeNil()
-            .flatMap { $0.publisher(for: \.frame) }
-            .combineLatest($frame.removeNil())
+        $screen.removeDuplicates()
+            .latestOptionalValue(on: DispatchQueue.main) { $0.publisher(for: \.frame).map(Optional.some).eraseToAnyPublisher() }
+            .combineLatest($frame)
             .removeDuplicates()
-            .receive(on: DispatchQueue.main)
             .sink { [weak self] screenFrame, frame in
                 guard let self else {
                     return
                 }
-                if screenFrame.intersects(frame) {
+                if let screenFrame, let frame, screenFrame.intersects(frame) {
                     onScreenFrame = frame
                 } else {
                     onScreenFrame = nil
@@ -325,6 +329,17 @@ final class ControlItem {
         cancellables = c
     }
 
+    /// Configures the click behavior for the status item's current button.
+    ///
+    /// AppKit can replace the button while reconnecting a scene-backed status
+    /// item after an app update. Reapply the action whenever that happens so
+    /// the replacement does not retain a stale/default event mask.
+    private func configureAction(for button: NSStatusBarButton) {
+        button.target = self
+        button.action = #selector(performAction)
+        button.sendAction(on: [.leftMouseDown, .rightMouseUp])
+    }
+
     /// Updates the appearance of the status item using the current hiding state.
     private func updateStatusItem() {
         guard
@@ -373,7 +388,7 @@ final class ControlItem {
                     button.appearsDisabled = true
                     button.isHighlighted = false
 
-                    if appState.isDraggingMenuBarItem && appState.settings.advanced.showAllSectionsOnUserDrag {
+                    if appState.isDraggingMenuBarItem, appState.settings.advanced.showAllSectionsOnUserDrag {
                         // We still want a subtle marker between sections.
                         button.title = "|"
                     }
@@ -450,6 +465,19 @@ final class ControlItem {
         ControlItemDefaults[.preferredPosition, autosaveName] = cached
     }
 
+    /// Synchronous event ownership must not depend on the published window,
+    /// which can lag a status-button replacement by a main-queue delivery.
+    func ownsEventWindow(_ eventWindow: NSWindow?) -> Bool {
+        guard let eventWindow else { return false }
+        return eventWindow === statusItem.button?.window || eventWindow === window
+    }
+
+    /// Global hosted events may not expose an NSWindow. Resolve their captured
+    /// point against live button geometry before considering the cached frame.
+    func containsEventLocation(_ location: CGPoint) -> Bool {
+        (statusItem.button?.window?.frame ?? frame)?.contains(location) == true
+    }
+
     /// Performs the control item's action.
     @objc private func performAction() {
         guard
@@ -459,8 +487,22 @@ final class ControlItem {
             return
         }
 
+        let eventPhase = switch event.type {
+        case .leftMouseDown: "left-down"
+        case .leftMouseUp: "left-up"
+        case .rightMouseUp: "right-up"
+        default: "other"
+        }
+        let loggedSection = sectionName.logString
+        logger.notice(
+            "Control action delivered for \(loggedSection, privacy: .public), phase=\(eventPhase, privacy: .public)"
+        )
+
         switch event.type {
-        case .leftMouseDown:
+        // Scene-backed status items can briefly deliver their default mouse-up
+        // action while reconnecting after an update. Accept either phase. The
+        // configured event mask above still emits only one primary action.
+        case .leftMouseDown, .leftMouseUp:
             let modifierFlags = NSEvent.modifierFlags
 
             // Running this from a Task seems to improve the visual
@@ -630,7 +672,7 @@ enum ControlItemDefaults {
 
     /// Migrates the given control item defaults key from an old
     /// autosave name to a new autosave name.
-    static func migrate<Value>(key: Key<Value>, from oldAutosaveName: String, to newAutosaveName: String) {
+    static func migrate(key: Key<some Any>, from oldAutosaveName: String, to newAutosaveName: String) {
         guard newAutosaveName != oldAutosaveName else {
             return
         }
@@ -686,12 +728,14 @@ extension ControlItemDefaults {
 }
 
 // MARK: ControlItemDefaults.Key<CGFloat>
+
 extension ControlItemDefaults.Key<CGFloat> {
     /// String key: "NSStatusItem Preferred Position autosaveName"
     static let preferredPosition = Self(rawValue: "Preferred Position")
 }
 
 // MARK: ControlItemDefaults.Key<Bool>
+
 extension ControlItemDefaults.Key<Bool> {
     /// String key: "NSStatusItem Visible autosaveName"
     static let visible = Self(rawValue: "Visible")

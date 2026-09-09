@@ -174,6 +174,22 @@ extension BarlineMenuService {
             return try result.value()
         }
 
+        func shelfPresentationObservation(
+            ownerProcessIdentifier: pid_t,
+            targetDisplayID: CGDirectDisplayID
+        ) async throws -> MenuBarShelfPresentationObservation {
+            let probe = MenuBarShelfPresentationProbe(
+                ownerProcessIdentifier: ownerProcessIdentifier,
+                targetDisplayID: targetDisplayID
+            )
+            guard case let .shelfPresentationObservation(result) = await send(
+                .shelfPresentationObservation(probe)
+            ) else {
+                throw MenuBarBackendError.interrupted
+            }
+            return try result.value()
+        }
+
         func beginRevealObservation(
             for item: MenuBarItemID
         ) async throws -> MenuBarRevealObservationToken {
@@ -333,11 +349,16 @@ extension BarlineMenuService {
             let timeout: TimeInterval = switch request {
             case .start, .capabilities, .snapshot, .health, .restart:
                 1
+            case .shelfPresentationObservation:
+                0.1
             default:
                 5
             }
             guard semaphore.wait(timeout: .now() + timeout) == .success else {
                 logger.error("Compatibility request timed out")
+                if case .shelfPresentationObservation = request {
+                    return nil
+                }
                 cancel(reason: "Request timed out")
                 return nil
             }
@@ -352,7 +373,7 @@ extension BarlineMenuService {
                 let remainsCurrent = state.withLock { $0.generation == generation }
                 return remainsCurrent ? response : nil
             } catch {
-                logger.error("Session failed with error \(error)")
+                logger.error("Session failed with error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 cancel(reason: "Send failed: \(error.localizedDescription)")
                 return nil
             }
@@ -370,7 +391,7 @@ extension BarlineMenuService {
             }
             let session = try XPCSession(xpcService: name, options: .inactive) { [weak self] error in
                 guard let self else { return }
-                logger.warning("Session was cancelled with error \(error.localizedDescription)")
+                logger.warning("Session was cancelled with error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
                 state.withLock { state in
                     guard state.generation == generation else { return }
                     state.generation &+= 1

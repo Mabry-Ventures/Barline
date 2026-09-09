@@ -46,9 +46,9 @@ final class SourcePIDCache: @unchecked Sendable {
             // These checks help prevent blocking that can occur when
             // calling AX APIs while the app is an invalid state.
             runningApp.isFinishedLaunching &&
-            !runningApp.isTerminated &&
-            runningApp.activationPolicy != .prohibited &&
-            !Bridging.isProcessUnresponsive(processIdentifier)
+                !runningApp.isTerminated &&
+                runningApp.activationPolicy != .prohibited &&
+                !Bridging.isProcessUnresponsive(processIdentifier)
         }
 
         /// Creates a `CachedApplication` instance with the given running
@@ -119,7 +119,7 @@ final class SourcePIDCache: @unchecked Sendable {
         private func stableBounds(for window: WindowInfo) -> CGRect? {
             var cachedBounds = window.bounds
 
-            for n in 1...5 {
+            for n in 1 ... 5 {
                 guard let currentBounds = window.currentBounds() else {
                     // Failure here means the window probably doesn't
                     // exist anymore.
@@ -233,7 +233,7 @@ final class SourcePIDCache: @unchecked Sendable {
                 }
 
                 if let pids = pidMappings[pid] {
-                    result.pids.merge(pids) { (_, new) in new }
+                    result.pids.merge(pids) { _, new in new }
                 }
             }
         }
@@ -252,14 +252,14 @@ final class SourcePIDCache: @unchecked Sendable {
 
     /// Returns the cached process identifier for the given window,
     /// updating the cache if needed.
-    func pid(for window: WindowInfo) -> pid_t? {
+    func pid(for window: WindowInfo, retryFailedLookup: Bool = false) -> pid_t? {
         state.withLock { state in
             if let pid = state.pids[window.windowID] {
                 return pid
             }
 
             if let failedAt = state.failedLookups[window.windowID] {
-                guard Date().timeIntervalSince(failedAt) >= State.failedLookupTTL else {
+                guard retryFailedLookup || Date().timeIntervalSince(failedAt) >= State.failedLookupTTL else {
                     return nil
                 }
                 state.failedLookups.removeValue(forKey: window.windowID)

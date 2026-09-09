@@ -14,6 +14,25 @@ final class MenuBarItemManager: ObservableObject {
     /// The current cache of menu bar items.
     @Published private(set) var itemCache = ItemCache(displayID: nil)
 
+    @Published private(set) var activationNotice: String?
+    @Published private(set) var isActivatingItem = false
+    @Published private(set) var temporarilyRevealedItemIDs = Set<MenuBarItemID>()
+    @Published private(set) var hasPendingRestorations = false
+    @Published private(set) var recoveryRecordsUnavailable = false
+
+    var allowsPickerPresentation: Bool {
+        MenuBarPresentationPolicy.allowsPresentation(activating: isActivatingItem, restoring: isRestoringItems)
+    }
+
+    private var isRestoringItems = false
+    private var visibleInterfaceTasks = [MenuBarRevealObservationToken: Task<Void, Never>]()
+
+    deinit {
+        for task in visibleInterfaceTasks.values {
+            task.cancel()
+        }
+    }
+
     /// Logger for the menu bar item manager.
     private nonisolated let logger = Logger.menuBarItemManager
 
@@ -47,6 +66,21 @@ final class MenuBarItemManager: ObservableObject {
     /// Sets up the manager.
     func performSetup(with appState: AppState) async {
         self.appState = appState
+        do {
+            let entries = try await appState.temporaryRevealJournal.load()
+            let authority = await appState.compatibilityCoordinator.layoutAuthorityGeneration
+            temporarilyShownItemContexts = entries.map {
+                TemporarilyShownItemContext(entry: $0, tag: nil, authority: authority, paused: true)
+            }
+            updateRestorationPresentation()
+            if !entries.isEmpty {
+                activationNotice = "An interrupted item reveal needs review. Retry its restoration in Layouts & Focus."
+            }
+        } catch {
+            recoveryRecordsUnavailable = true
+            updateRestorationPresentation()
+            activationNotice = "Item recovery records could not be read. Existing records have been preserved."
+        }
         await cacheItemsRegardless()
         configureCancellables(with: appState)
     }
@@ -174,6 +208,8 @@ extension MenuBarItemManager {
 
     /// Cache for menu bar items.
     struct ItemCache: Hashable {
+        /// Hit testing includes system controls and clones that cannot be managed.
+        fileprivate(set) var hitTestItems = [MenuBarItem]()
         /// Storage for cached menu bar items, keyed by section.
         private var storage = [MenuBarSection.Name: [MenuBarItem]]()
 
@@ -264,7 +300,10 @@ extension MenuBarItemManager {
     /// section, even though the user cannot see or click them. Include those
     /// items in the hidden Barline Bar without permanently changing their layout.
     func itemsForBarlineShelf(in section: MenuBarSection.Name, on screen: NSScreen) -> [MenuBarItem] {
-        let sectionItems = itemCache[section]
+        let allowedIDs = Set(MenuBarPresentationPolicy.shelfItemIDs(
+            itemCache[section].map(\.stableID), temporarilyRevealed: temporarilyRevealedItemIDs
+        ))
+        let sectionItems = itemCache[section].filter { allowedIDs.contains($0.stableID) }
 
         guard section == .hidden else {
             return sectionItems
@@ -282,7 +321,7 @@ extension MenuBarItemManager {
         let existingItemIDs = Set(sectionItems.map(\.stableID))
         let obscuredItems = obscuredIndices
             .map { visibleItems[$0] }
-            .filter { !existingItemIDs.contains($0.stableID) }
+            .filter { !existingItemIDs.contains($0.stableID) && !temporarilyRevealedItemIDs.contains($0.stableID) }
 
         return sectionItems + obscuredItems
     }
@@ -307,7 +346,7 @@ extension MenuBarItemManager {
         let controlItems: ControlItemPair
 
         var cache: ItemCache
-        var temporarilyShownItems = [(MenuBarItem, MoveDestination)]()
+        var temporarilyShownItems = [(MenuBarItem, TemporaryRevealRestoration)]()
         var shouldClearCachedItemWindowIDs = false
 
         private(set) var hiddenControlItemBounds: CGRect
@@ -377,10 +416,11 @@ extension MenuBarItemManager {
         }
 
         var context = CacheContext(controlItems: controlItems, displayID: displayID)
+        context.cache.hitTestItems = items
 
         for item in items where context.isValidForCaching(item) {
             if item.sourcePID == nil {
-                logger.warning("Missing sourcePID for \(item.logString, privacy: .public)")
+                logger.warning("Missing sourcePID for menu bar item")
                 // A few status items do not expose an extras menu bar through
                 // Accessibility and can never be mapped back to a source PID.
                 // Invalidating the window-ID cache here creates a feedback
@@ -389,11 +429,11 @@ extension MenuBarItemManager {
                 // throttles negative lookups and retries after its TTL.
             }
 
-            if let temp = temporarilyShownItemContexts.first(where: { $0.tag == item.tag }) {
+            if let temp = temporarilyShownItemContexts.first(where: { $0.itemID == item.stableID }) {
                 // Cache temporarily shown items as if they were in their original locations.
                 // Keep track of them separately and use their return destinations to insert
                 // them into the cache once all other items have been handled.
-                context.temporarilyShownItems.append((item, temp.returnDestination))
+                context.temporarilyShownItems.append((item, temp.entry.checkpoint))
                 continue
             }
 
@@ -402,12 +442,18 @@ extension MenuBarItemManager {
                 continue
             }
 
-            logger.warning("Couldn't find section for caching \(item.logString, privacy: .public)")
+            logger.warning("Couldn't find section for caching menu bar item")
             context.shouldClearCachedItemWindowIDs = true
         }
 
-        for (item, destination) in context.temporarilyShownItems {
-            context.cache.insert(item, at: destination)
+        for (item, checkpoint) in context.temporarilyShownItems {
+            let section: MenuBarSection.Name = switch checkpoint.originalSection {
+            case .visible: .visible
+            case .hidden: .hidden
+            case .alwaysHidden: .alwaysHidden
+            }
+            let index = min(checkpoint.originalIndex, context.cache[section].count)
+            context.cache[section].insert(item, at: index)
         }
 
         if context.shouldClearCachedItemWindowIDs {
@@ -436,6 +482,7 @@ extension MenuBarItemManager {
     /// the hidden and always-hidden sections are correctly ordered,
     /// arranging them into valid positions if needed.
     func cacheItemsRegardless(_ currentItemIDs: [MenuBarItemID]? = nil) async {
+        await discardSupersededRestorations()
         cacheRequestSequence += 1
         let requestID = cacheRequestSequence
 
@@ -624,7 +671,8 @@ extension MenuBarItemManager {
             }
             try await Task.sleep(for: .milliseconds(250))
         }
-        throw EventError.cannotComplete
+        logger.error("Item input idle wait expired")
+        throw MenuBarInputIdleTimeoutError()
     }
 
     private nonisolated func eventSleep(for duration: Duration = .milliseconds(25)) async {
@@ -661,17 +709,25 @@ extension MenuBarItemManager {
 
         let address: (section: MenuBarSection.Name, index: Int)
         if target.tag == .hiddenControlItem {
-            let hiddenCount = snapshot.items.count(where: { $0.section == .hidden })
+            let hiddenItems = snapshot.items.filter { $0.section == .hidden }
+            guard let controlIndex = hiddenItems.firstIndex(where: {
+                $0.id == targetDescriptor.id
+            }) else {
+                return nil
+            }
             address = switch destination {
-            case .leftOfItem: (.hidden, hiddenCount)
+            case .leftOfItem: (.hidden, controlIndex)
             case .rightOfItem: (.visible, 0)
             }
         } else if target.tag == .alwaysHiddenControlItem {
-            let alwaysHiddenCount = snapshot.items.count(where: {
-                $0.section == .alwaysHidden
-            })
+            let alwaysHiddenItems = snapshot.items.filter { $0.section == .alwaysHidden }
+            guard let controlIndex = alwaysHiddenItems.firstIndex(where: {
+                $0.id == targetDescriptor.id
+            }) else {
+                return nil
+            }
             address = switch destination {
-            case .leftOfItem: (.alwaysHidden, alwaysHiddenCount)
+            case .leftOfItem: (.alwaysHidden, controlIndex)
             case .rightOfItem: (.hidden, 0)
             }
         } else {
@@ -710,13 +766,21 @@ extension MenuBarItemManager {
     func move(
         item: MenuBarItem,
         to destination: MoveDestination,
-        recordsHistory: Bool = true
+        recordsHistory: Bool = true,
+        interactionID: UUID? = nil
     ) async throws {
+        if recordsHistory {
+            appState?.contextualRules.pauseForManualChange()
+        }
         guard appState?.permissions.accessibility.hasPermission == true else {
             throw EventError.cannotComplete
         }
         guard item.isMovable else {
             throw EventError.itemNotMovable(item)
+        }
+        if recordsHistory, hasPendingRestorations {
+            await retryPendingRestorations()
+            guard !hasPendingRestorations else { throw EventError.cannotComplete }
         }
         try await waitForUserToPauseInput()
         guard let appState,
@@ -724,11 +788,11 @@ extension MenuBarItemManager {
         else {
             throw EventError.cannotComplete
         }
-        logger.log("Moving \(item.logString, privacy: .public) \(destination.logString, privacy: .public)")
+        logger.log("Moving menu bar item to requested destination")
         lastMoveOperationTimestamp = .now
         defer { lastMoveOperationTimestamp = .now }
         do {
-            let snapshot = try await appState.compatibilityCoordinator.refresh()
+            let snapshot = try await appState.compatibilityCoordinator.refresh(interactionID: interactionID)
             guard let operation = operation(
                 for: item,
                 destination: destination,
@@ -742,16 +806,19 @@ extension MenuBarItemManager {
                 : .transientMove(operation)
             _ = try await appState.compatibilityCoordinator.perform(
                 mutation,
-                expectedGeneration: snapshot.generation
+                expectedGeneration: snapshot.generation,
+                interactionID: interactionID
             )
             if recordsHistory {
                 await appState.profileManager.clearActiveProfileAuthority(
                     ifMatches: priorProfileID
                 )
             }
-            await cacheItemsRegardless()
+            if interactionID == nil {
+                await cacheItemsRegardless()
+            }
         } catch {
-            logger.error("Typed helper move failed: \(error, privacy: .public)")
+            logger.error("Typed helper move failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             throw EventError.cannotComplete
         }
     }
@@ -766,7 +833,7 @@ extension MenuBarItemManager {
         do {
             try await BarlineMenuService.Connection.shared.activate(item.stableID, button: button)
         } catch {
-            logger.error("Typed helper activation failed: \(error, privacy: .public)")
+            logger.error("Typed helper activation failed: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             throw EventError.cannotComplete
         }
     }
@@ -775,39 +842,177 @@ extension MenuBarItemManager {
 // MARK: - Temporarily Showing Items
 
 extension MenuBarItemManager {
-    /// Context for a temporarily shown menu bar item.
-    private final class TemporarilyShownItemContext {
-        /// The tag associated with the item.
-        let tag: MenuBarItemTag
-
-        /// The destination to return the item to.
-        let returnDestination: MoveDestination
-
-        /// Helper-owned observation of the item's shown interface.
-        var revealObservation: MenuBarRevealObservationToken?
-
-        /// The number of attempts that have been made to rehide the item.
-        var rehideAttempts = 0
-
-        init(tag: MenuBarItemTag, returnDestination: MoveDestination) {
-            self.tag = tag
-            self.returnDestination = returnDestination
+    /// Cached views supply identity only; visibility and mutation authority are fresh.
+    @discardableResult
+    func activateItem(_ itemID: MenuBarItemID, with button: CGMouseButton) async -> MenuBarItemActivationOutcome {
+        guard !isActivatingItem, !isRestoringItems, let appState else { return .failed }
+        isActivatingItem = true
+        activationNotice = nil
+        defer { isActivatingItem = false }
+        do {
+            return try await appState.compatibilityCoordinator.withItemInteraction { [self] token in
+                try await activateAssumingInteraction(itemID, with: button, interactionID: token)
+            }
+        } catch {
+            activationNotice = "Couldn’t open this item. Close any open menu and try again."
+            logger.error("Item activation did not complete: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
+            return .failed
         }
     }
 
-    /// Gets the destination to return the given item to after it is
-    /// temporarily shown.
-    private func getReturnDestination(for item: MenuBarItem, in items: [MenuBarItem]) -> MoveDestination? {
-        guard let index = items.firstIndex(matching: item.tag) else {
-            return nil
+    private func activateAssumingInteraction(
+        _ itemID: MenuBarItemID,
+        with button: CGMouseButton,
+        interactionID: UUID
+    ) async throws -> MenuBarItemActivationOutcome {
+        guard let appState else { throw EventError.cannotComplete }
+        let snapshot = try await appState.compatibilityCoordinator.refresh(interactionID: interactionID)
+        guard !snapshot.menuTrackingIsActive else {
+            throw MenuBarBackendError.unsafeMenuTracking
         }
-        if items.indices.contains(index + 1) {
-            return .leftOfItem(items[index + 1])
+        guard let descriptor = snapshot.items.first(where: { $0.id == itemID }) else {
+            throw MenuBarBackendError.staleItem(itemID)
         }
-        if items.indices.contains(index - 1) {
-            return .rightOfItem(items[index - 1])
+        let item = MenuBarItem(descriptor: descriptor)
+        guard item.isResponsive else {
+            throw EventError.cannotComplete
         }
-        return nil
+        let interfaceObserved: Bool
+        if item.isOnScreen {
+            let token = try await BarlineMenuService.Connection.shared.beginRevealObservation(for: itemID)
+            do {
+                try await click(item: item, with: button)
+                interfaceObserved = try await waitForInterface(token)
+                if interfaceObserved {
+                    observeVisibleInterfaceUntilClosed(token)
+                } else {
+                    await BarlineMenuService.Connection.shared.endRevealObservation(token)
+                }
+            } catch {
+                await BarlineMenuService.Connection.shared.endRevealObservation(token)
+                throw error
+            }
+        } else {
+            interfaceObserved = try await temporarilyShow(item: item, clickingWith: button, interactionID: interactionID)
+        }
+        guard interfaceObserved else {
+            activationNotice = "Couldn’t confirm this item opened. It may have performed an action without showing a menu."
+            logger.notice("Activation completed without an observed interface")
+            // No observed menu is inconclusive (some items perform a direct
+            // action). Do not reopen a picker over a delayed target interface.
+            return .interfaceNotObserved
+        }
+        logger.notice("Activation target interface observed")
+        return .interfaceObserved
+    }
+
+    /// Keep custom normal-layer interfaces protected after the click lease ends.
+    /// This owns observation only, never a mutation-authority token.
+    private func observeVisibleInterfaceUntilClosed(_ token: MenuBarRevealObservationToken) {
+        visibleInterfaceTasks[token] = Task { [weak self] in
+            do {
+                while try await BarlineMenuService.Connection.shared.revealObservationIsVisible(token) {
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+            } catch {
+                // Cancellation or helper loss ends this helper-owned observation.
+            }
+            await BarlineMenuService.Connection.shared.endRevealObservation(token)
+            self?.visibleInterfaceTasks[token] = nil
+        }
+    }
+
+    private func waitForInterface(_ token: MenuBarRevealObservationToken) async throws -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
+            try Task.checkCancellation()
+            if try await BarlineMenuService.Connection.shared.revealObservationIsVisible(token) {
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return false
+    }
+
+    /// Context for a temporarily shown menu bar item.
+    private final class TemporarilyShownItemContext {
+        let entry: TemporaryRevealJournal.Entry
+        let tag: MenuBarItemTag?
+        let authority: UInt64
+        var itemID: MenuBarItemID {
+            entry.checkpoint.itemID
+        }
+
+        var revealObservation: MenuBarRevealObservationToken?
+        var rehideAttempts = 0
+        var paused: Bool
+
+        init(entry: TemporaryRevealJournal.Entry, tag: MenuBarItemTag?, authority: UInt64, paused: Bool = false) {
+            self.entry = entry
+            self.tag = tag
+            self.authority = authority
+            self.paused = paused
+        }
+    }
+
+    private func updateRestorationPresentation() {
+        temporarilyRevealedItemIDs = Set(temporarilyShownItemContexts.map(\.itemID))
+        hasPendingRestorations = recoveryRecordsUnavailable || !temporarilyShownItemContexts.isEmpty
+    }
+
+    private func discardSupersededRestorations() async {
+        guard let appState, !temporarilyShownItemContexts.isEmpty else { return }
+        let authority = await appState.compatibilityCoordinator.layoutAuthorityGeneration
+        let superseded = temporarilyShownItemContexts.filter { $0.authority != authority }
+        temporarilyShownItemContexts.removeAll { $0.authority != authority }
+        updateRestorationPresentation()
+        for context in superseded {
+            if let token = context.revealObservation {
+                await BarlineMenuService.Connection.shared.endRevealObservation(token)
+            }
+        }
+    }
+
+    /// User-triggered recovery also handles entries loaded after app restart.
+    func retryPendingRestorations() async {
+        await discardSupersededRestorations()
+        for context in temporarilyShownItemContexts {
+            context.paused = false
+            context.rehideAttempts = 0
+        }
+        await rehideTemporarilyShownItems()
+        await cacheItemsRegardless()
+    }
+
+    /// Called only after the user confirms retaining today's physical layout.
+    /// Preserve the old journal for recovery, including unreadable records.
+    func keepCurrentItemPositions() async {
+        guard allowsPickerPresentation, let appState else { return }
+        isRestoringItems = true
+        defer { isRestoringItems = false }
+        do {
+            try await appState.compatibilityCoordinator.withItemInteraction { [self] _ in
+                try await keepCurrentPositionsAssumingInteraction()
+            }
+            await cacheItemsRegardless()
+        } catch {
+            activationNotice = "Recovery records could not be archived. No item positions were changed."
+        }
+    }
+
+    private func keepCurrentPositionsAssumingInteraction() async throws {
+        guard let appState else { throw EventError.cannotComplete }
+        try await appState.temporaryRevealJournal.discardPreservingBackup()
+        let prior = temporarilyShownItemContexts
+        temporarilyShownItemContexts.removeAll()
+        recoveryRecordsUnavailable = false
+        updateRestorationPresentation()
+        activationNotice = nil
+        for context in prior {
+            if let token = context.revealObservation {
+                await BarlineMenuService.Connection.shared.endRevealObservation(token)
+            }
+        }
     }
 
     /// Schedules a timer for the given interval that rehides the
@@ -839,26 +1044,31 @@ extension MenuBarItemManager {
     /// - Parameters:
     ///   - item: The item to temporarily show.
     ///   - mouseButton: The mouse button to click the item with.
-    func temporarilyShow(item: MenuBarItem, clickingWith mouseButton: CGMouseButton) async {
+    private func temporarilyShow(
+        item: MenuBarItem,
+        clickingWith mouseButton: CGMouseButton,
+        interactionID: UUID
+    ) async throws -> Bool {
         guard let appState else {
-            logger.error("Missing AppState, so not showing \(item.logString, privacy: .public)")
-            return
+            logger.error("Missing AppState, so not showing menu bar item")
+            throw EventError.cannotComplete
         }
         guard let screen = NSScreen.screenWithActiveMenuBar else {
-            logger.error("No active menu bar screen, so not showing \(item.logString, privacy: .public)")
-            return
+            logger.error("No active menu bar screen, so not showing menu bar item")
+            throw EventError.cannotComplete
         }
 
         guard let applicationMenuFrame = screen.getApplicationMenuFrame() else {
-            logger.error("No application menu frame, so not showing \(item.logString, privacy: .public)")
-            return
+            logger.error("No application menu frame, so not showing menu bar item")
+            throw EventError.cannotComplete
         }
 
-        var items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
+        var items = await MenuBarItem.getMenuBarItems(option: .activeSpace, interactionID: interactionID)
 
-        guard let destination = getReturnDestination(for: item, in: items) else {
-            logger.error("No return destination for \(item.logString, privacy: .public)")
-            return
+        let snapshot = try await appState.compatibilityCoordinator.refresh(interactionID: interactionID)
+        guard let checkpoint = TemporaryRevealRestoration(itemID: item.stableID, in: snapshot) else {
+            logger.error("No return destination for menu bar item")
+            throw EventError.cannotComplete
         }
 
         // Remove all items up to and including the hidden control item.
@@ -883,11 +1093,8 @@ extension MenuBarItemManager {
         }
 
         guard let targetItem = items.first else {
-            logger.warning("Not enough room to show \(item.logString, privacy: .public)")
-            let alert = NSAlert()
-            alert.messageText = "Not enough room to show \"\(item.displayName)\""
-            alert.runModal()
-            return
+            logger.warning("Not enough room to show menu bar item")
+            throw EventError.cannotComplete
         }
 
         appState.hidEventManager.stopAll()
@@ -895,39 +1102,53 @@ extension MenuBarItemManager {
             appState.hidEventManager.startAll()
         }
 
-        logger.debug("Temporarily showing \(item.logString, privacy: .public)")
+        logger.debug("Temporarily showing menu bar item")
+
+        // Register compensation before the first mutation: cancellation can
+        // arrive after the helper moves but before coordinator verification.
+        await discardSupersededRestorations()
+        guard !temporarilyShownItemContexts.contains(where: { $0.itemID == item.stableID }) else {
+            throw EventError.cannotComplete
+        }
+        let context = await TemporarilyShownItemContext(
+            entry: TemporaryRevealJournal.Entry(checkpoint: checkpoint),
+            tag: item.tag,
+            authority: appState.compatibilityCoordinator.layoutAuthorityGeneration
+        )
+        // A failed durable write must prevent the native reveal.
+        try await appState.temporaryRevealJournal.replace(
+            temporarilyShownItemContexts.map(\.entry) + [context.entry]
+        )
+        temporarilyShownItemContexts.append(context)
+        updateRestorationPresentation()
+        rehideTimer?.invalidate()
+        defer { runRehideTimer() }
 
         do {
             try await move(
                 item: item,
                 to: .leftOfItem(targetItem),
-                recordsHistory: false
+                recordsHistory: false,
+                interactionID: interactionID
             )
         } catch {
-            logger.error("Error showing item: \(error, privacy: .public)")
-            return
-        }
-
-        let context = TemporarilyShownItemContext(tag: item.tag, returnDestination: destination)
-        temporarilyShownItemContexts.append(context)
-
-        rehideTimer?.invalidate()
-        defer {
-            runRehideTimer()
+            logger.error("Error showing item: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
+            throw error
         }
 
         await eventSleep(for: .milliseconds(100))
-        context.revealObservation = try? await BarlineMenuService.Connection.shared
+        let observation = try await BarlineMenuService.Connection.shared
             .beginRevealObservation(for: item.stableID)
+        context.revealObservation = observation
 
         do {
             try await click(item: item, with: mouseButton)
         } catch {
-            logger.error("Error clicking item: \(error, privacy: .public)")
-            return
+            logger.error("Error clicking item: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
+            throw error
         }
 
-        await eventSleep(for: .milliseconds(250))
+        return try await waitForInterface(observation)
     }
 
     /// Rehides all temporarily shown items.
@@ -935,6 +1156,12 @@ extension MenuBarItemManager {
     /// If an item is currently showing its interface, this method waits
     /// for the interface to close before hiding the items.
     func rehideTemporarilyShownItems() async {
+        guard !isRestoringItems else { return }
+        await discardSupersededRestorations()
+        guard !isActivatingItem else {
+            runRehideTimer(for: 1)
+            return
+        }
         guard let appState else {
             logger.error("Missing AppState, so not rehiding")
             return
@@ -942,6 +1169,20 @@ extension MenuBarItemManager {
         guard !temporarilyShownItemContexts.isEmpty else {
             return
         }
+        isRestoringItems = true
+        defer { isRestoringItems = false }
+        do {
+            try await appState.compatibilityCoordinator.withItemInteraction { [self] token in
+                await rehideAssumingInteraction(interactionID: token)
+            }
+        } catch {
+            logger.warning("Restoration deferred: another menu bar transaction is active")
+            runRehideTimer(for: 3)
+        }
+    }
+
+    private func rehideAssumingInteraction(interactionID: UUID) async {
+        guard let appState else { return }
         for context in temporarilyShownItemContexts {
             if let token = context.revealObservation,
                await (try? BarlineMenuService.Connection.shared.revealObservationIsVisible(token)) == true
@@ -957,90 +1198,79 @@ extension MenuBarItemManager {
             return
         }
 
-        var currentContexts = temporarilyShownItemContexts
-        temporarilyShownItemContexts.removeAll()
-
-        let items = await MenuBarItem.getMenuBarItems(option: .activeSpace)
-        var failedContexts = [TemporarilyShownItemContext]()
-
         appState.hidEventManager.stopAll()
         defer {
             appState.hidEventManager.startAll()
         }
-
-        await eventSleep(for: .milliseconds(250))
-
-        logger.debug("Rehiding temporarily shown items")
-
-        MouseHelpers.hideCursor()
-        defer {
-            MouseHelpers.showCursor()
-        }
-
-        while let context = currentContexts.popLast() {
-            guard let item = items.first(matching: context.tag) else {
-                continue
-            }
+        // Do not remove obligations from memory while an await can reenter
+        // caching. Each one stays durable until verified restoration/absence.
+        for context in temporarilyShownItemContexts.reversed() where !context.paused {
             do {
-                try await move(
-                    item: item,
-                    to: context.returnDestination,
-                    recordsHistory: false
-                )
-                if let token = context.revealObservation {
-                    await BarlineMenuService.Connection.shared.endRevealObservation(token)
+                let snapshot = try await appState.compatibilityCoordinator.refresh(interactionID: interactionID)
+                // Tracking is a safe deferral, not a failed movement attempt.
+                if snapshot.menuTrackingIsActive {
+                    runRehideTimer(for: 1)
+                    return
                 }
+                switch context.entry.checkpoint.resolve(in: snapshot) {
+                case let .move(operation):
+                    try await waitForUserToPauseInput()
+                    let restored = try await appState.compatibilityCoordinator.perform(
+                        .transientMove(operation),
+                        expectedGeneration: snapshot.generation,
+                        interactionID: interactionID
+                    )
+                    guard let item = restored.items.first(where: { $0.id == context.itemID }),
+                          item.section == context.entry.checkpoint.originalSection,
+                          item.displayID == context.entry.checkpoint.originalDisplayID
+                    else { throw EventError.cannotComplete }
+                case .itemAbsent, .superseded:
+                    // A validated census or explicit external relocation owns
+                    // the current state; don't chase a replacement identity.
+                    break
+                case .displayUnavailable, .unavailable:
+                    context.paused = true
+                    activationNotice = "Item restoration needs review. Use Retry Item Restoration in Layouts & Focus."
+                    continue
+                }
+                try await finishRestoration(context)
             } catch {
                 context.rehideAttempts += 1
-                logger.warning(
-                    """
-                    Attempt \(context.rehideAttempts, privacy: .public) to rehide \
-                    \(item.logString, privacy: .public) failed with error: \
-                    \(error, privacy: .public)
-                    """
-                )
-                if context.rehideAttempts < 3 {
-                    currentContexts.append(context) // Try again.
-                } else {
-                    // Failed contexts are ultimately added back to the array
-                    // and rehidden after a longer delay, so reset the count.
-                    context.rehideAttempts = 0
-                    failedContexts.append(context)
+                if context.rehideAttempts >= 3 {
+                    context.paused = true
+                    activationNotice = "Item restoration paused after three attempts. Retry in Layouts & Focus."
                 }
+                logger.warning("Item restoration deferred: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             }
         }
-
-        if failedContexts.isEmpty {
-            logger.debug("All items were successfully rehidden")
-        } else {
-            logger.error(
-                """
-                Some items failed to rehide: \
-                \(failedContexts.map(\.tag), privacy: .public)
-                """
-            )
-            temporarilyShownItemContexts.append(contentsOf: failedContexts.reversed())
+        updateRestorationPresentation()
+        if temporarilyShownItemContexts.contains(where: { !$0.paused }) {
             runRehideTimer(for: 3)
+        }
+    }
+
+    private func finishRestoration(_ context: TemporarilyShownItemContext) async throws {
+        guard let appState else { throw EventError.cannotComplete }
+        let remaining = temporarilyShownItemContexts.filter { $0.entry.id != context.entry.id }
+        try await appState.temporaryRevealJournal.replace(remaining.map(\.entry))
+        temporarilyShownItemContexts = remaining
+        updateRestorationPresentation()
+        if let token = context.revealObservation {
+            await BarlineMenuService.Connection.shared.endRevealObservation(token)
+        }
+        if remaining.isEmpty {
+            activationNotice = nil
         }
     }
 
     /// Removes a temporarily shown item from the cache, ensuring that
     /// the item is _not_ returned to its original location.
     func removeTemporarilyShownItemFromCache(with tag: MenuBarItemTag) {
-        while let index = temporarilyShownItemContexts.firstIndex(where: { $0.tag == tag }) {
-            logger.debug(
-                """
-                Removing temporarily shown item from cache: \
-                \(tag, privacy: .public)
-                """
-            )
-            let context = temporarilyShownItemContexts.remove(at: index)
-            if let token = context.revealObservation {
-                Task {
-                    await BarlineMenuService.Connection.shared.endRevealObservation(token)
-                }
-            }
-        }
+        // Layout editing must wait for durable compensation, rather than
+        // silently deleting an obligation before an edit that may fail.
+        guard temporarilyShownItemContexts.contains(where: { $0.tag == tag }) else { return }
+        activationNotice = "Finish item restoration before editing its layout."
+        Task { await retryPendingRestorations() }
     }
 }
 
@@ -1067,7 +1297,7 @@ extension MenuBarItemManager {
             logger.debug("Control items have incorrect order")
             try await move(item: alwaysHidden, to: .leftOfItem(hidden))
         } catch {
-            logger.error("Error enforcing control item order: \(error, privacy: .public)")
+            logger.error("Error enforcing control item order: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
     }
 }

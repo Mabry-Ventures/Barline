@@ -12,6 +12,8 @@ require() {
 require actionlint
 require ruby
 require shellcheck
+require node
+node --input-type=module -e 'if (Number(process.versions.node.split(".")[0]) < 22) throw new Error("Website gates require Node.js 22 or newer");'
 
 # shellcheck source=script/lib/identity.sh
 source "$ROOT/script/lib/identity.sh"
@@ -90,6 +92,11 @@ if git grep -n -E -- '-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'; then
 fi
 
 ./script/test-release-evidence-privacy.sh
+ruby ./script/test-app-intents-topology.rb
+
+# Dependency-free static website checks belong in the existing Linux lane.
+# They validate staging/build safeguards, not deployed release availability.
+node --test site/tests/*.test.mjs
 
 executables=(
     script/bootstrap.sh

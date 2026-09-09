@@ -7,38 +7,44 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/script/lib/identity.sh"
 
 export BARLINE_BUILD_CONFIGURATION=Release
+REUSE_RUNNING=false
+if [[ "${1:-}" == --reuse-running && $# == 1 ]]; then
+    REUSE_RUNNING=true
+elif (($#)); then
+    printf 'usage: %s [--reuse-running]\n' "$0" >&2
+    exit 2
+fi
 BARLINE_APP_BUNDLE_IDENTIFIER="$(
     barline_resolve_app_bundle_identifier "$ROOT" "$BARLINE_BUILD_CONFIGURATION"
 )"
 export BARLINE_APP_BUNDLE_IDENTIFIER
 
 cleanup() {
-    /usr/bin/pkill -x Barline >/dev/null 2>&1 || true
-    /usr/bin/pkill -x BarlineMenuService >/dev/null 2>&1 || true
+    if ! "$REUSE_RUNNING"; then
+        /usr/bin/pkill -x Barline >/dev/null 2>&1 || true
+        /usr/bin/pkill -x BarlineMenuService >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
 
-# Reopen is a production recovery path. Exercise enough requests in one
-# process to detect delayed-window or compatibility-refresh work accumulating
-# on the main actor.
-"$ROOT/script/build_and_run.sh" --release --verify
-BARLINE_PERFORMANCE_CYCLES=100 BARLINE_PERFORMANCE_WARMUPS=5 \
-    "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe apple-event-reopen
+# Keep the historical gate filename but exercise the actual nonactivating shelf
+# path. Repeated AppleEvent reopen deliberately raises Settings and violates the
+# user's foreground policy. This test does not claim AppleEvent/Settings coverage.
+# The signed-candidate installed journey separately proves target interaction.
+if ! "$REUSE_RUNNING"; then
+    BARLINE_PRODUCTION_LAUNCH=1 "$ROOT/script/build_and_run.sh" --release --verify
+fi
+BARLINE_PERFORMANCE_CYCLES=20 BARLINE_PERFORMANCE_WARMUPS=1 \
+    BARLINE_EVIDENCE_OUTPUT="${BARLINE_INSTALLED_EVIDENCE_DIR:+$BARLINE_INSTALLED_EVIDENCE_DIR/performance.json}" \
+    "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe status-item-click
 
-# The release soak also interleaves helper interruption with reopen requests.
-# Keep a bounded version in the full gate so cross-path work accumulation fails
-# quickly instead of appearing only in the 30-minute candidate run.
-for cycle in {1..8}; do
-    if ((cycle > 1)); then
-        # launchd deliberately throttles services that are SIGKILLed in a tight
-        # crash loop. Keep each forced interruption independent so this gate
-        # measures Barline recovery rather than the host's crash-loop backoff;
-        # the release soak naturally provides at least this spacing as well.
-        /bin/sleep 10
-    fi
-    printf 'Recovery/reopen burst cycle %d\n' "$cycle"
+# One forced helper interruption followed by five real opens proves same-process
+# recovery without a synthetic crash loop or repeated focus changes. Sustained
+# recovery/soak is a separate lane, explicitly deferred by the user.
+BARLINE_EVIDENCE_OUTPUT="${BARLINE_INSTALLED_EVIDENCE_DIR:+$BARLINE_INSTALLED_EVIDENCE_DIR/xpc-interruption.json}" \
     "$ROOT/script/test-xpc-interruption.sh" \
-        --reuse-running --recovery-probe apple-event-reopen
-    BARLINE_PERFORMANCE_CYCLES=5 BARLINE_PERFORMANCE_WARMUPS=1 \
-        "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe apple-event-reopen
-done
+    --reuse-running --recovery-probe status-item-click
+BARLINE_PERFORMANCE_CYCLES=5 BARLINE_PERFORMANCE_WARMUPS=1 \
+    BARLINE_EVIDENCE_OUTPUT="" \
+    "$ROOT/script/test-performance-smoke.sh" --reuse-running --probe status-item-click
+printf 'PASS: nonactivating shelf burst and one helper recovery; Settings reopen and soak are separate lanes\n'

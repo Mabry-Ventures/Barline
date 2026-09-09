@@ -14,36 +14,38 @@ struct HotkeyRecorder<Label: View>: View {
     private let label: Label
 
     init(hotkey: Hotkey, @ViewBuilder label: () -> Label) {
-        self._model = StateObject(wrappedValue: HotkeyRecorderModel(hotkey: hotkey))
+        _model = StateObject(wrappedValue: HotkeyRecorderModel(hotkey: hotkey))
         self.label = label()
     }
 
     var body: some View {
-        LabeledContent {
-            segmentStack
-        } label: {
-            label
-        }
-        .alert(
-            "Hotkey is reserved by macOS",
-            isPresented: $model.isPresentingSystemReservedError
-        ) {
-            Button("OK") {
-                model.isPresentingSystemReservedError = false
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent {
+                segmentStack
+            } label: {
+                label
+            }
+            .accessibilityElement(children: .contain)
+            if let message = model.hotkey.registrationError {
+                Text(message).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .accessibilityElement(children: .contain)
+        .disabled(model.hotkey.isSaving)
+        .onDisappear { model.stopRecording() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in model.stopRecording() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in model.stopRecording() }
     }
 
-    @ViewBuilder
     private var segmentStack: some View {
         HStack(spacing: 1) {
             leadingSegment
             trailingSegment
         }
         .frame(width: 132, height: 24)
+        .accessibilityElement(children: .contain)
     }
 
-    @ViewBuilder
     private var leadingSegment: some View {
         Button {
             if model.isRecording {
@@ -62,13 +64,12 @@ struct HotkeyRecorder<Label: View>: View {
         )
     }
 
-    @ViewBuilder
     private var trailingSegment: some View {
         Button {
             if model.isRecording {
                 model.stopRecording()
-            } else if model.hotkey.isEnabled {
-                model.hotkey.keyCombination = nil
+            } else if model.hotkey.keyCombination != nil {
+                Task { await model.hotkey.requestChange(nil) }
             } else {
                 model.startRecording()
             }
@@ -88,7 +89,7 @@ struct HotkeyRecorder<Label: View>: View {
     private var leadingSegmentLabel: some View {
         if model.isRecording {
             Text("Type Hotkey")
-        } else if model.hotkey.isEnabled {
+        } else if model.hotkey.keyCombination != nil {
             if let keyCombination = model.hotkey.keyCombination {
                 Text(keyCombination.displayValue)
             } else {
@@ -103,7 +104,7 @@ struct HotkeyRecorder<Label: View>: View {
     private var trailingSegmentLabel: some View {
         let (name, label, padding) = if model.isRecording {
             ("escape", "Cancel", 6.0)
-        } else if model.hotkey.isEnabled {
+        } else if model.hotkey.keyCombination != nil {
             ("xmark", "Clear", 7.5)
         } else {
             ("record.circle", "Record", 5.5)
@@ -120,11 +121,8 @@ struct HotkeyRecorder<Label: View>: View {
 
 @MainActor
 private final class HotkeyRecorderModel: ObservableObject {
-    @EnvironmentObject private var appState: AppState
-
     @Published private(set) var isRecording = false
-
-    @Published var isPresentingSystemReservedError = false
+    private var recordingToken: UUID?
 
     let hotkey: Hotkey
 
@@ -159,7 +157,7 @@ private final class HotkeyRecorderModel: ObservableObject {
         guard !isRecording else {
             return
         }
-        hotkey.disable()
+        recordingToken = hotkey.beginRecording()
         monitor.start()
         isRecording = true
     }
@@ -169,11 +167,15 @@ private final class HotkeyRecorderModel: ObservableObject {
             return
         }
         monitor.stop()
-        hotkey.enable()
+        if let recordingToken {
+            hotkey.endRecording(recordingToken)
+        }
+        recordingToken = nil
         isRecording = false
     }
 
     private func handleKeyDown(event: NSEvent) {
+        guard !event.isARepeat, !hotkey.isSaving else { return }
         let keyCombination = KeyCombination(event: event)
         guard !keyCombination.modifiers.isEmpty else {
             if keyCombination.key == .escape {
@@ -187,12 +189,11 @@ private final class HotkeyRecorderModel: ObservableObject {
             NSSound.beep()
             return
         }
-        guard !keyCombination.isSystemReserved else {
-            isPresentingSystemReservedError = true
-            return
+        monitor.stop()
+        Task {
+            _ = await hotkey.requestChange(keyCombination)
+            stopRecording()
         }
-        hotkey.keyCombination = keyCombination
-        stopRecording()
     }
 }
 
@@ -208,7 +209,11 @@ private struct HotkeyRecorderButtonStyle: ButtonStyle {
     var isHighlighted: Bool
 
     private var radii: RectangleCornerRadii {
-        let r: CGFloat = if #available(macOS 26.0, *) { 6 } else { 5 }
+        let r: CGFloat = if #available(macOS 26.0, *) {
+            6
+        } else {
+            5
+        }
         return switch segment {
         case .leading: RectangleCornerRadii(topLeading: r, bottomLeading: r)
         case .trailing: RectangleCornerRadii(bottomTrailing: r, topTrailing: r)

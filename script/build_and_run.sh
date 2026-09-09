@@ -123,7 +123,9 @@ fi
 /usr/bin/codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE"
 
 open_app() {
-    if [[ "${BARLINE_RUNTIME_SMOKE:-0}" == "1" ]]; then
+    if [[ "${BARLINE_PRODUCTION_LAUNCH:-0}" == "1" ]]; then
+        /usr/bin/open -g -n "$APP_BUNDLE"
+    elif [[ "${BARLINE_RUNTIME_SMOKE:-0}" == "1" ]]; then
         /usr/bin/open -g -n "$APP_BUNDLE" --args --barline-runtime-smoke --barline-reopen-probe
     elif [[ "$MODE" == "verify" ]]; then
         /usr/bin/open -g -n "$APP_BUNDLE" --args --barline-reopen-probe

@@ -73,6 +73,20 @@ candidate status:
 ./script/ci.sh full
 ```
 
+For an already-installed notarized candidate, do not replace it with an ad-hoc
+same-identifier build. Set `BARLINE_CANDIDATE_APP`, `BARLINE_SOURCE_SHA` and a
+dedicated `BARLINE_INSTALLED_EVIDENCE_DIR`, then run `./script/ci.sh full --installed`.
+The directory must contain four source/binary-bound target-interface receipts
+(`native-left`, `native-right`, `popover-left`, `popover-reuse`). The installed
+journey writes them only after the real target action, restoration and pointer
+checks pass, using `BARLINE_EVIDENCE_OUTPUT` and `BARLINE_JOURNEY_LANE`.
+The full gate adds 20-sample performance and forced-helper-recovery receipts.
+Use a fresh directory per qualification attempt: receipts are never overwritten;
+retain failed logs separately. Missing, failed, duplicate, wrong-source or
+wrong-binary receipts fail qualification. Synthetic writer/validator tests are
+not runtime evidence. Build products live outside the synchronized workspace;
+logs, result bundles and summaries remain under ignored `.artifacts/` paths.
+
 The full gate includes Debug and Release builds, static analysis, test-plan
 execution, fixture regressions, XPC interruption, UI and Accessibility probes,
 privacy checks, and responsiveness measurements. XCUITest needs Developer Tools

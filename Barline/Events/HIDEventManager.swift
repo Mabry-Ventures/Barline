@@ -3,8 +3,10 @@
 //  Barline
 //
 
+import BarlineCore
 import Cocoa
 import Combine
+import OSLog
 
 /// Manager that monitors input events and implements the features
 /// that are triggered by them, such as showing hidden items on
@@ -23,6 +25,7 @@ final class HIDEventManager: ObservableObject {
 
     /// History of the manager's enabled states.
     private var enabledStateStack = [Bool]()
+    private var mouseDownSequence: UInt64 = 0
 
     /// A Boolean value that indicates whether the manager is enabled.
     private var isEnabled = false {
@@ -48,9 +51,10 @@ final class HIDEventManager: ObservableObject {
         guard let self, isEnabled, let appState, let screen = bestScreen(appState: appState) else {
             return event
         }
+        mouseDownSequence &+= 1
         switch event.type {
         case .leftMouseDown:
-            handleShowOnClick(appState: appState, screen: screen)
+            handleShowOnClick(with: event, appState: appState, screen: screen)
             handleSmartRehide(with: event, appState: appState, screen: screen)
         case .rightMouseDown:
             handleSecondaryContextMenu(appState: appState, screen: screen)
@@ -174,16 +178,38 @@ final class HIDEventManager: ObservableObject {
 extension HIDEventManager {
     // MARK: Handle Show On Click
 
-    private func handleShowOnClick(appState: AppState, screen: NSScreen) {
+    private func handleShowOnClick(with event: NSEvent, appState: AppState, screen: NSScreen) {
+        // Local target-action owns a control-window click even if hosted
+        // geometry or the global cursor snapshot is temporarily out of date.
+        let targetsPrimaryControl = appState.menuBarManager.controlItem(withName: .visible)?
+            .ownsEventWindow(event.window) == true
         guard
             appState.settings.general.showOnClick,
-            isMouseInsideEmptyMenuBarSpace(appState: appState, screen: screen)
+            let click = event.cgEvent,
+            isMouseInsideEmptyMenuBarSpace(
+                appState: appState,
+                screen: screen,
+                appKitLocation: click.unflippedLocation,
+                coreGraphicsLocation: click.location,
+                eventTargetsPrimaryControlItem: targetsPrimaryControl
+            )
         else {
             return
         }
 
+        let clickLocation = click.location
+        let clickModifiers = event.modifierFlags
+        let requestSequence = mouseDownSequence
         Task {
-            if NSEvent.modifierFlags == .control {
+            // A cached gap is only a candidate. System status items may have
+            // moved since the last snapshot; failed lookup is not empty-space proof.
+            guard let context = try? await BarlineMenuService.Connection.shared.pointContext(at: clickLocation),
+                  !context.isInsideMenuBarItem,
+                  isEnabled,
+                  appState.settings.general.showOnClick,
+                  requestSequence == mouseDownSequence
+            else { return }
+            if clickModifiers == .control {
                 handleSecondaryContextMenu(appState: appState, screen: screen)
                 return
             }
@@ -191,7 +217,7 @@ extension HIDEventManager {
             let targetSection: MenuBarSection
 
             if
-                NSEvent.modifierFlags == .option,
+                clickModifiers == .option,
                 let alwaysHiddenSection = appState.menuBarManager.section(withName: .alwaysHidden),
                 alwaysHiddenSection.isEnabled
             {
@@ -205,6 +231,7 @@ extension HIDEventManager {
                 return
             }
 
+            Logger.default.notice("Empty-space click toggling section")
             targetSection.toggle()
         }
     }
@@ -214,28 +241,30 @@ extension HIDEventManager {
     private func handleSmartRehide(with event: NSEvent, appState: AppState, screen: NSScreen) {
         guard
             appState.settings.general.autoRehide,
-            case .smart = appState.settings.general.rehideStrategy
+            case .smart = appState.settings.general.rehideStrategy,
+            let click = event.cgEvent
         else {
             return
         }
 
-        // Make sure clicking the Barline icon doesn't trigger rehide.
-        if let barlineIcon = appState.menuBarManager.controlItem(withName: .visible) {
-            guard event.window !== barlineIcon.window else {
-                return
-            }
-        }
-
-        // Only continue if the click is not inside the Barline Bar, at
-        // least one section is visible, and the mouse is not inside
-        // the menu bar.
-        guard
-            event.window !== appState.menuBarManager.barlineShelfPanel,
-            appState.menuBarManager.hasVisibleSection,
-            !isMouseInsideMenuBar(appState: appState, screen: screen)
+        let panel = appState.menuBarManager.barlineShelfPanel
+        let control = appState.menuBarManager.controlItem(withName: .visible)
+        guard MenuBarClickArbitrationPolicy.shouldScheduleSmartRehide(
+            hasVisibleSection: appState.menuBarManager.hasVisibleSection,
+            eventTargetsPrimaryControlItem: control?.ownsEventWindow(event.window) == true,
+            isInsidePrimaryControlItem: control?.containsEventLocation(click.unflippedLocation) == true,
+            isInsideShelf: event.window === panel || (panel.isVisible && panel.frame.contains(click.unflippedLocation)),
+            isInsideMenuBar: isMouseInsideMenuBar(appState: appState, screen: screen, location: click.unflippedLocation)
+        )
         else {
             return
         }
+
+        // The event's position is immutable; the live pointer may have moved
+        // by the time the asynchronous helper lookup completes.
+        let clickLocation = click.location
+        let lease = appState.menuBarManager.barlineShelfPanel.dismissalLease
+        Logger.default.notice("Smart rehide scheduled for outside click")
 
         Task {
             guard let initialEnvironment = try? await BarlineMenuService.Connection.shared.environment() else {
@@ -251,15 +280,14 @@ extension HIDEventManager {
             }
             if currentEnvironment.activeSpaceToken != initialEnvironment.activeSpaceToken {
                 for section in appState.menuBarManager.sections {
-                    section.hide()
+                    section.hide(ifOwnedBy: lease, reason: .smartSpaceChange)
                 }
                 return
             }
 
             // Get the window that was clicked.
             guard
-                let mouseLocation = MouseHelpers.locationCoreGraphics,
-                let context = try? await BarlineMenuService.Connection.shared.pointContext(at: mouseLocation),
+                let context = try? await BarlineMenuService.Connection.shared.pointContext(at: clickLocation),
                 let bundleIdentifier = context.applicationBundleIdentifier
             else {
                 return
@@ -279,7 +307,7 @@ extension HIDEventManager {
 
             // All checks have passed, hide the sections.
             for section in appState.menuBarManager.sections {
-                section.hide()
+                section.hide(ifOwnedBy: lease, reason: .smartApplication)
             }
         }
     }
@@ -366,6 +394,7 @@ extension HIDEventManager {
             else {
                 return
             }
+            let lease = appState.menuBarManager.barlineShelfPanel.dismissalLease
             Task {
                 try await Task.sleep(for: .seconds(delay))
                 // Make sure the mouse is still outside.
@@ -375,7 +404,7 @@ extension HIDEventManager {
                 else {
                     return
                 }
-                hiddenSection.hide()
+                hiddenSection.hide(ifOwnedBy: lease, reason: .hover)
             }
         }
     }
@@ -458,14 +487,16 @@ extension HIDEventManager {
 
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of the menu bar.
-    func isMouseInsideMenuBar(appState: AppState, screen: NSScreen) -> Bool {
+    func isMouseInsideMenuBar(
+        appState: AppState, screen: NSScreen, location: CGPoint? = MouseHelpers.locationAppKit
+    ) -> Bool {
         // Barline icon must be vertically visible. Otherwise, we can infer
         // that the menu bar is hidden and the mouse is not inside.
         guard
             let barlineIcon = appState.menuBarManager.controlItem(withName: .visible),
             let barlineIconFrame = barlineIcon.frame,
             barlineIconFrame.maxY <= screen.frame.maxY,
-            let mouseLocation = MouseHelpers.locationAppKit
+            let mouseLocation = location
         else {
             return false
         }
@@ -479,9 +510,11 @@ extension HIDEventManager {
 
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of the current application menu.
-    func isMouseInsideApplicationMenu(appState _: AppState, screen: NSScreen) -> Bool {
+    func isMouseInsideApplicationMenu(
+        appState _: AppState, screen: NSScreen, location: CGPoint? = MouseHelpers.locationCoreGraphics
+    ) -> Bool {
         guard
-            let mouseLocation = MouseHelpers.locationCoreGraphics,
+            let mouseLocation = location,
             var applicationMenuFrame = screen.getApplicationMenuFrame()
         else {
             return false
@@ -493,11 +526,13 @@ extension HIDEventManager {
 
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of a menu bar item.
-    func isMouseInsideMenuBarItem(appState: AppState, screen _: NSScreen) -> Bool {
-        guard let mouseLocation = MouseHelpers.locationCoreGraphics else {
+    func isMouseInsideMenuBarItem(
+        appState: AppState, screen _: NSScreen, location: CGPoint? = MouseHelpers.locationCoreGraphics
+    ) -> Bool {
+        guard let mouseLocation = location else {
             return false
         }
-        return appState.itemManager.itemCache.managedItems.contains {
+        return appState.itemManager.itemCache.hitTestItems.contains {
             $0.isOnScreen && $0.bounds.contains(mouseLocation)
         }
     }
@@ -506,9 +541,11 @@ extension HIDEventManager {
     /// the bounds of the screen's notch, if it has one.
     ///
     /// If the screen does not have a notch, this property returns `false`.
-    func isMouseInsideNotch(appState _: AppState, screen: NSScreen) -> Bool {
+    func isMouseInsideNotch(
+        appState _: AppState, screen: NSScreen, location: CGPoint? = MouseHelpers.locationAppKit
+    ) -> Bool {
         guard
-            let mouseLocation = MouseHelpers.locationAppKit,
+            let mouseLocation = location,
             var frameOfNotch = screen.frameOfNotch
         else {
             return false
@@ -519,11 +556,26 @@ extension HIDEventManager {
 
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of an empty space in the menu bar.
-    func isMouseInsideEmptyMenuBarSpace(appState: AppState, screen: NSScreen) -> Bool {
-        isMouseInsideMenuBar(appState: appState, screen: screen) &&
-            !isMouseInsideApplicationMenu(appState: appState, screen: screen) &&
-            !isMouseInsideMenuBarItem(appState: appState, screen: screen) &&
-            !isMouseInsideNotch(appState: appState, screen: screen)
+    func isMouseInsideEmptyMenuBarSpace(
+        appState: AppState,
+        screen: NSScreen,
+        appKitLocation: CGPoint? = MouseHelpers.locationAppKit,
+        coreGraphicsLocation: CGPoint? = MouseHelpers.locationCoreGraphics,
+        eventTargetsPrimaryControlItem: Bool = false
+    ) -> Bool {
+        MenuBarClickArbitrationPolicy.isEmptyMenuBarSpace(
+            isInsideMenuBar: isMouseInsideMenuBar(appState: appState, screen: screen, location: appKitLocation),
+            isInsideApplicationMenu: isMouseInsideApplicationMenu(appState: appState, screen: screen, location: coreGraphicsLocation),
+            // The compatibility cache can briefly omit Barline's own icon
+            // while the helper reconnects after an update. Its live control
+            // item frame remains authoritative and prevents the same click
+            // from toggling once here and again through target-action.
+            isInsidePrimaryControlItem: isMouseInsideBarlineIcon(appState: appState, location: appKitLocation),
+            isInsideCachedMenuBarItem: isMouseInsideMenuBarItem(appState: appState, screen: screen, location: coreGraphicsLocation),
+            isInsideNotch: isMouseInsideNotch(appState: appState, screen: screen, location: appKitLocation),
+            eventTargetsPrimaryControlItem: eventTargetsPrimaryControlItem,
+            hasHitTestSnapshot: !appState.itemManager.itemCache.hitTestItems.isEmpty
+        )
     }
 
     /// A Boolean value that indicates whether the mouse pointer is within
@@ -541,15 +593,16 @@ extension HIDEventManager {
 
     /// A Boolean value that indicates whether the mouse pointer is within
     /// the bounds of the Barline icon.
-    func isMouseInsideBarlineIcon(appState: AppState) -> Bool {
+    func isMouseInsideBarlineIcon(
+        appState: AppState, location: CGPoint? = MouseHelpers.locationAppKit
+    ) -> Bool {
         guard
             let visibleSection = appState.menuBarManager.section(withName: .visible),
-            let barlineIconFrame = visibleSection.controlItem.frame,
-            let mouseLocation = MouseHelpers.locationAppKit
+            let mouseLocation = location
         else {
             return false
         }
-        return barlineIconFrame.contains(mouseLocation)
+        return visibleSection.controlItem.containsEventLocation(mouseLocation)
     }
 }
 

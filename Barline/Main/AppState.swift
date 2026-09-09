@@ -48,10 +48,17 @@ final class AppState: ObservableObject {
     let updatesManager = UpdatesManager()
 
     /// Serialized authority for validated compatibility snapshots and recovery.
-    let compatibilityCoordinator = MenuBarStateCoordinator(backend: XPCMenuBarBackend())
+    let compatibilityCoordinator = MenuBarItem.snapshotCoordinator
+
+    let temporaryRevealJournal = TemporaryRevealJournal(
+        directoryURL: URL.applicationSupportDirectory
+            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "Barline", isDirectory: true)
+            .appendingPathComponent("TemporaryReveals", isDirectory: true)
+    )
 
     /// Persistence and transactional activation for menu bar profiles.
     let profileManager = ProfileManager()
+    let contextualRules = ContextualRulesManager()
 
     /// Manager for user notifications.
     let userNotificationManager = UserNotificationManager()
@@ -77,11 +84,16 @@ final class AppState: ObservableObject {
             do {
                 _ = try await compatibilityCoordinator.refresh()
             } catch {
-                logger.warning("Compatibility snapshot unavailable during setup: \(error.localizedDescription)")
+                logger.warning("Compatibility snapshot unavailable during setup: \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             }
         }
 
         appearanceManager.performSetup(with: self)
+        await compatibilityCoordinator.setBeforeAuthoritativeLayoutMutation { [temporaryRevealJournal] in
+            guard try await temporaryRevealJournal.load().isEmpty else {
+                throw MenuBarBackendError.operationFailed("temporary item restoration must finish before changing layouts")
+            }
+        }
         await profileManager.performSetup(with: self)
 
         let initialAccessibilityPermission = permissions.accessibility.hasPermission
@@ -96,6 +108,7 @@ final class AppState: ObservableObject {
         userNotificationManager.performSetup(with: self)
 
         configureCancellables()
+        await contextualRules.performSetup(with: self)
     }
 
     /// Performs app state setup. Compatibility-dependent features fail closed
@@ -186,6 +199,39 @@ final class AppState: ObservableObject {
             }
             .store(in: &c)
 
+        permissions.screenRecording.$hasPermission
+            .removeDuplicates()
+            .sink { [weak self] isGranted in
+                self?.imageCache.permissionDidChange(isGranted)
+            }
+            .store(in: &c)
+
+        // TCC has no public change notification. While pixels or permission
+        // controls are visible, a low-frequency nonprompting preflight also
+        // notices changes made while System Settings stays frontmost. Stop the
+        // timer completely when Barline has no visible UI.
+        Publishers.CombineLatest3(
+            navigationState.$isBarlineShelfPresented,
+            navigationState.$isSearchPresented,
+            navigationState.$isSettingsPresented
+        )
+        .map { $0 || $1 || $2 }
+        .removeDuplicates()
+        .map { isVisible -> AnyPublisher<Void, Never> in
+            guard isVisible else { return Empty().eraseToAnyPublisher() }
+            return Timer.publish(every: 1, tolerance: 0.25, on: .main, in: .common)
+                .autoconnect()
+                .map { _ in () }
+                .prepend(())
+                .eraseToAnyPublisher()
+        }
+        .switchToLatest()
+        .sink { [weak self] in
+            self?.permissions.accessibility.refresh()
+            self?.permissions.screenRecording.refresh()
+        }
+        .store(in: &c)
+
         Publishers.CombineLatest(
             navigationState.$isAppFrontmost,
             navigationState.$isSettingsPresented
@@ -263,9 +309,9 @@ final class AppState: ObservableObject {
     func hasPermission(_ key: AppPermissions.PermissionKey) -> Bool {
         switch key {
         case .accessibility:
-            permissions.accessibility.hasPermission
+            permissions.accessibility.refresh()
         case .screenRecording:
-            permissions.screenRecording.hasPermission
+            permissions.screenRecording.refresh()
         }
     }
 
@@ -305,7 +351,7 @@ final class AppState: ObservableObject {
     /// Activates the app and sets its activation policy.
     func activate(withPolicy policy: NSApplication.ActivationPolicy? = nil) {
         if let policy {
-            NSApp.setActivationPolicy(policy)
+            NSApp.setActivationPolicy(resolvedActivationPolicy(for: policy))
         }
         // NSApplication.activate(ignoringOtherApps:) is deprecated, with
         // no suitable alternative for explicit activation, so we activate
@@ -320,8 +366,36 @@ final class AppState: ObservableObject {
     /// Deactivates the app and sets its activation policy.
     func deactivate(withPolicy policy: NSApplication.ActivationPolicy? = nil) {
         if let policy {
-            NSApp.setActivationPolicy(policy)
+            NSApp.setActivationPolicy(resolvedActivationPolicy(for: policy))
         }
         NSApp.deactivate()
+    }
+
+    /// Applies the user's Dock preference without presenting or focusing UI.
+    func applyDockIconPreference() {
+        let hasVisibleAppWindow = NSApp.windows.contains {
+            $0.isVisible && ($0.canBecomeKey || $0.canBecomeMain)
+        }
+        let requestedPolicy: NSApplication.ActivationPolicy = hasVisibleAppWindow ? .regular : .accessory
+        NSApp.setActivationPolicy(resolvedActivationPolicy(for: requestedPolicy))
+    }
+
+    private func resolvedActivationPolicy(
+        for requestedPolicy: NSApplication.ActivationPolicy
+    ) -> NSApplication.ActivationPolicy {
+        Self.activationPolicy(
+            requested: requestedPolicy,
+            hideDockIcon: settings.general.hideDockIcon
+        )
+    }
+
+    static func activationPolicy(
+        requested: NSApplication.ActivationPolicy,
+        hideDockIcon: Bool
+    ) -> NSApplication.ActivationPolicy {
+        DockVisibilityPolicy.usesRegularActivationPolicy(
+            requestedRegular: requested == .regular,
+            hideDockIcon: hideDockIcon
+        ) ? .regular : .accessory
     }
 }

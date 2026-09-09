@@ -16,10 +16,10 @@ struct MenuBarLayoutSettingsPane: View {
     var body: some View {
         if !appState.permissions.accessibility.hasPermission {
             missingAccessibilityPermission
-        } else if !ScreenCapture.cachedCheckPermissions() {
-            missingScreenRecordingPermissions
         } else if appState.menuBarManager.isMenuBarHiddenBySystemUserDefaults {
             cannotArrange
+        } else if !ScreenCapture.cachedCheckPermissions() {
+            missingScreenRecordingPermissions
         } else {
             BarlineForm(spacing: 20) {
                 header
@@ -70,9 +70,27 @@ struct MenuBarLayoutSettingsPane: View {
     }
 
     private var cannotArrange: some View {
-        Text("Barline cannot arrange menu bar items in automatically hidden menu bars.")
-            .font(.title3)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        VStack(spacing: 14) {
+            Text("Your menu bar is set to automatically hide")
+                .font(.title3.bold())
+            Text("The Barline Bar and drag layout editor require an always-visible menu bar. Your saved layouts are unchanged.")
+                .foregroundStyle(.secondary)
+            Text("You can still show hidden items in the macOS menu bar. Move the pointer to the top of the screen, then use the items normally or ⌘ Command-drag to arrange them.")
+                .foregroundStyle(.secondary)
+            Button("Show Hidden Items in Menu Bar") {
+                appState.menuBarManager.section(withName: .hidden)?.showInMenuBar()
+            }
+            Button("Open Menu Bar System Settings") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.link)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: 540)
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var missingScreenRecordingPermissions: some View {

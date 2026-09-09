@@ -90,13 +90,16 @@ struct AdvancedSettingsPane: View {
             "Hide app menus when showing menu bar items",
             isOn: $settings.hideApplicationMenus
         )
+        .disabled(appState.settings.general.hideDockIcon)
         .annotation {
             Text(
-                """
-                Make more room in the menu bar by hiding the current app menus if \
-                needed. macOS requires Barline to make itself visible in the Dock while \
-                this setting is in effect.
-                """
+                appState.settings.general.hideDockIcon
+                    ? "Hide Dock icon is enabled, so Barline will not take over the app-menu area."
+                    : """
+                    Make more room in the menu bar by hiding the current app menus if \
+                    needed. macOS requires Barline to make itself visible in the Dock while \
+                    this setting is in effect.
+                    """
             )
             .padding(.trailing, 75)
         }
@@ -201,7 +204,7 @@ struct AdvancedSettingsPane: View {
             do {
                 let health = await appState.compatibilityCoordinator.backendHealth
                 let snapshot = await appState.compatibilityCoordinator.currentSnapshot
-                let capabilities = (try? await BarlineMenuService.Connection.shared.capabilities()) ?? .fallback
+                let capabilities = await (try? BarlineMenuService.Connection.shared.capabilities()) ?? .fallback
                 let preview = try await SupportBundleExporter().preview(
                     permissions: .init(
                         accessibility: appState.permissions.accessibility.hasPermission,
@@ -212,7 +215,7 @@ struct AdvancedSettingsPane: View {
                     lastSnapshotAt: snapshot?.capturedAt,
                     lastSnapshotRejectionCode: nil,
                     searchAvailabilityCode: Self.searchAvailabilityCode(),
-                    recentErrorCodes: []
+                    recentErrorCodes: [appState.profileManager.lastOperationErrorCode].compactMap(\.self)
                 )
                 supportBundlePreview = preview
                 supportBundleStatus = "Preview ready. Choose whether to save it."

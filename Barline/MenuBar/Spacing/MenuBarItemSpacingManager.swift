@@ -37,7 +37,7 @@ final class MenuBarItemSpacingManager {
     }
 
     /// An app did not finish a normal termination request in time.
-    private struct AppQuitTimeoutError: Error { }
+    private struct AppQuitTimeoutError: Error {}
 
     /// Logger for the menu bar item spacing manager.
     private let logger = Logger(category: "MenuBarItemSpacingManager")
@@ -77,10 +77,10 @@ final class MenuBarItemSpacingManager {
     /// Asynchronously signals the given app to quit.
     private func signalAppToQuit(_ app: NSRunningApplication) async throws {
         if app.isTerminated {
-            logger.debug("Application \"\(app.logString)\" is already terminated")
+            logger.debug("Application \"application\" is already terminated")
             return
         } else {
-            logger.debug("Signaling application \"\(app.logString)\" to quit")
+            logger.debug("Signaling application \"application\" to quit")
         }
 
         app.terminate()
@@ -94,17 +94,17 @@ final class MenuBarItemSpacingManager {
         guard app.isTerminated else {
             // Never force-terminate a third-party app: it may have unsaved
             // documents. Report the failure and let the user close it.
-            logger.warning("Application \"\(app.logString)\" did not terminate normally")
+            logger.warning("Application \"application\" did not terminate normally")
             throw AppQuitTimeoutError()
         }
 
-        logger.debug("Application \"\(app.logString)\" terminated successfully")
+        logger.debug("Application \"application\" terminated successfully")
     }
 
     /// Asynchronously launches the app at the given URL.
     private nonisolated func launchApp(at applicationURL: URL, bundleIdentifier: String) async throws {
-        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleIdentifier }) {
-            logger.debug("Application \"\(app.logString)\" is already open, so skipping launch")
+        if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == bundleIdentifier }) {
+            logger.debug("Application \"application\" is already open, so skipping launch")
             return
         }
         let configuration = NSWorkspace.OpenConfiguration()
@@ -117,7 +117,7 @@ final class MenuBarItemSpacingManager {
 
     /// Asynchronously relaunches the given app.
     private func relaunchApp(_ app: NSRunningApplication) async throws {
-        struct RelaunchError: Error { }
+        struct RelaunchError: Error {}
         guard
             let url = app.bundleURL,
             let bundleIdentifier = app.bundleIdentifier

@@ -12,11 +12,12 @@ PREFERENCE_KEY="UseBarlineShelf"
 ORIGINAL_PREFERENCE="__missing__"
 REUSE_RUNNING=false
 OUTPUT_PATH=""
+PERFORMANCE_SOURCE_DIR=""
 PROBE="${BARLINE_PERFORMANCE_PROBE:-runtime-smoke}"
 BUILD_CONFIGURATION="${BARLINE_BUILD_CONFIGURATION:-Debug}"
 
 usage() {
-    printf 'usage: %s [--reuse-running] [--probe runtime-smoke|apple-event-reopen] [--output PATH]\n' "$0" >&2
+    printf 'usage: %s [--reuse-running] [--probe runtime-smoke|status-item-click|apple-event-reopen] [--output PATH]\n' "$0" >&2
 }
 
 while (($#)); do
@@ -38,7 +39,18 @@ while (($#)); do
     shift
 done
 
-[[ "$PROBE" == runtime-smoke || "$PROBE" == apple-event-reopen ]] || { usage; exit 2; }
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]] && ! "$REUSE_RUNNING"; then
+    printf 'error: installed evidence requires --reuse-running\n' >&2
+    exit 2
+fi
+
+[[ "$PROBE" == runtime-smoke || "$PROBE" == status-item-click || "$PROBE" == apple-event-reopen ]] || {
+    usage
+    exit 2
+}
+if [[ "$PROBE" == status-item-click && -z "${BARLINE_BUILD_CONFIGURATION:-}" ]]; then
+    BUILD_CONFIGURATION="Release"
+fi
 [[ "$BUILD_CONFIGURATION" == Debug || "$BUILD_CONFIGURATION" == Release ]] || {
     printf 'error: BARLINE_BUILD_CONFIGURATION must be Debug or Release\n' >&2
     exit 2
@@ -59,6 +71,13 @@ if ORIGINAL_PREFERENCE_VALUE="$(/usr/bin/defaults read "$PREFERENCE_DOMAIN" "$PR
 fi
 
 cleanup() {
+    if [[ -n "$PERFORMANCE_SOURCE_DIR" ]]; then
+        /bin/rm -f "$PERFORMANCE_SOURCE_DIR/main.swift"
+        /bin/rmdir "$PERFORMANCE_SOURCE_DIR"
+    fi
+    # Reused candidates never changed this preference; do not overwrite a
+    # user's concurrent choice during cleanup.
+    if "$REUSE_RUNNING"; then return; fi
     if ! "$REUSE_RUNNING"; then
         /usr/bin/pkill -x Barline >/dev/null 2>&1 || true
         /usr/bin/pkill -x BarlineMenuService >/dev/null 2>&1 || true
@@ -80,9 +99,21 @@ if "$REUSE_RUNNING"; then
         printf 'error: --reuse-running requires an active Barline process\n' >&2
         exit 1
     }
+    if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+        source "$ROOT/script/lib/installed-candidate.sh"
+        barline_verify_installed_candidate
+    fi
 else
     /usr/bin/defaults write "$PREFERENCE_DOMAIN" "$PREFERENCE_KEY" -bool true
-    if [[ "$BUILD_CONFIGURATION" == Release ]]; then
+    if [[ "$PROBE" == status-item-click ]]; then
+        if [[ "$BUILD_CONFIGURATION" == Release ]]; then
+            BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_PRODUCTION_LAUNCH=1 \
+                "$ROOT/script/build_and_run.sh" --release --verify
+        else
+            BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_PRODUCTION_LAUNCH=1 \
+                "$ROOT/script/build_and_run.sh" --verify
+        fi
+    elif [[ "$BUILD_CONFIGURATION" == Release ]]; then
         BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" BARLINE_RUNTIME_SMOKE=1 \
             "$ROOT/script/build_and_run.sh" --release --verify
     else
@@ -91,15 +122,31 @@ else
     fi
 fi
 APP_PID="$(/usr/bin/pgrep -x Barline | /usr/bin/head -1 || true)"
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+    [[ "$APP_PID" == "$BARLINE_EXPECTED_PID" ]] || exit 1
+fi
 [[ -n "$APP_PID" ]] || {
     printf 'error: Barline process is unavailable for the responsiveness probe\n' >&2
     exit 1
 }
 mkdir -p "$MODULE_CACHE"
+# Swift permits top-level probe statements in main.swift when compiling the
+# shared, independently tested geometry policy alongside the probe.
+PERFORMANCE_SOURCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/barline-performance-source.XXXXXX")"
+cp "$ROOT/script/measure-barline-shelf-responsiveness.swift" "$PERFORMANCE_SOURCE_DIR/main.swift"
 xcrun swiftc -module-cache-path "$MODULE_CACHE" \
     -framework AppKit -framework CoreGraphics \
-    "$ROOT/script/measure-barline-shelf-responsiveness.swift" -o "$BINARY"
-if [[ -n "$OUTPUT_PATH" ]]; then
+    "$ROOT/script/StatusItemFrameMatching.swift" \
+    "$ROOT/script/ShelfProbeCycle.swift" \
+    "$PERFORMANCE_SOURCE_DIR/main.swift" -o "$BINARY"
+if [[ -n "${BARLINE_EVIDENCE_OUTPUT:-}" ]]; then
+    BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \
+        BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" \
+        "$BINARY" | tee "$BARLINE_EVIDENCE_OUTPUT.log"
+    barline_verify_installed_candidate
+    BARLINE_PERFORMANCE_PROBE="$PROBE" ruby "$ROOT/script/write-installed-evidence.rb" \
+        --kind performance --log "$BARLINE_EVIDENCE_OUTPUT.log" --output "$BARLINE_EVIDENCE_OUTPUT"
+elif [[ -n "$OUTPUT_PATH" ]]; then
     mkdir -p "$(dirname "$OUTPUT_PATH")"
     BARLINE_APP_BUNDLE_IDENTIFIER="$PREFERENCE_DOMAIN" \
         BARLINE_EXPECTED_PID="$APP_PID" BARLINE_PERFORMANCE_PROBE="$PROBE" \

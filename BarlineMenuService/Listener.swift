@@ -21,8 +21,10 @@ final class Listener: @unchecked Sendable {
     /// The underlying XPC listener object.
     private var listener: XPCListener?
 
-    /// Probe-selected compatibility backend.
-    private let backend: any MenuBarBackend
+    /// Probe-selected compatibility backend. Construct it only after the
+    /// lightweight start handshake so backend capability probes cannot make
+    /// the containing app mistake service startup for a dead connection.
+    private lazy var backend: any MenuBarBackend = MenuBarBackendFactory.make()
 
     /// Returns a strict peer requirement for the containing Barline app.
     /// Certificate-signed builds require the same team and exact app signing
@@ -68,9 +70,7 @@ final class Listener: @unchecked Sendable {
     }
 
     /// Creates the shared listener.
-    private init() {
-        backend = MenuBarBackendFactory.make()
-    }
+    private init() {}
 
     deinit {
         cancel()
@@ -193,6 +193,10 @@ final class Listener: @unchecked Sendable {
                         }
                     }
                 return .pointContext(result ?? .failure(.timedOut))
+            case let .shelfPresentationObservation(probe):
+                return .shelfPresentationObservation(
+                    .success(WindowServerClient.shelfPresentationObservation(probe))
+                )
             case let .beginRevealObservation(item):
                 let result: BarlineMenuService.ServiceResult<MenuBarRevealObservationToken>? =
                     AsyncRequestBridge.run {
@@ -238,7 +242,7 @@ final class Listener: @unchecked Sendable {
                 return .restart
             }
         } catch {
-            Logger.default.error("Listener failed to handle message with error \(error)")
+            Logger.default.error("Listener failed to handle message with error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
             return nil
         }
     }
@@ -327,7 +331,7 @@ final class Listener: @unchecked Sendable {
                 try uncheckedActivate()
             }
         } catch {
-            Logger.default.error("Failed to activate listener with error \(error)")
+            Logger.default.error("Failed to activate listener with error \(PrivacySafeDiagnostics.errorCode(error), privacy: .public)")
         }
     }
 

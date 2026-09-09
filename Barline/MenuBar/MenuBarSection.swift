@@ -3,6 +3,8 @@
 //  Barline
 //
 
+import BarlineCore
+import OSLog
 import SwiftUI
 
 /// A representation of a section in a menu bar.
@@ -56,7 +58,14 @@ final class MenuBarSection {
 
     /// A Boolean value that indicates whether the Barline Bar should be used.
     private var useBarlineShelf: Bool {
-        appState?.settings.general.useBarlineShelf ?? false
+        guard let appState else { return false }
+        // The shelf cannot reliably position/capture against an auto-hidden
+        // system bar. Keep the preference, but use native section reveal in
+        // this configuration so existing hidden items remain accessible.
+        return MenuBarPresentationPolicy.usesShelf(
+            requestedShelf: appState.settings.general.useBarlineShelf,
+            systemAutoHideEnabled: appState.menuBarManager.isMenuBarHiddenBySystemUserDefaults
+        )
     }
 
     /// A weak reference to the menu bar manager.
@@ -105,11 +114,10 @@ final class MenuBarSection {
 
     /// A Boolean value that indicates whether the section is enabled.
     var isEnabled: Bool {
-        if case .visible = name {
-            // The visible section should always be enabled.
-            return true
-        }
-        return controlItem.isAddedToMenuBar
+        MenuBarSectionAvailabilityPolicy.isEnabled(
+            isPrimarySection: name == .visible,
+            controlItemIsAdded: controlItem.isAddedToMenuBar
+        )
     }
 
     /// The hotkey to toggle the section.
@@ -150,18 +158,22 @@ final class MenuBarSection {
     }
 
     /// Shows the section.
-    func show() {
+    func show(useShelf: Bool? = nil, keyboardFocus: Bool = false) {
+        guard appState?.itemManager.allowsPickerPresentation == true else { return }
+        menuBarManager?.refreshSystemMenuBarConfiguration()
         guard let menuBarManager, isHidden else {
             return
         }
 
-        guard controlItem.isAddedToMenuBar else {
+        guard isEnabled else {
             // The section is disabled.
-            // TODO: Can we use isEnabled for this check?
             return
         }
 
-        if useBarlineShelf {
+        if MenuBarPresentationPolicy.usesShelf(
+            requestedShelf: useShelf ?? useBarlineShelf,
+            systemAutoHideEnabled: menuBarManager.isMenuBarHiddenBySystemUserDefaults
+        ) {
             guard let screen = screenForBarlineShelf else {
                 return
             }
@@ -193,6 +205,9 @@ final class MenuBarSection {
             Task {
                 let didShow = await panel.show(presentation, on: screen)
                 if didShow {
+                    if keyboardFocus {
+                        panel.focusItemsForKeyboard()
+                    }
                     startRehideChecks()
                 }
             }
@@ -218,7 +233,28 @@ final class MenuBarSection {
         startRehideChecks()
     }
 
-    /// Hides the section.
+    /// User-selected recovery route that does not change the saved shelf or
+    /// macOS auto-hide preference. macOS still owns showing the system bar.
+    func showInMenuBar() {
+        hide()
+        show(useShelf: false)
+    }
+
+    enum DeferredHideReason: String {
+        case smartSpaceChange, smartApplication, hover, timer, focusedApplication
+    }
+
+    /// Hides only the presentation that originally scheduled this work.
+    func hide(ifOwnedBy lease: PresentationEpoch.Lease, reason: DeferredHideReason) {
+        let ownsPresentation = menuBarManager?.barlineShelfPanel.ownsDismissal(lease) == true
+        Logger.default.notice("Deferred rehide evaluated reason=\(reason.rawValue, privacy: .public) ownsPresentation=\(ownsPresentation, privacy: .public)")
+        guard ownsPresentation else {
+            return
+        }
+        hide()
+    }
+
+    /// Hides the section immediately in response to current user intent.
     func hide() {
         guard let menuBarManager, !isHidden else {
             return
@@ -240,8 +276,12 @@ final class MenuBarSection {
     }
 
     /// Toggles the visibility of the section.
-    func toggle() {
-        if isHidden { show() } else { hide() }
+    func toggle(keyboardFocus: Bool = false) {
+        if isHidden {
+            show(keyboardFocus: keyboardFocus)
+        } else {
+            hide()
+        }
     }
 
     /// Starts running checks to determine when to rehide the section.
@@ -266,6 +306,7 @@ final class MenuBarSection {
             }
             if NSEvent.mouseLocation.y < screen.visibleFrame.maxY {
                 if rehideTimer == nil {
+                    let lease = appState.menuBarManager.barlineShelfPanel.dismissalLease
                     rehideTimer = .scheduledTimer(
                         withTimeInterval: appState.settings.general.rehideInterval,
                         repeats: false
@@ -278,7 +319,7 @@ final class MenuBarSection {
                         }
                         if NSEvent.mouseLocation.y < screen.visibleFrame.maxY {
                             Task {
-                                await self.hide()
+                                await self.hide(ifOwnedBy: lease, reason: .timer)
                             }
                         } else {
                             Task {

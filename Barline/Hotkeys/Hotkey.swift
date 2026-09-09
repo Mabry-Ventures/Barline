@@ -3,123 +3,184 @@
 //  Barline
 //
 
+import BarlineCore
 import Combine
-import OSLog
+import Foundation
 
-// MARK: - Hotkey
-
-/// A combination of a key and modifiers that can be used to
-/// trigger actions on system-wide key-up or key-down events.
+/// One saved assignment and its live registration status.
 @MainActor
 final class Hotkey: ObservableObject {
-    /// The hotkey's key combination.
-    @Published var keyCombination: KeyCombination? {
-        didSet {
-            enable()
-        }
-    }
+    @Published private(set) var keyCombination: KeyCombination?
+    @Published private(set) var assignmentError: String?
+    @Published private(set) var liveRegistrationError: String?
+    @Published private(set) var isSaving = false
 
-    /// The shared app state.
+    let action: HotkeyAction
+    let itemID: MenuBarItemID?
+    var saveItemAssignment: ((KeyCombination?) async throws -> Void)?
+    var activateItem: (() -> Void)?
+    var validateAssignment: ((KeyCombination?) -> String?)?
+
+    private weak var registry: HotkeyRegistry?
     private weak var appState: AppState?
-
-    /// Manages the lifetime of the hotkey observation.
     private var listener: Listener?
 
-    /// The hotkey's action.
-    let action: HotkeyAction
-
-    /// A Boolean value that indicates whether the hotkey is enabled.
-    var isEnabled: Bool {
-        listener != nil
+    var registrationError: String? {
+        assignmentError ?? liveRegistrationError
     }
 
-    /// Creates a hotkey with the given action and key combination.
+    var isEnabled: Bool {
+        guard let id = listener?.id else { return false }
+        return registry?.isAvailable(id) == true
+    }
+
     init(action: HotkeyAction, keyCombination: KeyCombination? = nil) {
         self.action = action
+        itemID = nil
         self.keyCombination = keyCombination
     }
 
-    /// Performs the initial setup of the hotkey.
+    init(itemID: MenuBarItemID, keyCombination: KeyCombination? = nil) {
+        action = .searchMenuBarItems
+        self.itemID = itemID
+        self.keyCombination = keyCombination
+    }
+
     func performSetup(with appState: AppState) {
         self.appState = appState
+        registry = appState.settings.hotkeys.registry
         enable()
     }
 
-    /// Enables the hotkey.
+    /// Load saved intent even when its system registration is currently unavailable.
+    func load(_ combination: KeyCombination) {
+        keyCombination = combination
+        enable()
+    }
+
     func enable() {
-        disable()
-        listener = Listener(hotkey: self, eventKind: .keyDown)
+        assignmentError = nil
+        if let error = replaceRegistration(with: keyCombination) {
+            liveRegistrationError = error
+        }
     }
 
-    /// Disables the hotkey.
-    func disable() {
-        listener?.invalidate()
+    @discardableResult
+    func disable() -> String? {
+        if let error = listener?.invalidate() {
+            liveRegistrationError = error.message
+            return error.message
+        }
         listener = nil
+        liveRegistrationError = nil
+        return nil
     }
-}
 
-// MARK: - Hotkey Listener
+    func beginRecording() -> UUID? {
+        registry?.beginRecording()
+    }
 
-extension Hotkey {
-    /// An object that manages the lifetime of a hotkey observation.
+    func endRecording(_ token: UUID) {
+        registry?.endRecording(token)
+    }
+
+    /// Keep the old assignment on registration or persistence failure.
+    func requestChange(_ combination: KeyCombination?) async -> Bool {
+        guard !isSaving else { return false }
+        if let error = validateAssignment?(combination) {
+            assignmentError = error
+            return false
+        }
+        let old = keyCombination
+        if let error = replaceRegistration(with: combination) {
+            assignmentError = error
+            return false
+        }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            try await saveItemAssignment?(combination)
+            keyCombination = combination
+            // A resume-registration failure may have arrived during the file
+            // write. Saving clears only the edit error, never the live status.
+            assignmentError = nil
+            return true
+        } catch {
+            let rollbackError = replaceRegistration(with: old)
+            if rollbackError != nil {
+                disable()
+            }
+            assignmentError = rollbackError ?? "The shortcut could not be saved. Your previous assignment was kept."
+            return false
+        }
+    }
+
+    private func replaceRegistration(with combination: KeyCombination?) -> String? {
+        guard let combination else { return disable() }
+        guard let registry else { return "Shortcuts are not ready yet." }
+        let result = registry.register(
+            combination: combination,
+            eventKind: itemID == nil ? .keyDown : .keyUp,
+            replacing: listener?.id,
+            stateChanged: { [weak self] error in
+                self?.liveRegistrationError = error?.message
+            },
+            handler: { [weak self] in
+                guard let self, !self.isSaving, let appState else { return }
+                if itemID != nil {
+                    activateItem?()
+                } else {
+                    action.perform(appState: appState)
+                }
+            }
+        )
+        switch result {
+        case let .failure(error): return error.message
+        case let .success(id):
+            if let listener {
+                listener.id = id
+            } else {
+                listener = Listener(registry: registry, id: id)
+            }
+            liveRegistrationError = registry.registrationError(for: id)?.message
+            return nil
+        }
+    }
+
+    @MainActor
     private final class Listener {
         private weak var registry: HotkeyRegistry?
-        private var id: UInt32?
+        var id: UInt32?
 
-        @MainActor
-        init?(hotkey: Hotkey, eventKind: HotkeyRegistry.EventKind) {
-            guard
-                let appState = hotkey.appState,
-                hotkey.keyCombination != nil
-            else {
-                return nil
-            }
-            let registry = appState.settings.hotkeys.registry
-            let id = registry.register(hotkey: hotkey, eventKind: eventKind) { [weak hotkey, weak appState] in
-                guard let hotkey, let appState else {
-                    return
-                }
-                hotkey.action.perform(appState: appState)
-            }
-            guard let id else {
-                return nil
-            }
+        init(registry: HotkeyRegistry, id: UInt32) {
             self.registry = registry
             self.id = id
         }
 
-        deinit {
-            invalidate()
-        }
+        isolated deinit { _ = invalidate() }
 
-        func invalidate() {
-            guard let id else {
-                return
+        func invalidate() -> HotkeyRegistry.RegistrationError? {
+            if let id {
+                if let error = registry?.unregister(id) {
+                    return error
+                }
             }
-            guard let registry else {
-                Logger.hotkeys.error("Error invalidating hotkey: missing HotkeyRegistry")
-                return
-            }
-            defer {
-                self.id = nil
-            }
-            registry.unregister(id)
+            id = nil
+            return nil
         }
     }
 }
 
-// MARK: Hotkey: Equatable
 extension Hotkey: @MainActor Equatable {
     static func == (lhs: Hotkey, rhs: Hotkey) -> Bool {
-        lhs.keyCombination == rhs.keyCombination &&
-        lhs.action == rhs.action
+        lhs.keyCombination == rhs.keyCombination && lhs.action == rhs.action && lhs.itemID == rhs.itemID
     }
 }
 
-// MARK: Hotkey: Hashable
 extension Hotkey: @MainActor Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(keyCombination)
         hasher.combine(action)
+        hasher.combine(itemID)
     }
 }

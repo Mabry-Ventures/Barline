@@ -5,18 +5,22 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=script/lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=script/lib/platform_lane.sh
+source "${SCRIPT_DIR}/lib/platform_lane.sh"
 
 MODE="${1:-}"
-[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|nonfocus|full|release|xcode27|soak} [--release] [--publish-status] [--xcode PATH]"
+[[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|nonfocus|full|release|xcode27|soak} [--installed] [--release] [--publish-status] [--xcode PATH]"
 shift
 
 PUBLISH_STATUS=false
 XCODE_PATH=""
 RELEASE_SOAK=false
+INSTALLED_CANDIDATE=false
 while (($#)); do
     case "$1" in
         --publish-status) PUBLISH_STATUS=true ;;
         --release) RELEASE_SOAK=true ;;
+        --installed) INSTALLED_CANDIDATE=true ;;
         --xcode)
             (($# >= 2)) || barline_die "--xcode requires a path"
             XCODE_PATH="$2"
@@ -29,6 +33,9 @@ done
 
 if "$RELEASE_SOAK" && [[ "$MODE" != soak ]]; then
     barline_die "--release is supported only with soak mode"
+fi
+if "$INSTALLED_CANDIDATE" && [[ "$MODE" != full ]]; then
+    barline_die "--installed is supported only with full mode"
 fi
 
 case "$MODE" in
@@ -192,6 +199,19 @@ run_fast() {
     run_step "swiftlint" swiftlint lint --strict --config .swiftlint.yml
     run_step "core-build" swift build --package-path BarlineCore
     run_step "core-tests" swift test --package-path BarlineCore --enable-code-coverage
+    run_step "status-item-geometry" bash ./script/test-status-item-geometry.sh
+    run_step "shelf-probe-cycle" bash ./script/test-shelf-probe-cycle.sh
+    run_step "app-intents-topology-tests" ruby ./script/test-app-intents-topology.rb
+    if [[ "$(uname -s)" == Darwin ]]; then
+        run_step "app-intents-source-topology" ruby ./script/validate-app-intents-topology.rb
+        run_step "latest-optional-owner" bash ./script/test-latest-optional-publisher.sh
+        run_step "event-delivery-ordering" bash ./script/test-event-delivery.sh
+        run_step "search-preferences-atomicity" bash ./script/test-search-preferences.sh
+        run_step "feature-preferences-atomicity" bash ./script/test-feature-preferences.sh
+    fi
+    run_step "installed-evidence-validator" bash ./script/test-installed-evidence.sh
+    run_step "installed-evidence-writer" bash ./script/test-evidence-writer.sh
+    run_step "platform-lane-classification" bash ./script/test-platform-lane.sh
     run_step "repository-hygiene" ./script/ci/repo_hygiene.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "project-resolution" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \
@@ -208,6 +228,25 @@ run_fast() {
 
 run_full() {
     run_nonfocus
+    if "$INSTALLED_CANDIDATE"; then
+        # Do not replace a user's notarized/TCC-authorized install with an ad-hoc
+        # app sharing its bundle ID. Exercise the actual candidate in place.
+        : "${BARLINE_CANDIDATE_APP:?Set the installed signed candidate path}"
+        : "${BARLINE_SOURCE_SHA:?Set the installed candidate source SHA}"
+        : "${BARLINE_INSTALLED_EVIDENCE_DIR:?Set the dedicated candidate receipt directory}"
+        [[ "$BARLINE_SOURCE_SHA" == "$SHA" ]] || barline_die "installed candidate source mismatch"
+        run_step "installed-signature" codesign --verify --deep --strict "$BARLINE_CANDIDATE_APP"
+        run_step "installed-gatekeeper" spctl --assess --type execute "$BARLINE_CANDIDATE_APP"
+        run_step "installed-staple" xcrun stapler validate "$BARLINE_CANDIDATE_APP"
+        run_step "installed-app-intents-topology" ruby ./script/validate-app-intents-topology.rb --app "$BARLINE_CANDIDATE_APP"
+        run_step "installed-shelf-recovery" ./script/test-reopen-burst.sh --reuse-running
+        local installed_executable_sha
+        installed_executable_sha="$(shasum -a 256 "$BARLINE_CANDIDATE_APP/Contents/MacOS/Barline" | awk '{print $1}')"
+        run_step "installed-evidence" ruby ./script/validate-installed-evidence.rb \
+            --source-sha "$SHA" --executable-sha256 "$installed_executable_sha" \
+            --evidence-dir "$BARLINE_INSTALLED_EVIDENCE_DIR"
+        return
+    fi
     require_gate_script ./script/test-xpc-interruption.sh
     require_gate_script ./script/test-ui-smoke.sh
     require_gate_script ./script/test-performance-smoke.sh
@@ -217,28 +256,36 @@ run_full() {
 run_nonfocus() {
     run_fast
     run_step "architecture-firewall" ./script/ci/architecture_firewall.sh
+    run_step "hotkey-registration" bash ./script/test-hotkey-registry.sh
     run_step "debug-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Debug \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/debug.xcresult" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/build-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
     run_step "release-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Release \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/release.xcresult" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/build-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+    for configuration in Debug Release; do
+        run_step "app-intents-bundle-$configuration" ruby ./script/validate-app-intents-topology.rb \
+            --app "$BARLINE_RUN_ROOT/build-derived/Build/Products/$configuration/Barline.app"
+    done
     run_step "static-analysis" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -configuration Debug \
         -destination 'platform=macOS,arch=arm64' -resultBundlePath "$ARTIFACT_DIR/results/analyze.xcresult" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/build-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO analyze
     run_step "test-plan-build" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
         -project Barline.xcodeproj -scheme Barline -testPlan Barline \
         -configuration Debug -destination 'platform=macOS,arch=arm64' \
-        -derivedDataPath "$ARTIFACT_DIR/test-derived" \
+        -derivedDataPath "$BARLINE_RUN_ROOT/test-derived" \
         CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build-for-testing
     if /usr/sbin/DevToolsSecurity -status 2>&1 | /usr/bin/grep -qi 'enabled'; then
         run_step "test-plan-core" env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild \
             -project Barline.xcodeproj -scheme Barline -testPlan Barline \
             -configuration Debug -destination 'platform=macOS,arch=arm64' \
-            -derivedDataPath "$ARTIFACT_DIR/test-derived" \
+            -derivedDataPath "$BARLINE_RUN_ROOT/test-derived" \
             -resultBundlePath "$ARTIFACT_DIR/results/tests.xcresult" \
             -only-testing:BarlineTests -only-testing:BarlineIntegrationTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test-without-building
@@ -251,6 +298,8 @@ run_nonfocus() {
     require_gate_script ./script/test-xcode-ui.sh
     require_gate_script ./script/test-accessibility.sh
     require_gate_script ./script/test-support-bundle-privacy.sh
+    run_step "permission-refresh" bash ./script/test-permission-refresh.sh
+    run_step "bounded-icon-import" bash ./script/test-bounded-icon-import.sh
 }
 
 case "$MODE" in
@@ -270,9 +319,15 @@ case "$MODE" in
     xcode27)
         [[ -n "$XCODE_PATH" ]] || barline_die "xcode27 requires --xcode with an explicit Xcode 27 path"
         xcode_output="$(DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild -version)"
-        [[ "$xcode_output" == Xcode\ 27* ]] || barline_die "selected toolchain is not Xcode 27: $xcode_output"
+        barline_is_xcode27_toolchain "$xcode_output" || barline_die "selected toolchain is not Xcode 27: $xcode_output"
+        if "$PUBLISH_STATUS" && ! barline_is_macos27_runtime "$(sw_vers -productVersion)"; then
+            # A newer SDK on an older host cannot certify the OS runtime lane.
+            # Do not publish a green local/macos27-beta status for that case.
+            publish_commit_status failure "macOS 27 runtime host required; compilation is not runtime proof"
+            barline_die "macOS 27 runtime status requires a macOS 27 host"
+        fi
         run_full
-        if [[ "$(sw_vers -productVersion)" != 27.* ]]; then
+        if ! barline_is_macos27_runtime "$(sw_vers -productVersion)"; then
             printf 'macOS 27 runtime support NOT VERIFIED: this host is %s.\n' "$(sw_vers -productVersion)" | tee "$ARTIFACT_DIR/macos27-runtime-status.txt"
         fi
         ;;
@@ -288,6 +343,10 @@ esac
 if "$PUBLISH_STATUS"; then
     if [[ "$(git rev-parse HEAD)" != "$SHA" ]]; then
         printf 'HEAD changed during validation; refusing success status\n' | tee -a "$FAILURES_FILE" >&2
+        FAILURES=$((FAILURES + 1))
+    fi
+    if [[ -n "$(git status --porcelain=v1)" ]]; then
+        printf 'Worktree changed during validation; refusing success status\n' | tee -a "$FAILURES_FILE" >&2
         FAILURES=$((FAILURES + 1))
     fi
     if ((FAILURES)); then
