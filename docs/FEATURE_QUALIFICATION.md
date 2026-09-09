@@ -1,8 +1,9 @@
 # Reliability-first feature qualification
 
-Next qualification candidate: **1.0.11, build 32** (September 9, 2026).
-Its source SHA is not assigned until the review refinement is committed.
-Installed build 31 remains the current historical runtime evidence baseline.
+Release candidate: **1.0.11, build 33** (September 9, 2026).
+On publication, its exact source is the commit referenced by the `v1.0.11` tag
+and release receipts; those external objects do not exist before publication.
+Installed build 32 is the update-source runtime evidence baseline.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
@@ -70,13 +71,13 @@ without logged operation failures. The manual archive remained unchanged.
 
 These observations do not independently prove restored item-order equivalence,
 manual override, the remaining interaction/accessibility matrix, or the
-second-device display lane. The accepted localized-review refinement changes
-source and advances the next candidate to build 32; build 31 evidence cannot
-certify it. Neither build is a public-release GO.
+second-device display lane. The accepted localized-review refinement changed
+source and advanced the final candidate to build 33; build 31 and build 32
+evidence cannot certify it.
 
 Build 31's local receipts are retained under ignored `.artifacts/ci/`,
 `.artifacts/release/` and `.artifacts/build31-installed-evidence/` paths in its
-frozen qualification worktree. Do not substitute them for build 32 receipts.
+frozen qualification worktree. Do not substitute them for build 33 receipts.
 
 ## Historical findings and evidence
 

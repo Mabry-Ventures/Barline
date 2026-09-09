@@ -19,14 +19,20 @@ test('build refuses unexpected stale files and symlinks without deleting them', 
     await assert.rejects(assertAllowedTree(join(fixture, 'linked-root'), ['index.html', 'old-checkout.js', 'linked-root']), /real directory/);
   } finally { await rm(fixture, { recursive: true }); }
 });
-test('staged pages have semantic headings, viewport and no tracking/payment code', async () => {
+test('production pages have semantic headings, canonical URLs and no tracking/payment code', async () => {
   for (const path of pages) {
     const html = await readFile(join(output, path), 'utf8');
     assert.match(html, /<html lang="en">/);
     assert.match(html, /name="viewport"/);
     assert.equal((html.match(/<h1\b/g) ?? []).length, 1);
     assert.doesNotMatch(html, /<script\b|<iframe\b|<form\b|on(?:click|load|error)=/i);
-    assert.match(html, /name="robots" content="noindex/);
+    if (path === '404.html') {
+      assert.match(html, /name="robots" content="noindex/);
+    } else {
+      assert.doesNotMatch(html, /name="robots" content="(?:noindex|nofollow)/);
+      const suffix = path === 'index.html' ? '/' : `/${path.replace(/index\.html$/, '')}`;
+      assert.match(html, new RegExp(`<link rel="canonical" href="https://usebarline\\.com${suffix}">`));
+    }
   }
 });
 test('every local link and asset resolves, every local fragment exists', async () => {
@@ -44,12 +50,14 @@ test('every local link and asset resolves, every local fragment exists', async (
     }
   }
 });
-test('preview separates live contributions from unqualified downloads and OS claims', async () => {
+test('production links the qualified release and states the OS boundary', async () => {
   const html = await readFile(join(output, 'index.html'), 'utf8');
-  assert.match(html, /Checkout accepts real payments, even on this preview site\./);
-  assert.match(html, /Downloads will appear here after final qualification\./);
+  assert.match(html, /Download Barline 1\.0\.11/);
+  assert.match(html, /Barline 1\.0\.11 release notes/);
+  assert.match(html, /Corresponding source/);
+  assert.match(html, /Checksums/);
   assert.match(html, /macOS 27 compatibility has not yet been qualified\./);
-  assert.doesNotMatch(html, /download="/);
+  assert.doesNotMatch(html, /preview site|final qualification|noindex|nofollow/i);
 });
 test('contributions use only the approved live hosted link with accurate privacy copy', async () => {
   const html = await readFile(join(output, 'index.html'), 'utf8');
@@ -68,7 +76,10 @@ test('contributions use only the approved live hosted link with accurate privacy
 });
 test('static security policy disallows executable/embed/payment surfaces', async () => {
   const headers = await readFile(join(output, '_headers'), 'utf8');
-  for (const value of ["default-src 'none'", "frame-ancestors 'none'", "form-action 'none'", 'no-referrer', 'nosniff', 'noindex']) assert.ok(headers.includes(value));
+  const robots = await readFile(join(output, 'robots.txt'), 'utf8');
+  for (const value of ["default-src 'none'", "frame-ancestors 'none'", "form-action 'none'", 'no-referrer', 'nosniff']) assert.ok(headers.includes(value));
+  assert.doesNotMatch(headers, /noindex|nofollow/i);
+  assert.match(robots, /^Allow: \/$/m);
 });
 test('About preserves provenance while the footer stays focused on navigation', async () => {
   const home = await readFile(join(output, 'index.html'), 'utf8');

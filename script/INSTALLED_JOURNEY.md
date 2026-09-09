@@ -25,7 +25,14 @@ BARLINE_JOURNEY_BUTTON=left
 
 Then execute `bash script/test-installed-journey.sh` and retain stdout in the candidate's ignored artifacts. The default release evidence directory is `.artifacts/release/<source SHA>`; `BARLINE_RELEASE_DIR` may override it. The harness verifies the signature, Gatekeeper, staple, release metadata SHA, and installed executable hash against that release's ZIP **before** any click.
 
-Repeat for Native left/right, Popover left/right, and Delayed left after its AX metadata appears. The delayed fixture makes its AX status item unavailable for the first three seconds; this exercises late discoverability, not a claim to deterministically control the helper's internal ownership cache. The ownership-regression Core/helper tests remain independently required.
+The four source-bound acceptance receipts are `native-left`, `native-right`,
+`popover-left`, and a second `popover-reuse` left-click using the same running
+fixture. Popover right-click and Delayed left-click are additional raw runtime
+checks; run them without `BARLINE_EVIDENCE_OUTPUT` because they are not part of
+the four-lane receipt schema. The delayed fixture makes its AX status item
+unavailable for the first three seconds; this exercises late discoverability,
+not a claim to deterministically control the helper's internal ownership cache.
+The ownership-regression Core/helper tests remain independently required.
 
 A PASS requires all of these, not just successful event posting:
 

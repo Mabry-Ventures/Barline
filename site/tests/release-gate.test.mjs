@@ -81,17 +81,26 @@ test('production rejects comment, template and non-anchor substitutes', () => {
   }
 });
 
-test('current staged source cannot produce a production artifact or change existing output', async () => {
+test('current production source requires exact configuration and preserves source', async () => {
   const source = new URL('../src/index.html', import.meta.url);
   const before = await readFile(source, 'utf8');
   const outputDirectory = await mkdtemp(join(tmpdir(), 'barline-production-gate-'));
+  const release = {
+    version: '1.0.11',
+    canonicalOrigin: 'https://usebarline.com',
+    downloadURL: 'https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/Barline-1.0.11.zip',
+    sourceURL: 'https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/Barline-1.0.11-source.tar.gz',
+    checksumsURL: 'https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/SHA256SUMS',
+    releaseURL: 'https://github.com/Mabry-Ventures/Barline/releases/tag/v1.0.11',
+    contributionURL: 'https://buy.stripe.com/cNibJ1a370l33AVgnk1ck02',
+  };
   try {
     await writeFile(join(outputDirectory, 'index.html'), 'Preserve existing output');
     await assert.rejects(build({ mode: 'production', outputDirectory }), /release configuration/);
-    await assert.rejects(build({ mode: 'production', release: fixture().release, outputDirectory }), /homepage must link/);
+    await assert.doesNotReject(build({ mode: 'production', release, outputDirectory }));
     await assert.rejects(build({ mode: 'typo', outputDirectory }), /Unknown/);
-    await assert.rejects(build({ mode: 'preview', release: fixture().release, outputDirectory }), /explicit production/);
+    await assert.rejects(build({ mode: 'preview', release, outputDirectory }), /explicit production/);
     assert.equal(await readFile(source, 'utf8'), before);
-    assert.equal(await readFile(join(outputDirectory, 'index.html'), 'utf8'), 'Preserve existing output');
+    assert.match(await readFile(join(outputDirectory, 'index.html'), 'utf8'), /Download Barline 1\.0\.11/);
   } finally { await rm(outputDirectory, { recursive: true }); }
 });

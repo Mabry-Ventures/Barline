@@ -6,13 +6,13 @@ Barline is a free, open-source menu bar utility for Apple Silicon Macs. Keep
 everyday items visible, tuck the rest away, and reveal them when you need them.
 No account, subscription, advertising, or paid feature tier.
 
-## Download status
+## Download
 
-An installable public release is **not available yet**. The next candidate is
-under development and qualification; a successful build is not a release pass.
-Qualified downloads will appear in this repository's
-[Releases](https://github.com/Mabry-Ventures/Barline/releases), together with
-corresponding source, checksums, license notices, and release notes.
+[Download Barline 1.0.11](https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/Barline-1.0.11.zip)
+for Apple Silicon Macs running macOS 26. The
+[release page](https://github.com/Mabry-Ventures/Barline/releases/tag/v1.0.11)
+also includes corresponding source, checksums, license notices, and release
+notes.
 
 Do not download an Ice binary expecting it to be Barline. Do not disable macOS
 security protections to install an unofficial build.
@@ -25,10 +25,9 @@ security protections to install an unofficial build.
 - Searches menu bar items locally and customizes their appearance and spacing.
 - Provides reviewed diagnostic export and layout recovery tools.
 
-The development tree also contains new group, search-personalization, display,
-rule, and shortcut work. Implementation and testing are in progress; these are
-not a promise of qualified release features. See
-[known limitations](docs/KNOWN_LIMITATIONS.md) for the current boundaries.
+Groups, search personalization, display-specific layouts, contextual rules, and
+per-item shortcuts are included. See [known limitations](docs/KNOWN_LIMITATIONS.md)
+for configuration-specific boundaries.
 
 ## Compatibility and permissions
 
