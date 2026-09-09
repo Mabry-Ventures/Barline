@@ -112,6 +112,10 @@ final class BarlineShelfPanel: NSPanel {
             defer: false
         )
         title = "Barline Bar"
+        setAccessibilityElement(true)
+        setAccessibilityRole(.window)
+        setAccessibilitySubrole(.standardWindow)
+        setAccessibilityTitle("Barline Bar")
         titlebarAppearsTransparent = true
         isMovableByWindowBackground = true
         allowsToolTipsWhenApplicationIsInactive = true
@@ -130,6 +134,10 @@ final class BarlineShelfPanel: NSPanel {
         self.appState = appState
         configureCancellables()
         colorManager.performSetup(with: self)
+    }
+
+    private func publishAccessibilityWindow() {
+        NSAccessibility.post(element: self, notification: .windowCreated)
     }
 
     /// Configures the internal observers.
@@ -438,6 +446,7 @@ final class BarlineShelfPanel: NSPanel {
                 logger.notice(
                     "Shelf presentation committed generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public)"
                 )
+                publishAccessibilityWindow()
                 return true
             case let .locallyCommitted(lastFailure):
                 // The helper is an observer, not presentation authority. Keep
@@ -446,6 +455,7 @@ final class BarlineShelfPanel: NSPanel {
                 logger.warning(
                     "Shelf preserved with local commit generation=\(request.generation, privacy: .public) observerFailure=\(String(describing: lastFailure), privacy: .public)"
                 )
+                publishAccessibilityWindow()
                 return true
             case .cancelled:
                 return false
@@ -529,7 +539,6 @@ final class BarlineShelfPanel: NSPanel {
         if needsLoadingState {
             hostingView.finishPreparing()
         }
-
         if keyboardNavigationRequested {
             contentView?.layoutSubtreeIfNeeded()
             focusItemsForKeyboard()

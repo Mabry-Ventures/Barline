@@ -1,6 +1,11 @@
 # Changelog
 
-## 1.0.11 (build 33) — September 9, 2026
+## 1.0.11 (build 34) — September 9, 2026
+
+- Publish the cold-launch shelf through the macOS Accessibility window tree
+  without activating Barline, making it frontmost, or claiming keyboard focus.
+  The existing nonactivating presentation now exposes explicit window semantics
+  and a window-created notification after its visible commit.
 
 - Recheck temporarily unavailable helper capabilities on later requests, with
   bounded probing and no background retry loop, instead of retaining a failed
@@ -50,9 +55,9 @@
 - Make the shelf timing probe reject failed closes immediately and reacquire
   its target before each click, so later samples cannot hide a failed cycle.
 
-Before publication, build 33 must pass the complete local macOS 26 gate,
+Before publication, build 34 must pass the complete local macOS 26 gate,
 Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, a
-signed build-32-to-33 update, clean installation, installed target interaction,
+signed build-33-to-34 update, clean installation, installed target interaction,
 helper recovery, and bounded shelf-performance checks. macOS 27 runtime
 qualification and the extended soak remain deliberately deferred and are not
 claimed by this release.

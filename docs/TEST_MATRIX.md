@@ -13,12 +13,12 @@ under ignored `.artifacts/ci/<sha>/` directories.
 | Fixture regression | Script runs snapshot/state/profile/command cases and launches a configurable three-status-item app | 168 regressions pass on the exact-head full gate |
 | Fixture app | Environment-configurable status items plus deterministic accessibility surface | Implemented as `BarlineFixture` |
 | XPC interruption | Local kill/relaunch probe | Exact-head full gate passes the replacement-helper probe and eight helper-interruption/reopen cycles |
-| UI smoke | Exact-build visible-status-item probe plus compiled XCUITest target | Four fixture XCUITest scenarios and production visible-window smoke pass in the unlocked interactive session |
+| UI smoke | Exact-build visible-status-item and cold-launch shelf Accessibility probe plus compiled XCUITest target | Four fixture XCUITest scenarios and production smoke pass in the unlocked interactive session without activating Barline |
 | Accessibility | Source assertions and fixture runtime AX label audit | Exact-head semantic fixture audit passes; manual VoiceOver and Full Keyboard Access remain required |
 | Support-bundle privacy | Encoder content probes plus static logging/credential checks | Passes on the exact-head full gate |
 | Performance smoke | Shelf responsiveness and app-owned production reopen probes | Exact-head 20-cycle shelf and 20-cycle reopen presentation budgets pass in the unlocked interactive session |
 | Soak | Repeated Core cycles plus XPC interruption and responsiveness | Prior integration evidence exists; the release-duration soak is explicitly deferred |
-| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Build 33 requires exact-head signed packaging plus build-32-to-33 update and clean-install validation before publication |
+| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Build 34 requires exact-head signed packaging plus build-33-to-34 update and clean-install validation before publication |
 
 The fail-closed full gate runs these scripts and reports unavailable permissions
 or missing product behavior instead of silently treating them as passed.

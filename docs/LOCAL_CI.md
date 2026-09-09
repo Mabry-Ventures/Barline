@@ -39,7 +39,8 @@ Every run writes logs, result bundles where available, command records, and a
 machine-readable `summary.json` under ignored `.artifacts/ci/<sha>/`.
 
 The UI smoke gate launches the exact local build and verifies Barline's visible
-Control Center status item without clicking permission controls. XCUITest uses `BarlineFixture`; it fails
+Control Center status item, then opens the cold-launch shelf and requires its
+Accessibility window without activating or fronting Barline. XCUITest uses `BarlineFixture`; it fails
 with a clear administrator boundary when Developer Tools automation mode is
 disabled. The accessibility gate uses the macOS AX tree without requesting
 access; it returns unavailable when the invoking host cannot expose the fixture
