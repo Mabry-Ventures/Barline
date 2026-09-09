@@ -320,8 +320,8 @@ SPARKLE_BIN="$RELEASE_DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin"
 
 cp "$ROOT/CHANGELOG.md" "$DIST/Barline-$VERSION.md"
 "$SPARKLE_BIN/generate_appcast" --account "$SPARKLE_ACCOUNT" \
-    --download-url-prefix "https://github.com/Mabry-Ventures/Barline/releases/download/v$VERSION/" \
-    --link 'https://github.com/Mabry-Ventures/Barline' --embed-release-notes -o "$DIST/appcast.xml" "$DIST"
+    --download-url-prefix "https://github.com/Mabry-Ventures/mv-barline/releases/download/v$VERSION/" \
+    --link 'https://github.com/Mabry-Ventures/mv-barline' --embed-release-notes -o "$DIST/appcast.xml" "$DIST"
 
 validate_exact_candidate
 git -C "$ROOT" archive --format=tar.gz --prefix="Barline-$VERSION/" -o "$DIST/Barline-$VERSION-source.tar.gz" "$SHA"

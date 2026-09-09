@@ -2,7 +2,7 @@
 
 ## Public support
 
-[GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues) is the public
+[GitHub Issues](https://github.com/Mabry-Ventures/mv-barline/issues) is the public
 entry point for bug reports and feature suggestions. Read
 [troubleshooting](../FREQUENT_ISSUES.md) first. Share only reviewed, relevant
 diagnostics; private security reports follow [SECURITY.md](../SECURITY.md).

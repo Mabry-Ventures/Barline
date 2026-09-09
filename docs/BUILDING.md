@@ -16,9 +16,11 @@ are available; it is not a substitute for the production Xcode 26.6 lane.
 
 ## Bootstrap
 
-Clone the Git repository, select its directory, and verify the environment:
+Clone the repository, select its directory, and verify the environment:
 
 ```bash
+git clone https://github.com/Mabry-Ventures/mv-barline.git
+cd mv-barline
 ./script/bootstrap.sh
 ```
 

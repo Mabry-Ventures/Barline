@@ -71,7 +71,7 @@ System Focus execution still requires candidate-bound qualification.
 
 ## Sharing a useful bug report
 
-Use [GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues). Include
+Use [GitHub Issues](https://github.com/Mabry-Ventures/mv-barline/issues). Include
 the app version/build, macOS version, display setup, auto-hide setting,
 reproduction steps, expected behavior, and what happened instead.
 

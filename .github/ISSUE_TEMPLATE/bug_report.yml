@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Issues are public. Do not include credentials, private screen content, raw process lists, or unrelated logs.
-        Review any support bundle or screenshot before attaching it. For vulnerabilities, read our [security policy](https://github.com/Mabry-Ventures/Barline/blob/main/SECURITY.md) instead.
+        Review any support bundle or screenshot before attaching it. For vulnerabilities, read our [security policy](https://github.com/Mabry-Ventures/mv-barline/blob/main/SECURITY.md) instead.
   - type: checkboxes
     attributes:
       label: Search for Similar Reports
@@ -39,7 +39,7 @@ body:
     id: app_version
     attributes:
       label: App Version and Build
-      placeholder: e.g. 1.0.10 (build 19), from About
+      placeholder: e.g. 1.0.11 (build 35), from About
     validations:
       required: true
   - type: input

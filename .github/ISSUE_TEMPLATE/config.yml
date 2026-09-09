@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Troubleshooting and supported configurations
-    url: https://github.com/Mabry-Ventures/Barline/blob/main/FREQUENT_ISSUES.md
+    url: https://github.com/Mabry-Ventures/mv-barline/blob/main/FREQUENT_ISSUES.md
     about: Check permissions, hidden items, recovery, and menu bar configuration before filing a bug.
   - name: Security policy
-    url: https://github.com/Mabry-Ventures/Barline/blob/main/SECURITY.md
+    url: https://github.com/Mabry-Ventures/mv-barline/blob/main/SECURITY.md
     about: Do not post vulnerabilities or private information in a public issue. Read the reporting policy first.

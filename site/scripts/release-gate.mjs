@@ -1,5 +1,5 @@
 const canonical = 'https://usebarline.com';
-const repository = 'https://github.com/Mabry-Ventures/Barline';
+const repository = 'https://github.com/Mabry-Ventures/mv-barline';
 const checkout = 'https://buy.stripe.com/cNibJ1a370l33AVgnk1ck02';
 
 // Operator configuration is not a release certificate. This gate prevents an

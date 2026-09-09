@@ -2,6 +2,11 @@
 
 ## 1.0.11 (build 35) — September 9, 2026
 
+- Move the canonical repository to `Mabry-Ventures/mv-barline`. The Sparkle
+  update feed, About links, issue templates, release tooling, SBOM namespace,
+  and website links now use that name. No public release has been published
+  under the previous name, so no installed client points at the old feed.
+
 - Keep the nonactivating shelf panel registered with AppKit while hidden and
   use the standard nonactivating order path when showing it. This makes a true
   clean-install cold launch publish the shelf through the application's
