@@ -130,8 +130,8 @@ struct AboutSettingsPane: View {
             Button("Acknowledgements") {
                 NSWorkspace.shared.open(acknowledgementsURL)
             }
-            Link("Source", destination: URL(string: "https://github.com/Mabry-Ventures/Barline")!)
-            Link("Report a Problem", destination: URL(string: "https://github.com/Mabry-Ventures/Barline/issues")!)
+            Link("Source", destination: URL(string: "https://github.com/Mabry-Ventures/mv-barline")!)
+            Link("Report a Problem", destination: URL(string: "https://github.com/Mabry-Ventures/mv-barline/issues")!)
             if let supportURL = Constants.supportURL {
                 Link("Support Barline", destination: supportURL)
                     .help("Optional support for development. Every feature is already included.")

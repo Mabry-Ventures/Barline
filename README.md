@@ -6,16 +6,20 @@ Barline is a free, open-source menu bar utility for Apple Silicon Macs. Keep
 everyday items visible, tuck the rest away, and reveal them when you need them.
 No account, subscription, advertising, or paid feature tier.
 
-## Download
+## Status: not yet released
 
-[Download Barline 1.0.11](https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/Barline-1.0.11.zip)
-for Apple Silicon Macs running macOS 26. The
-[release page](https://github.com/Mabry-Ventures/Barline/releases/tag/v1.0.11)
-also includes corresponding source, checksums, license notices, and release
-notes.
+Barline has **no public binary release yet**. Version 1.0.11 (build 35) is in
+final release qualification. When that candidate passes signing, notarization,
+and clean-install validation, this section will link the signed download,
+checksums, corresponding source, and release notes. Watch this repository to be
+notified when it publishes.
 
-Do not download an Ice binary expecting it to be Barline. Do not disable macOS
-security protections to install an unofficial build.
+Until then, you can [build Barline from source](docs/BUILDING.md) on an Apple
+Silicon Mac running macOS 26 with Xcode 26.6.
+
+Do not download an Ice binary expecting it to be Barline. Do not install an
+unofficial "Barline" build, and do not disable macOS security protections to
+run one.
 
 ## What Barline does
 
@@ -62,13 +66,14 @@ the app does not display payment reminders.
 
 Start with [troubleshooting](FREQUENT_ISSUES.md). Report reproducible bugs or
 suggest improvements through
-[GitHub Issues](https://github.com/Mabry-Ventures/Barline/issues). Review any
+[GitHub Issues](https://github.com/Mabry-Ventures/mv-barline/issues). Review any
 diagnostic attachment and redact private information before sharing it.
 Security concerns belong under the [security policy](SECURITY.md), not in a
 public bug report.
 
 Developers: see [Contributing](CONTRIBUTING.md), [Building](docs/BUILDING.md),
-and the [architecture guide](docs/ARCHITECTURE.md). Iteration uses
+and the [architecture guide](docs/ARCHITECTURE.md). The
+[documentation index](docs/README.md) maps every document in this repository. Iteration uses
 `./script/ci.sh fast`; complete local qualification uses `./script/ci.sh full`.
 All macOS builds, testing, signing, and notarization run locally. GitHub Actions
 runs Linux repository hygiene only.

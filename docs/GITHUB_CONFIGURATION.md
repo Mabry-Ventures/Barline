@@ -1,8 +1,8 @@
 # GitHub repository configuration
 
-These settings require the canonical Barline GitHub repository and repository
-administration access. They are not asserted as configured in the current local
-repository.
+These settings require the canonical `Mabry-Ventures/mv-barline` GitHub
+repository and repository administration access. They are not asserted as
+configured in the current local repository.
 
 ## Main branch ruleset
 

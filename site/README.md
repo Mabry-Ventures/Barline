@@ -41,7 +41,7 @@ node scripts/build.mjs --production /absolute/approved-release.json
 It must contain `version`, `canonicalOrigin`, `downloadURL`, `sourceURL`,
 `checksumsURL`, `releaseURL`, and `contributionURL`. Destinations must be the
 canonical domain, approved hosted Stripe link, and exact version-specific
-Mabry-Ventures/Barline GitHub release assets emitted by `script/release.sh`.
+Mabry-Ventures/mv-barline GitHub release assets emitted by `script/release.sh`.
 No keys, tokens, account state, latest-release redirect, or alternate repository
 is accepted. The launch-ready source must contain anchors to those destinations, use
 correct per-page canonical URLs, and remove preview availability/indexing blocks.

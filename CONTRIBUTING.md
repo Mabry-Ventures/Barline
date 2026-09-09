@@ -1,5 +1,9 @@
 # Contributing to Barline
 
+Participation in this project is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md). Report conduct concerns privately to
+dev@mabryventures.com.
+
 Barline is GPLv3 software derived from Ice. Contributions retain their authorship
 in Git history and must be compatible with the repository's GPLv3 distribution.
 Read [NOTICE.md](NOTICE.md), [docs/UPSTREAM.md](docs/UPSTREAM.md), and
@@ -12,6 +16,8 @@ Use an Apple Silicon Mac running macOS 26 with Xcode 26.6. macOS 27 is a separat
 unqualified compatibility lane, not a substitute for the current toolchain.
 
 ```bash
+git clone https://github.com/Mabry-Ventures/mv-barline.git
+cd mv-barline
 ./script/bootstrap.sh
 ```
 
@@ -68,8 +74,8 @@ Keep changes focused and use the repository pull-request template. Include the
 exact commit SHA, toolchain, local gate, test evidence, accessibility impact,
 migration impact, and macOS 27 status. Do not describe an unavailable test or
 credential-bound step as passing. File bugs and discuss changes in
-[Issues](https://github.com/Mabry-Ventures/Barline/issues), then submit a focused
-[pull request](https://github.com/Mabry-Ventures/Barline/pulls).
+[Issues](https://github.com/Mabry-Ventures/mv-barline/issues), then submit a focused
+[pull request](https://github.com/Mabry-Ventures/mv-barline/pulls).
 
 Preserve unrelated changes, upstream remotes, the recorded vendor baseline,
 and license notices. Keep local logs, result bundles, generated output, and

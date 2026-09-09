@@ -1,5 +1,22 @@
 # Barline execution plan
 
+## Repository rename to `mv-barline` — September 9, 2026
+
+The canonical repository is now `Mabry-Ventures/mv-barline` and the local
+working tree is `~/Development/MV/mv-barline`. All 44 in-repo references were
+rewritten, including `BARLINE_SPARKLE_FEED_URL`, the About pane links, issue
+templates, `script/release.sh`, the SPDX document namespace, and the website.
+Because no binary release has been published, no installed client points at the
+previous feed URL.
+
+This changes build 35 source. Its 2026-09-09T10:13Z full gate, which failed only
+`test-xcode-ui` on a Developer Tools automation-mode timeout, does not certify
+the renamed source. Build 35 requires a fresh full gate, signed packaging,
+notarization, clean-install cold-launch, and update evidence on its new SHA.
+Visitor-facing documentation was refreshed in the same change: the README now
+states the honest pre-release status instead of linking a nonexistent v1.0.11
+download, and `docs/README.md` indexes every document.
+
 ## Build 35 cold-launch Accessibility root repair — September 9, 2026
 
 Build 34 passed the exact-merge full gate, Developer ID signing, Apple
@@ -952,7 +969,7 @@ the protected local check. Updated signing/install validation continues locally.
 
 - Xcode 27 beta 6 / Swift 6.4 is not installed.
 - No macOS 27 runtime host is available, so runtime compatibility cannot be claimed.
-- The canonical `Mabry-Ventures/Barline` repository, `origin`, protected ruleset,
+- The canonical `Mabry-Ventures/mv-barline` repository, `origin`, protected ruleset,
   and pull request exist; the protected local macOS check is published from the
   exact candidate full gate.
 - A valid Mabry Ventures Developer ID identity and Barline App Group

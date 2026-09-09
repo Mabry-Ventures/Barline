@@ -11,10 +11,10 @@ function fixture() {
   const version = '9.8.7';
   const release = {
     version, canonicalOrigin: 'https://usebarline.com',
-    downloadURL: `https://github.com/Mabry-Ventures/Barline/releases/download/v${version}/Barline-${version}.zip`,
-    sourceURL: `https://github.com/Mabry-Ventures/Barline/releases/download/v${version}/Barline-${version}-source.tar.gz`,
-    checksumsURL: `https://github.com/Mabry-Ventures/Barline/releases/download/v${version}/SHA256SUMS`,
-    releaseURL: `https://github.com/Mabry-Ventures/Barline/releases/tag/v${version}`,
+    downloadURL: `https://github.com/Mabry-Ventures/mv-barline/releases/download/v${version}/Barline-${version}.zip`,
+    sourceURL: `https://github.com/Mabry-Ventures/mv-barline/releases/download/v${version}/Barline-${version}-source.tar.gz`,
+    checksumsURL: `https://github.com/Mabry-Ventures/mv-barline/releases/download/v${version}/SHA256SUMS`,
+    releaseURL: `https://github.com/Mabry-Ventures/mv-barline/releases/tag/v${version}`,
     contributionURL: 'https://buy.stripe.com/cNibJ1a370l33AVgnk1ck02',
   };
   return { release, headers: "/*\n  Content-Security-Policy: default-src 'none'\n", robots: 'User-agent: *\nAllow: /\n',
@@ -34,8 +34,8 @@ test('production requires explicit versioned destinations, never an implicit lat
     const value = fixture(); value.release.version = version;
     assert.throws(() => validateProduction(value));
   }
-  for (const url of ['http://github.com/Mabry-Ventures/Barline/a.zip', 'https://github.com.evil.invalid/a.zip',
-    'https://github.com/Mabry-Ventures/Barline/releases/latest', fixture().release.downloadURL + '?token=secret']) {
+  for (const url of ['http://github.com/Mabry-Ventures/mv-barline/a.zip', 'https://github.com.evil.invalid/a.zip',
+    'https://github.com/Mabry-Ventures/mv-barline/releases/latest', fixture().release.downloadURL + '?token=secret']) {
     const value = fixture(); value.release.downloadURL = url;
     assert.throws(() => validateProduction(value));
   }
@@ -88,10 +88,10 @@ test('current production source requires exact configuration and preserves sourc
   const release = {
     version: '1.0.11',
     canonicalOrigin: 'https://usebarline.com',
-    downloadURL: 'https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/Barline-1.0.11.zip',
-    sourceURL: 'https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/Barline-1.0.11-source.tar.gz',
-    checksumsURL: 'https://github.com/Mabry-Ventures/Barline/releases/download/v1.0.11/SHA256SUMS',
-    releaseURL: 'https://github.com/Mabry-Ventures/Barline/releases/tag/v1.0.11',
+    downloadURL: 'https://github.com/Mabry-Ventures/mv-barline/releases/download/v1.0.11/Barline-1.0.11.zip',
+    sourceURL: 'https://github.com/Mabry-Ventures/mv-barline/releases/download/v1.0.11/Barline-1.0.11-source.tar.gz',
+    checksumsURL: 'https://github.com/Mabry-Ventures/mv-barline/releases/download/v1.0.11/SHA256SUMS',
+    releaseURL: 'https://github.com/Mabry-Ventures/mv-barline/releases/tag/v1.0.11',
     contributionURL: 'https://buy.stripe.com/cNibJ1a370l33AVgnk1ck02',
   };
   try {
