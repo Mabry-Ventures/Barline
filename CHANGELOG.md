@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.11 (build 27) — candidate
+## 1.0.11 (build 32) — candidate
 
 - Recheck temporarily unavailable helper capabilities on later requests, with
   bounded probing and no background retry loop, instead of retaining a failed
