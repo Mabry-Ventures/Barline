@@ -789,7 +789,9 @@ final class WindowServerClient: @unchecked Sendable {
         guard !isHosted(window) else {
             // Posting to Control Center when the real app is unknown can target
             // the wrong interface. A user retry may refresh the negative AX cache.
-            throw MenuBarBackendError.unavailableCapability("source application resolution")
+            throw MenuBarBackendError.unavailableCapability(
+                MenuBarBackendCapabilityReason.sourceApplicationResolution
+            )
         }
         return window.ownerPID
     }
@@ -1031,7 +1033,7 @@ final class WindowServerClient: @unchecked Sendable {
             let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left),
             let windowField = CGEventField(rawValue: 0x33)
         else {
-            throw MenuBarBackendError.unavailableCapability("menu bar drag synthesis")
+            throw MenuBarBackendError.unavailableCapability(MenuBarBackendCapabilityReason.dragSynthesis)
         }
         down.flags = .maskCommand
         down.setIntegerValueField(.eventSourceUserData, value: Int64.random(in: 1 ... Int64.max))
@@ -1109,7 +1111,7 @@ final class WindowServerClient: @unchecked Sendable {
     /// process on macOS 26 but does not trigger its movement behavior.
     private func deliver(_ event: CGEvent, to pid: pid_t) async throws {
         guard let entry = uniqueNullEvent(), let exit = uniqueNullEvent() else {
-            throw MenuBarBackendError.unavailableCapability("menu bar event delivery")
+            throw MenuBarBackendError.unavailableCapability(MenuBarBackendCapabilityReason.eventDelivery)
         }
         let delivery = HelperEventDelivery()
         let fields: [CGEventField] = [

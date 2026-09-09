@@ -218,6 +218,26 @@ public struct MenuBarBackendHealth: Codable, Equatable, Sendable {
     }
 }
 
+/// Stable capability reasons shared by the helper and privacy-safe diagnostics.
+public enum MenuBarBackendCapabilityReason {
+    public static let sourceApplicationResolution = "source application resolution"
+    public static let dragSynthesis = "menu bar drag synthesis"
+    public static let eventDelivery = "menu bar event delivery"
+}
+
+/// A local input guard expired before Barline could safely synthesize an event.
+public struct MenuBarInputIdleTimeoutError: Error, Equatable, LocalizedError, Sendable {
+    public init() {}
+
+    public var errorDescription: String? {
+        "Operation could not be completed"
+    }
+
+    public var recoverySuggestion: String? {
+        "Stop moving the pointer or pressing keys, then try again."
+    }
+}
+
 public enum MenuBarBackendError: Error, Codable, Equatable, Sendable {
     case unavailableCapability(String)
     case staleItem(MenuBarItemID)

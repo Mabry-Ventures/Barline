@@ -5,9 +5,9 @@ import Testing
 struct PrivacySafeDiagnosticsTests {
     @Test func activationHandoffFailuresUseExactClosedCodes() {
         let cases = [
-            ("source application resolution", "source_app_unresolved"),
-            ("menu bar drag synthesis", "drag_synthesis_unavailable"),
-            ("menu bar event delivery", "event_delivery_unavailable"),
+            (MenuBarBackendCapabilityReason.sourceApplicationResolution, "source_app_unresolved"),
+            (MenuBarBackendCapabilityReason.dragSynthesis, "drag_synthesis_unavailable"),
+            (MenuBarBackendCapabilityReason.eventDelivery, "event_delivery_unavailable"),
         ]
         for (reason, expected) in cases {
             #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.unavailableCapability(reason)) == expected)
@@ -15,9 +15,10 @@ struct PrivacySafeDiagnosticsTests {
                 reason + " /Users/private"
             )) == "capability_unavailable")
         }
-        #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
-            "User input did not become idle"
-        )) == "input_idle_timeout")
+        let idleError = MenuBarInputIdleTimeoutError()
+        #expect(PrivacySafeDiagnostics.errorCode(idleError) == "input_idle_timeout")
+        #expect(idleError.errorDescription == "Operation could not be completed")
+        #expect(idleError.recoverySuggestion == "Stop moving the pointer or pressing keys, then try again.")
         #expect(PrivacySafeDiagnostics.errorCode(MenuBarBackendError.operationFailed(
             "User input did not become idle /Users/private"
         )) == "operation_failed")

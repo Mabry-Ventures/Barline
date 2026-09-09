@@ -20,6 +20,9 @@ public enum PrivacySafeDiagnostics {
             case .sideEffectRecoveryFailed: return "workspace_recovery_failed"
             }
         }
+        if error is MenuBarInputIdleTimeoutError {
+            return "input_idle_timeout"
+        }
         guard let backendError = error as? MenuBarBackendError else {
             if error is CancellationError {
                 return "cancelled"
@@ -35,9 +38,9 @@ public enum PrivacySafeDiagnostics {
         switch backendError {
         case let .unavailableCapability(reason):
             switch reason {
-            case "source application resolution": return "source_app_unresolved"
-            case "menu bar drag synthesis": return "drag_synthesis_unavailable"
-            case "menu bar event delivery": return "event_delivery_unavailable"
+            case MenuBarBackendCapabilityReason.sourceApplicationResolution: return "source_app_unresolved"
+            case MenuBarBackendCapabilityReason.dragSynthesis: return "drag_synthesis_unavailable"
+            case MenuBarBackendCapabilityReason.eventDelivery: return "event_delivery_unavailable"
             default: return "capability_unavailable"
             }
         case .staleItem: return "stale_item"
@@ -52,7 +55,6 @@ public enum PrivacySafeDiagnostics {
     /// Exact known literals select constants; unknown payloads never escape.
     private static func operationCode(_ reason: String) -> String {
         switch reason {
-        case "User input did not become idle": "input_idle_timeout"
         case "Menu bar item did not respond to move": "move_no_geometry_change"
         case "Menu bar event delivery timed out": "move_delivery_timed_out"
         case "Menu bar event delivery failed": "move_delivery_failed"

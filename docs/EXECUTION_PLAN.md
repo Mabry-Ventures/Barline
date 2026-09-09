@@ -1,5 +1,27 @@
 # Barline execution plan
 
+## Build 32 localized-review refinement — September 9, 2026
+
+The next qualification candidate is 1.0.11 build 32. A matched localized review
+using Muse Spark 1.3 Contributor at xhigh and AGY Gemini 3.8 Flash High found a
+real presentation-boundary regression in build 31's diagnostic change: the
+input-idle timeout no longer conformed to `LocalizedError`, so a manual layout
+move could present a framework-domain alert. Both reviewers also identified the
+string-coupled timeout taxonomy; AGY traced the concrete `NSAlert(error:)` path.
+
+The timeout is now a typed, localized, Sendable error with a closed diagnostic
+code. Helper capability reasons used by diagnostics share compile-time constants
+across the app, core and helper. Unknown payload-bearing reasons still collapse
+to generic codes. Eight focused tests and the dirty-worktree fast gate passed;
+fresh clean-candidate gates are required after commit.
+
+Build 31 remains historical evidence. Its signed/notarized installation
+preserved settings, the production feed and recovery archive. It passed a
+20-cycle shelf probe with zero misses and 102.7 ms p95, forced helper recovery,
+a five-cycle post-recovery burst, six maintainer-observed Google Drive/Time
+Machine activations with re-hiding, and a post-relaunch first-click check. Those
+results do not certify changed build 32 source or the remaining physical matrix.
+
 ## Build 31 diagnostic candidate — September 8, 2026
 
 Build 31 includes the closed activation-error diagnostics from `211b04d`,

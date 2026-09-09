@@ -1,7 +1,8 @@
 # Reliability-first feature qualification
 
-Installed qualification candidate: **1.0.11, build 29** (September 8, 2026).
-Source: `e05e577f383ea7b41cfe95ce3abdfdc40e0ed993`.
+Next qualification candidate: **1.0.11, build 32** (September 9, 2026).
+Its source SHA is not assigned until the review refinement is committed.
+Installed build 31 remains the current historical runtime evidence baseline.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
@@ -40,18 +41,24 @@ Failed attempts remain in local evidence; do not replace them with a later pass.
 
 ## Current boundary
 
-Build 29 passed clean local nonfocus qualification: 357 Core tests, 168 fixture
-checks, four Xcode UI tests, Debug/Release compilation, static analysis and
-the automated accessibility/privacy gates. The exact commit also passed the
-Linux repository-hygiene check. These automated checks do not certify the
-installed physical scenarios in the table above.
+Build 31 source `704276d1ebcf3aecf764e414b69a481f47dd7821` passed clean
+nonfocus qualification after UI Automation authorization: 358 package tests,
+168 fixture checks, Debug/Release compilation, static analysis and automated
+accessibility/privacy gates. One native-menu fixture journey failed once, then
+all four journeys passed with the installed app stopped and again after it was
+restored. Preserve the intermittent failure; the later passes do not explain it.
 
-The Developer ID package passed nested-signature/entitlement checks, Apple
-notarization, stapling and Gatekeeper assessment. A real signed Sparkle update
-from build 28 to 29 preserved semantic preferences and the canonical production
-feed, with one running installed instance verified after the upgrade.
+Build 31's Developer ID package passed nested-signature/entitlement checks,
+Apple notarization, stapling and Gatekeeper assessment. A signed loopback
+Sparkle update from build 30 preserved semantic preferences, the production
+feed, saved layouts and recovery data, with one running installed process.
 Installed executable SHA-256:
-`8b55f05964256f692afb47cb83788b23865fb38c04aff96c55c56ed797b9c0d9`.
+`821af782cf3f76b7a4783ce61673ea1a18b3dc4ae82f2654b996df890b2f46ce`.
+
+The installed build then passed a 20-cycle shelf gate with zero misses and
+102.7 ms p95 against the 250 ms budget, forced helper recovery, a five-cycle
+post-recovery burst, six maintainer-observed target activations with five-second
+re-hiding and no duplicates, and a first-click activation after relaunch.
 
 Build 28's explicitly approved available-item recovery completed and survived a
 restart. Its original checkpoint remains archived and was preserved by the
@@ -62,14 +69,14 @@ created a checkpoint. Work-off cleared active authority and the checkpoint
 without logged operation failures. The manual archive remained unchanged.
 
 These observations do not independently prove restored item-order equivalence,
-manual override, build 29 relaunch behavior, the remaining interaction and
-accessibility matrix, or the second-device display lane. Recovery wording has a
-pending source correction; installed build 29 evidence does not certify that
-changed source. Build 29 is not a public-release GO.
+manual override, the remaining interaction/accessibility matrix, or the
+second-device display lane. The accepted localized-review refinement changes
+source and advances the next candidate to build 32; build 31 evidence cannot
+certify it. Neither build is a public-release GO.
 
-The candidate's local receipts are retained under ignored `.artifacts/ci/`,
-`.artifacts/release/` and `.artifacts/build29-installed/` paths in its frozen
-qualification worktree. Do not substitute earlier candidates' receipts.
+Build 31's local receipts are retained under ignored `.artifacts/ci/`,
+`.artifacts/release/` and `.artifacts/build31-installed-evidence/` paths in its
+frozen qualification worktree. Do not substitute them for build 32 receipts.
 
 ## Historical findings and evidence
 
