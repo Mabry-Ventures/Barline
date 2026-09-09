@@ -1,6 +1,6 @@
 # Reliability-first feature qualification
 
-Release candidate: **1.0.11, build 34** (September 9, 2026).
+Release candidate: **1.0.11, build 35** (September 9, 2026).
 On publication, its exact source is the commit referenced by the `v1.0.11` tag
 and release receipts; those external objects do not exist before publication.
 Installed build 33 is the update-source runtime evidence baseline.
@@ -75,12 +75,17 @@ second-device display lane. The accepted localized-review refinement changed
 source and advanced the candidate to build 33. Build 33 then passed signing,
 notarization, update, and installed interaction gates, but its true clean-install
 cold launch did not publish the visible shelf in Barline's Accessibility window
-list. Build 34 adds the release-blocking regression and bounded nonactivating-
-panel repair; build 31, build 32, and build 33 evidence cannot certify it.
+list. Build 34 added explicit window semantics and a post-commit notification,
+then passed its full source, distribution, signed-update and installed gates.
+Its independent clean-package run still exposed a root-publication failure:
+the shelf remained directly hit-testable but absent from the application's
+Accessibility window list. Build 35 retains the panel's AppKit registration
+while hidden and uses the standard nonactivating order path; earlier evidence
+cannot certify it.
 
 Build 31's local receipts are retained under ignored `.artifacts/ci/`,
 `.artifacts/release/` and `.artifacts/build31-installed-evidence/` paths in its
-frozen qualification worktree. Do not substitute them for build 34 receipts.
+frozen qualification worktree. Do not substitute them for build 35 receipts.
 
 ## Historical findings and evidence
 

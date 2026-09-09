@@ -7,6 +7,35 @@ import BarlineCore
 import OSLog
 import SwiftUI
 
+/// Keeps the nonactivating shelf in the application Accessibility root without
+/// replacing AppKit's dynamic window list for Settings and other native UI.
+@objc(BarlineApplication)
+@MainActor
+final class BarlineApplication: NSApplication {
+    override func accessibilityWindows() -> [Any]? {
+        let windows = super.accessibilityWindows() ?? []
+        guard let appDelegate = delegate as? AppDelegate else { return windows }
+        let shelf = appDelegate.appState.menuBarManager.barlineShelfPanel
+        return Self.includingShelf(
+            shelf,
+            whenVisible: shelf.isVisible,
+            in: windows
+        )
+    }
+
+    static func includingShelf(
+        _ shelf: AnyObject,
+        whenVisible isVisible: Bool,
+        in appKitWindows: [Any]
+    ) -> [Any] {
+        guard isVisible else { return appKitWindows }
+        guard !appKitWindows.contains(where: { ($0 as AnyObject) === shelf }) else {
+            return appKitWindows
+        }
+        return appKitWindows + [shelf]
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenRecoveryGenerationKey = "ReopenRecoveryGeneration"

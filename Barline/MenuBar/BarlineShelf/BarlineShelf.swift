@@ -112,9 +112,6 @@ final class BarlineShelfPanel: NSPanel {
             defer: false
         )
         title = "Barline Bar"
-        setAccessibilityElement(true)
-        setAccessibilityRole(.window)
-        setAccessibilitySubrole(.standardWindow)
         setAccessibilityTitle("Barline Bar")
         titlebarAppearsTransparent = true
         isMovableByWindowBackground = true
@@ -420,7 +417,11 @@ final class BarlineShelfPanel: NSPanel {
             // turn, so update synchronously before the first visible frame.
             colorManager.updateAllProperties(with: frame, screen: screen)
 
-            orderFrontRegardless()
+            // Use AppKit's normal nonactivating ordering path so the panel is
+            // also published through the application's Accessibility window
+            // list. `orderFrontRegardless()` can create a WindowServer surface
+            // for a cold accessory process without registering that root.
+            orderFront(nil)
             displayIfNeeded()
             logger.notice(
                 "Shelf ordered generation=\(request.generation, privacy: .public) attempt=\(attempt, privacy: .public)"
@@ -569,7 +570,11 @@ final class BarlineShelfPanel: NSPanel {
         presentationEpoch.advance()
         currentSection = nil
         appState?.navigationState.isBarlineShelfPresented = false
-        super.close()
+        // Preserve AppKit's window and Accessibility registration between
+        // presentations. Destroying and reordering a borderless,
+        // nonactivating panel can leave a cold accessory process with a
+        // hit-testable surface that is absent from the app's AXWindows list.
+        orderOut(nil)
     }
 }
 

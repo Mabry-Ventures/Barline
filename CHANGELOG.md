@@ -1,6 +1,19 @@
 # Changelog
 
-## 1.0.11 (build 34) — September 9, 2026
+## 1.0.11 (build 35) — September 9, 2026
+
+- Keep the nonactivating shelf panel registered with AppKit while hidden and
+  use the standard nonactivating order path when showing it. This makes a true
+  clean-install cold launch publish the shelf through the application's
+  Accessibility window list without activating Barline or claiming focus.
+  Barline augments AppKit's live Accessibility window list only while the shelf
+  is visible, preserving native Settings-window discovery. AppKit owns the
+  native shelf role; repeated presentations must expose exactly one shelf root.
+
+Build 34 passed its full source, signing, notarization, update, installed
+interaction, recovery, and performance gates. Its independent clean-package
+cold launch exposed a visible and hit-testable shelf that remained absent from
+the application Accessibility window list, so build 34 was not published.
 
 - Publish the cold-launch shelf through the macOS Accessibility window tree
   without activating Barline, making it frontmost, or claiming keyboard focus.
@@ -55,9 +68,9 @@
 - Make the shelf timing probe reject failed closes immediately and reacquire
   its target before each click, so later samples cannot hide a failed cycle.
 
-Before publication, build 34 must pass the complete local macOS 26 gate,
+Before publication, build 35 must pass the complete local macOS 26 gate,
 Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, a
-signed build-33-to-34 update, clean installation, installed target interaction,
+signed build-34-to-35 update, clean installation, installed target interaction,
 helper recovery, and bounded shelf-performance checks. macOS 27 runtime
 qualification and the extended soak remain deliberately deferred and are not
 claimed by this release.
