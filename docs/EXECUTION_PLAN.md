@@ -1,8 +1,28 @@
 # Barline execution plan
 
+## Build 35 cold-launch Accessibility root repair — September 9, 2026
+
+Build 34 passed the exact-merge full gate, Developer ID signing, Apple
+notarization, stapling, Gatekeeper, a signed build-33-to-34 update, six installed
+receipts, helper recovery, and bounded performance. Its independent install
+from the notarized ZIP then reproduced a release blocker: the shelf surface and
+exact child button were visible and directly hit-testable, but the shelf was
+missing from the cold accessory process's Accessibility window list on repeated
+presentations. Build 34 was not published.
+
+Build 35 removes the shelf's forced custom root role, retains the panel with
+`orderOut` while hidden, and presents it through AppKit's standard
+nonactivating `orderFront` path. A dedicated `NSApplication` subclass augments
+AppKit's live Accessibility window list only while the shelf is visible rather
+than replacing that list, so native Settings windows remain discoverable. The
+pointer path still must not activate
+Barline, make it frontmost, or claim key/main-window focus. Publication requires
+fresh exact-source, signed update, clean-package cold-launch, four target
+journeys, helper-recovery, and performance evidence.
+
 ## Build 34 cold-launch Accessibility closeout — September 9, 2026
 
-Barline 1.0.11 build 34 is the final public-release candidate. Build 33 passed
+Barline 1.0.11 build 34 was the next public-release candidate. Build 33 passed
 the complete local gate, signed packaging, Apple notarization, stapling,
 Gatekeeper, signed update, installed target journeys, helper interruption and
 bounded performance checks. Its true clean-install cold launch ordered a

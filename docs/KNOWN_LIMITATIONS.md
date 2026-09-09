@@ -38,7 +38,7 @@ validation requirements; see [search architecture](SEARCH_AND_APPLE_INTELLIGENCE
 
 ## Current reliability and distribution boundary
 
-Before publication, build 34 must pass source-bound open, close, native-menu,
+Before publication, build 35 must pass source-bound open, close, native-menu,
 popover, restoration, helper-recovery, clean-install, signed-update,
 notarization, Gatekeeper, and bounded performance gates on macOS 26.6.2.
 Historical failed attempts remain in local evidence and are not overwritten by

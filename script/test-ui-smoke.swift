@@ -46,9 +46,11 @@ func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 }
 
 func identifiesShelf(_ element: AXUIElement) -> Bool {
-    [kAXTitleAttribute, kAXDescriptionAttribute, "AXIdentifier"].contains {
+    let namedShelf = [kAXTitleAttribute, kAXDescriptionAttribute, "AXIdentifier"].contains {
         (attribute(element, $0) as? String) == "Barline Bar"
     }
+    return namedShelf &&
+        (attribute(element, kAXRoleAttribute) as? String) == kAXWindowRole
 }
 
 func describeAccessibilityWindows(_ applicationElement: AXUIElement) {
@@ -82,9 +84,10 @@ func observeShelf(processIdentifier: pid_t, applicationElement: AXUIElement) -> 
         applicationElement,
         kAXWindowsAttribute
     ) as? [AXUIElement] ?? []
+    let shelfAccessibilityWindows = accessibilityWindows.filter(identifiesShelf)
     return ShelfObservation(
         surfacePresent: surfacePresent,
-        accessibilityWindowPresent: accessibilityWindows.contains(where: identifiesShelf)
+        accessibilityWindowPresent: shelfAccessibilityWindows.count == 1
     )
 }
 
@@ -163,7 +166,8 @@ do {
     let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(applicationElement, 0.2)
 
-    for _ in 0 ..< 3 {
+    let shelfCycleCount = 20
+    for _ in 0 ..< shelfCycleCount {
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name("\(bundleIdentifier).runtime-smoke.toggle-shelf"),
             object: nil,
@@ -214,7 +218,7 @@ do {
         let dimensions = windows.map { "\(Int($0.width))x\(Int($0.height))" }.joined(separator: ",")
         print("INFO: local Barline build also exposed \(windows.count) visible window(s): \(dimensions)")
     }
-    print("PASS: local Barline build exposes its status item and three shelf Accessibility cycles")
+    print("PASS: local Barline build exposes its status item and \(shelfCycleCount) shelf Accessibility cycles")
 } catch {
     fputs("error: UI smoke failed: \(error)\n", stderr)
     exit(EXIT_FAILURE)
