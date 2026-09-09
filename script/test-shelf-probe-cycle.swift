@@ -2,7 +2,7 @@ import Foundation
 
 @main
 struct ShelfProbeCycleTests {
-    enum ObservationError: Error { case foregroundInterrupted }
+    enum ObservationError: Error, Sendable { case foregroundInterrupted }
 
     static func main() throws {
         var clicks = 0
@@ -60,5 +60,45 @@ struct ShelfProbeCycleTests {
             precondition(clicks == 2)
         }
         print("PASS: six shelf cycle cases: success, open timeout, close timeout, baseline, interrupted open/close")
+
+        let successfulObservation = ConcurrentObservation<Int> { _ in 42 }
+        let successfulValue = try successfulObservation.value()
+        let repeatedValue = try successfulObservation.value()
+        precondition(successfulValue == 42)
+        precondition(repeatedValue == 42)
+
+        let failedObservation = ConcurrentObservation<Int> { _ in
+            throw ObservationError.foregroundInterrupted
+        }
+        do {
+            _ = try failedObservation.value()
+            fatalError("a concurrent observation error must propagate")
+        } catch ObservationError.foregroundInterrupted {}
+
+        let cancellationStart = ContinuousClock.now
+        let cancelledObservation = ConcurrentObservation<Bool> { isCancelled in
+            while !isCancelled() {
+                usleep(5000)
+            }
+            return true
+        }
+        cancelledObservation.cancel()
+        let observedCancellation = try cancelledObservation.value()
+        precondition(observedCancellation)
+        precondition(cancellationStart.duration(to: .now) < .seconds(2))
+
+        let dispatchGate = DispatchSemaphore(value: 0)
+        let beganPolling = DispatchSemaphore(value: 0)
+        let overlappingObservation = ConcurrentObservation<Bool> { _ in
+            beganPolling.signal()
+            dispatchGate.wait()
+            return true
+        }
+        precondition(beganPolling.wait(timeout: .now() + .seconds(2)) == .success)
+        dispatchGate.signal()
+        let observedOverlap = try overlappingObservation.value()
+        precondition(observedOverlap)
+
+        print("PASS: concurrent observation value, error, cancellation, idempotency, and pre-dispatch overlap")
     }
 }

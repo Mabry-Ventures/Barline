@@ -134,8 +134,10 @@ mkdir -p "$MODULE_CACHE"
 # shared, independently tested geometry policy alongside the probe.
 PERFORMANCE_SOURCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/barline-performance-source.XXXXXX")"
 cp "$ROOT/script/measure-barline-shelf-responsiveness.swift" "$PERFORMANCE_SOURCE_DIR/main.swift"
-xcrun swiftc -module-cache-path "$MODULE_CACHE" \
+xcrun swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
+    -module-cache-path "$MODULE_CACHE" \
     -framework AppKit -framework CoreGraphics \
+    "$ROOT/script/ConcurrentObservation.swift" \
     "$ROOT/script/StatusItemFrameMatching.swift" \
     "$ROOT/script/ShelfProbeCycle.swift" \
     "$PERFORMANCE_SOURCE_DIR/main.swift" -o "$BINARY"

@@ -57,7 +57,7 @@ private func processIsRunning(_ processIdentifier: pid_t) -> Bool {
     kill(processIdentifier, 0) == 0
 }
 
-private enum ProbeError: Error, CustomStringConvertible {
+private enum ProbeError: Error, CustomStringConvertible, Sendable {
     case applicationNotRunning
     case applicationProcessChanged
     case appleEventRejected(String)
@@ -315,14 +315,15 @@ private func sourceStatusFrames(processIdentifier: pid_t) -> [CGRect] {
     }
 }
 
-private func isBarlineShelfVisible() -> Bool {
-    barlineShelfSnapshot() != nil
+private func isBarlineShelfVisible(snapshots: [WindowSnapshot]? = nil) -> Bool {
+    barlineShelfSnapshot(snapshots: snapshots) != nil
 }
 
-private func barlineShelfSnapshot() -> WindowSnapshot? {
+private func barlineShelfSnapshot(snapshots: [WindowSnapshot]? = nil) -> WindowSnapshot? {
     let expectedProcessIdentifier = ProcessInfo.processInfo.environment["BARLINE_EXPECTED_PID"]
         .flatMap(pid_t.init)
-    return windowSnapshots().first {
+    let windows = snapshots ?? windowSnapshots()
+    return windows.first {
         $0.ownerName == "Barline" &&
             $0.windowName == "Barline Bar" &&
             (expectedProcessIdentifier == nil || $0.ownerProcessIdentifier == expectedProcessIdentifier)
@@ -342,9 +343,42 @@ private struct ClickDispatch: Codable {
     let targetMoved: Bool
 }
 
+private final class ClickDispatchRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var dispatches = [ClickDispatch]()
+
+    func record(
+        startedNanoseconds: UInt64,
+        completedNanoseconds: UInt64,
+        downTimestamp: UInt64,
+        upTimestamp: UInt64,
+        downFlags: UInt64,
+        upFlags: UInt64,
+        targetMoved: Bool
+    ) {
+        lock.withLock {
+            guard dispatches.count < 2004 else { return }
+            dispatches.append(ClickDispatch(
+                sequence: dispatches.count + 1,
+                startedNanoseconds: startedNanoseconds,
+                completedNanoseconds: completedNanoseconds,
+                downTimestamp: downTimestamp,
+                upTimestamp: upTimestamp,
+                downFlags: downFlags,
+                upFlags: upFlags,
+                targetMoved: targetMoved
+            ))
+        }
+    }
+
+    func snapshot() -> [ClickDispatch] {
+        lock.withLock { dispatches }
+    }
+}
+
 private let dispatchOriginUnixSeconds = Date().timeIntervalSince1970
 private let dispatchOriginNanoseconds = DispatchTime.now().uptimeNanoseconds
-private var clickDispatches = [ClickDispatch]()
+private let clickDispatchRecorder = ClickDispatchRecorder()
 
 private func click(at point: CGPoint) throws {
     switch Configuration.probe {
@@ -384,31 +418,40 @@ private func click(at point: CGPoint) throws {
         mouseDown.post(tap: .cghidEventTap)
         usleep(20000)
         mouseUp.post(tap: .cghidEventTap)
-        if clickDispatches.count < 2004 {
-            clickDispatches.append(ClickDispatch(
-                sequence: clickDispatches.count + 1,
-                startedNanoseconds: started,
-                completedNanoseconds: DispatchTime.now().uptimeNanoseconds,
-                downTimestamp: mouseDown.timestamp, upTimestamp: mouseUp.timestamp,
-                downFlags: mouseDown.flags.rawValue, upFlags: mouseUp.flags.rawValue,
-                targetMoved: hypot(currentPoint.x - point.x, currentPoint.y - point.y) > 1
-            ))
-        }
+        clickDispatchRecorder.record(
+            startedNanoseconds: started,
+            completedNanoseconds: DispatchTime.now().uptimeNanoseconds,
+            downTimestamp: mouseDown.timestamp,
+            upTimestamp: mouseUp.timestamp,
+            downFlags: mouseDown.flags.rawValue,
+            upFlags: mouseUp.flags.rawValue,
+            targetMoved: hypot(currentPoint.x - point.x, currentPoint.y - point.y) > 1
+        )
     default:
         fputs("error: shelf click requires runtime-smoke or status-item-click\n", stderr)
         exit(2)
     }
 }
 
-private func waitForVisibility(_ target: Bool, timeout: Duration) throws -> Duration? {
-    let start = ContinuousClock.now
+private func waitForVisibility(
+    _ target: Bool,
+    timeout: Duration,
+    relativeTo measurementStart: ContinuousClock.Instant? = nil,
+    isCancelled: (() -> Bool)? = nil
+) throws -> Duration? {
+    let measurementStart = measurementStart ?? .now
+    let deadline = measurementStart.advanced(by: timeout)
     var consecutiveSamples = 0
     var committedWindowNumber: CGWindowID?
-    while start.duration(to: .now) < timeout {
-        if unexpectedForegroundUIPresent() {
+    while ContinuousClock.now < deadline {
+        if isCancelled?() == true {
+            return nil
+        }
+        let snapshots = windowSnapshots()
+        if unexpectedForegroundUIPresent(snapshots: snapshots) {
             throw ProbeError.unexpectedForegroundUI
         }
-        let shelfSnapshot = barlineShelfSnapshot()
+        let shelfSnapshot = barlineShelfSnapshot(snapshots: snapshots)
         let matchesTarget: Bool
         if target, let shelfSnapshot {
             if let committedWindowNumber {
@@ -424,7 +467,7 @@ private func waitForVisibility(_ target: Bool, timeout: Duration) throws -> Dura
         if matchesTarget {
             consecutiveSamples += 1
             if consecutiveSamples >= Configuration.committedVisibilitySamples {
-                return start.duration(to: .now)
+                return measurementStart.duration(to: .now)
             }
         } else {
             consecutiveSamples = 0
@@ -435,7 +478,29 @@ private func waitForVisibility(_ target: Bool, timeout: Duration) throws -> Dura
     return nil
 }
 
-private func unexpectedForegroundUIPresent() -> Bool {
+/// Observes WindowServer state while synthetic input is still being delivered.
+///
+/// `CGEvent.post` and status-item target discovery can block during helper recovery.
+/// Starting the observer first keeps the measured latency tied to the user's visible
+/// result without removing input dispatch or target discovery from the probe cycle.
+private typealias ConcurrentVisibilityObservation = ConcurrentObservation<Duration?>
+
+private func observeVisibilityConcurrently(
+    target: Bool,
+    timeout: Duration,
+    relativeTo measurementStart: ContinuousClock.Instant
+) -> ConcurrentVisibilityObservation {
+    ConcurrentObservation { isCancelled in
+        try waitForVisibility(
+            target,
+            timeout: timeout,
+            relativeTo: measurementStart,
+            isCancelled: isCancelled
+        )
+    }
+}
+
+private func unexpectedForegroundUIPresent(snapshots: [WindowSnapshot]? = nil) -> Bool {
     guard Configuration.probe == "status-item-click" else {
         return false
     }
@@ -445,10 +510,11 @@ private func unexpectedForegroundUIPresent() -> Bool {
     else {
         return true
     }
-    if NSWorkspace.shared.frontmostApplication?.processIdentifier == expectedProcessIdentifier {
+    if Thread.isMainThread, NSWorkspace.shared.frontmostApplication?.processIdentifier == expectedProcessIdentifier {
         return true
     }
-    return windowSnapshots().contains {
+    let windows = snapshots ?? windowSnapshots()
+    return windows.contains {
         $0.ownerProcessIdentifier == expectedProcessIdentifier &&
             $0.layer == 0 &&
             $0.bounds.width > 0 &&
@@ -482,13 +548,41 @@ private func ensureClosed(iconPoint: CGPoint) throws {
 
 private func runSingleClick(iconPoint: CGPoint) throws -> Double? {
     let start = ContinuousClock.now
+    var openingObservation: ConcurrentVisibilityObservation?
     return try ShelfProbeCycle.run(
         baselineClosed: { !isBarlineShelfVisible() },
-        click: { try click(at: iconPoint) },
+        click: {
+            if openingObservation == nil {
+                openingObservation = observeVisibilityConcurrently(
+                    target: true,
+                    timeout: Configuration.openTimeout,
+                    relativeTo: start
+                )
+            }
+            do {
+                try click(at: iconPoint)
+                guard !unexpectedForegroundUIPresent() else {
+                    openingObservation?.cancel()
+                    _ = try? openingObservation?.value()
+                    throw ProbeError.unexpectedForegroundUI
+                }
+            } catch {
+                openingObservation?.cancel()
+                _ = try? openingObservation?.value()
+                throw error
+            }
+        },
         waitForOpen: {
-            guard try waitForVisibility(true, timeout: Configuration.openTimeout) != nil else { return nil }
-            // Include dispatch and target lookup, not just the post-click poll.
-            return milliseconds(start.duration(to: .now))
+            guard
+                let observation = openingObservation,
+                let duration = try observation.value()
+            else {
+                return nil
+            }
+            guard !unexpectedForegroundUIPresent() else {
+                throw ProbeError.unexpectedForegroundUI
+            }
+            return milliseconds(duration)
         },
         waitForClose: { try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil }
     )
@@ -496,9 +590,28 @@ private func runSingleClick(iconPoint: CGPoint) throws -> Double? {
 
 private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool, silentCancellation: Bool) {
     let start = ContinuousClock.now
-    try click(at: iconPoint)
-    if try waitForVisibility(true, timeout: Configuration.feedbackBudget) != nil {
-        let feedbackInBudget = start.duration(to: .now) <= Configuration.feedbackBudget
+    let openingObservation = observeVisibilityConcurrently(
+        target: true,
+        timeout: Configuration.feedbackBudget,
+        relativeTo: start
+    )
+    do {
+        try click(at: iconPoint)
+        guard !unexpectedForegroundUIPresent() else {
+            openingObservation.cancel()
+            _ = try? openingObservation.value()
+            throw ProbeError.unexpectedForegroundUI
+        }
+    } catch {
+        openingObservation.cancel()
+        _ = try? openingObservation.value()
+        throw error
+    }
+    if let duration = try openingObservation.value() {
+        guard !unexpectedForegroundUIPresent() else {
+            throw ProbeError.unexpectedForegroundUI
+        }
+        let feedbackInBudget = duration <= Configuration.feedbackBudget
         try click(at: iconPoint)
         guard try waitForVisibility(false, timeout: Configuration.closeTimeout) != nil else {
             throw ShelfProbeCycle.Failure.closeTimedOut
@@ -521,6 +634,7 @@ private func runRapidRetry(iconPoint: CGPoint) throws -> (feedbackInBudget: Bool
 
 private let initialPointer = CGEvent(source: nil)?.location
 atexit {
+    let clickDispatches = clickDispatchRecorder.snapshot()
     if !clickDispatches.isEmpty {
         print("DISPATCH_ORIGIN unix_seconds=\(dispatchOriginUnixSeconds) monotonic_ns=\(dispatchOriginNanoseconds)")
         if let data = try? JSONEncoder().encode(clickDispatches) {

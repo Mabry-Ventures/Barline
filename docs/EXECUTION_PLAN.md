@@ -872,6 +872,17 @@ journey must observe the target menu and receipt, not just shelf visibility.
 Repeated Settings-foregrounding gates have been replaced by bounded shelf and
 helper-recovery probes. macOS 27 and release-duration soak remain user-deferred.
 
+The first clean-main Build 32 full run exposed a recovery-probe measurement
+error rather than a shelf-presentation regression: WindowServer logs showed the
+shelf ordered within milliseconds, while synchronous synthetic-event delivery
+returned hundreds of milliseconds later. The status-item probe now begins its
+WindowServer observation before dispatch, retains the pre-click latency anchor,
+requires dispatch to complete, and applies the same model to rapid retry.
+Cancellation, deadline anchoring, foreground-UI rejection, and cross-thread
+result delivery have focused strict-concurrency coverage. The corrected local
+recovery burst passes, but exact clean-SHA full qualification must be rebound
+after this gate-only change lands.
+
 Final integration review added cancellation-independent serialized compensation,
 capture permission epochs checked at UI publication, initial/late-window
 auto-hide discovery, and image-owning native shelf buttons. The 219-test Core
