@@ -28,9 +28,9 @@ and show pending app-release availability. The contribution link accepts real
 payments even from preview, and the visible copy says so. `noindex` discourages
 indexing; it is not access control.
 
-`usebarline.com` is the intended canonical domain. Production DNS/TLS, redirects,
-deployed content, and app-download destinations still require launch validation.
-Do not turn a staging deployment into a claim of public app availability.
+`usebarline.com` is the canonical production domain. DNS/TLS, redirects,
+deployed content, and app-download destinations must be revalidated for each
+release deployment.
 
 Production builds require an explicit operator-reviewed JSON configuration:
 
@@ -45,7 +45,8 @@ Mabry-Ventures/Barline GitHub release assets emitted by `script/release.sh`.
 No keys, tokens, account state, latest-release redirect, or alternate repository
 is accepted. The launch-ready source must contain anchors to those destinations, use
 correct per-page canonical URLs, and remove preview availability/indexing blocks.
-The current staged source intentionally fails this gate before output is changed.
+The launch source is production-ready, but the gate still requires the exact
+operator-reviewed configuration before it will write production output.
 
 The configuration is operator input, **not** proof of release qualification or
 asset availability. Validate the published artifacts, hashes, matching source,
@@ -54,9 +55,8 @@ Build and deployment remain separate operations. Preview remains the default.
 Production markup is intentionally constrained: no comments or templates,
 quoted href attributes, and explicitly allowlisted external destinations.
 This is a source guard, not a general HTML parser or proof of visual/AX visibility.
-Rendered desktop/mobile/keyboard QA remains required. The current source tests
-assert preview copy/indexing deliberately; launch conversion must replace those
-preview assertions with approved production-content tests in the same change.
+Rendered desktop/mobile/keyboard QA remains required. Source tests assert the
+approved production copy, canonical URLs, indexing policy, and release links.
 
 ## Public launch checklist
 

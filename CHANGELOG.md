@@ -1,14 +1,14 @@
 # Changelog
 
-## 1.0.11 (build 32) — candidate
+## 1.0.11 (build 33) — September 9, 2026
 
 - Recheck temporarily unavailable helper capabilities on later requests, with
   bounded probing and no background retry loop, instead of retaining a failed
-  startup probe permanently. Installed recovery qualification remains pending.
+  startup probe permanently. Signed installed qualification covers forced helper
+  interruption followed by a successful shelf interaction.
 
 - Distinguish interrupted Focus transaction failures from final verification
-  failures using fixed privacy-safe diagnostic codes. Recovery qualification
-  remains pending; this instrumentation does not itself fix restoration.
+  failures using fixed privacy-safe diagnostic codes.
 
 - Keep clock, Control Center and other non-hideable status items out of
   empty-space click and hover handling. Preserve genuine empty-space clicks
@@ -50,8 +50,12 @@
 - Make the shelf timing probe reject failed closes immediately and reacquire
   its target before each click, so later samples cannot hide a failed cycle.
 
-This candidate is not published or runtime-qualified. Installed feature,
-physical display, accessibility, upgrade, and release gates remain mandatory.
+Before publication, build 33 must pass the complete local macOS 26 gate,
+Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, a
+signed build-32-to-33 update, clean installation, installed target interaction,
+helper recovery, and bounded shelf-performance checks. macOS 27 runtime
+qualification and the extended soak remain deliberately deferred and are not
+claimed by this release.
 
 ## 1.0.10 (build 19) — candidate
 
@@ -92,8 +96,8 @@ and per-item global shortcuts remain future work, not release features.
 - Match macOS-hosted status-item geometry consistently in performance probes,
   with regression tests for the observed two-point source/host width difference.
 
-Barline has not published a binary release. Changes below describe the active
-development line and are not release certification.
+Changes below describe historical development candidates and are not release
+certification.
 
 ## Unreleased
 

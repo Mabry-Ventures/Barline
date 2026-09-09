@@ -1,5 +1,18 @@
 # Barline execution plan
 
+## Build 33 public-release closure — September 9, 2026
+
+Barline 1.0.11 build 33 is the final public-release candidate. Build 32 passed
+the complete local gate, signed packaging, Apple notarization, stapling,
+Gatekeeper, signed update, clean installation, source-bound target journeys,
+helper interruption and bounded performance checks. Because the launch metadata
+and site conversion change the source, build 33 must repeat those gates on its
+exact merge commit. The build increment also permits a real build-32-to-33
+Sparkle update. Publication is allowed only after both localized reviewers,
+hosted repository checks, exact-merge qualification and installed validation
+pass. macOS 27 runtime qualification, the extended soak, and the second notched
+device remain explicitly deferred and are not launch claims.
+
 ## Build 32 localized-review refinement — September 9, 2026
 
 The next qualification candidate is 1.0.11 build 32. A matched localized review

@@ -1,7 +1,8 @@
 # Releasing Barline
 
-Barline has no published binary release. `script/release.sh --unsigned` is an
-explicit non-distributable topology diagnostic. The default path validates
+Barline binary releases are produced only by the local credentialed pipeline.
+`script/release.sh --unsigned` is an explicit non-distributable topology
+diagnostic. The default path validates
 nested Developer ID signatures and App Group profiles, rejects
 `get-task-allow`, notarizes, staples, runs Gatekeeper, signs the update, and
 generates an appcast, checksums, SPDX SBOM, and exact source archive.
@@ -47,4 +48,6 @@ explicit Keychain path so a same-named credential in another Keychain backend
 cannot be selected. It defaults to the login Keychain and may be overridden with
 `--notary-keychain PATH` or `BARLINE_NOTARY_KEYCHAIN`. When profiles or
 credentials are absent, only `--unsigned` may pass and is not a release claim.
-Clean install and update-from-previous remain separately recorded manual gates.
+Clean install and update-from-previous remain separately recorded gates. The
+first public release records an update from the immediately preceding signed
+candidate because no previous public Barline version exists.
