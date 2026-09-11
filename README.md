@@ -8,7 +8,7 @@ No account, subscription, advertising, or paid feature tier.
 
 ## Status: not yet released
 
-Barline has **no public binary release yet**. Version 1.0.11 (build 35) is in
+Barline has **no public binary release yet**. Version 1.0.11 (build 36) is in
 final release qualification. When that candidate passes signing, notarization,
 and clean-install validation, this section will link the signed download,
 checksums, corresponding source, and release notes. Watch this repository to be

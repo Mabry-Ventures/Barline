@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEVELOPER_PATH="${DEVELOPER_DIR:-$(xcode-select -p)}"
 SHA="$(git -C "$ROOT" rev-parse HEAD)"
 RELEASE_ROOT="$ROOT/.artifacts/release/$SHA"
+# shellcheck source=script/lib/arm64-bundle.sh
+source "$ROOT/script/lib/arm64-bundle.sh"
 ARCHIVE="$RELEASE_ROOT/Barline.xcarchive"
 RELEASE_DERIVED_DATA="$RELEASE_ROOT/DerivedData"
 SIGNING_SCRATCH=""
@@ -136,6 +138,10 @@ if "$UNSIGNED"; then
 fi
 env DEVELOPER_DIR="$DEVELOPER_PATH" xcodebuild "${archive_arguments[@]}"
 
+# Barline is Apple Silicon only. Remove non-arm64 slices from prebuilt
+# dependencies such as Sparkle before export signs the nested code graph.
+barline_thin_bundle_to_apple_silicon "$ARCHIVE/Products/Applications/Barline.app"
+
 if "$UNSIGNED"; then
     APP="$ARCHIVE/Products/Applications/Barline.app"
 else
@@ -169,7 +175,7 @@ done
 [[ "$(plutil -extract CFBundleIdentifier raw -o - "$APP/Contents/Info.plist")" == "$APP_BUNDLE_ID" ]]
 [[ "$(plutil -extract CFBundleIdentifier raw -o - "$HELPER/Contents/Info.plist")" == "$HELPER_BUNDLE_ID" ]]
 [[ "$(plutil -extract CFBundleIdentifier raw -o - "$INTENTS/Contents/Info.plist")" == "$INTENTS_BUNDLE_ID" ]]
-[[ "$(/usr/bin/lipo -archs "$APP/Contents/MacOS/Barline")" == arm64 ]] || { printf 'error: release application is not thin arm64\n' >&2; exit 1; }
+barline_require_apple_silicon_bundle "$APP" || { printf 'error: release application contains non-Apple Silicon code\n' >&2; exit 1; }
 /usr/bin/plutil -lint "$APP/Contents/Info.plist" "$HELPER/Contents/Info.plist" "$INTENTS/Contents/Info.plist"
 
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"

@@ -20,8 +20,10 @@ build instructions, lockfiles, project files, and notices.
 The credentialed extension of the local release pipeline must sign, notarize,
 and publish without GitHub Actions. It archives into local scratch storage,
 uses Xcode's Developer ID export step to distribution-sign the complete nested
-code graph, and must validate arm64-only output and nested signing order
-(including Sparkle helpers and Barline's XPC service), Developer ID Application
+code graph after removing non-arm64 code from prebuilt dependencies such as
+Sparkle. It must validate that every Mach-O file is arm64-only, nested signing
+order (including Sparkle helpers and Barline's XPC service), Developer ID
+Application
 signing, Hardened Runtime, release entitlements, absence of `get-task-allow`,
 `codesign --verify --deep --strict`, notarization, stapling, and `spctl`.
 

@@ -10,7 +10,7 @@ The Xcode workspace lockfile is
 | CompactSlider | 1.2.1 | `e5219ff353613b6493bfe5a3333c3bfa2d1e4d57` | MIT | Native compact slider control |
 | Ifrit | 2.0.6 | `3f961f6d39cd2188305671f2ec65914d297571d0` | MIT | Collection/sequence utilities |
 | LaunchAtLogin-Modern | 1.1.0 | `a04ec1c363be3627734f6dad757d82f5d4fa8fcc` | MIT | Login-item integration |
-| Sparkle | 2.8.0 | `9a1d2a19d3595fcf8d9c447173f9a1687b3dcadb` | MIT plus bundled notices | Direct-update framework; currently disabled |
+| Sparkle | 2.9.6 | `ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a` | MIT plus bundled notices | Direct-update framework; enabled in Release builds and distributed arm64-only |
 
 Direct dependencies are permissively licensed and are documented in
 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md). Sparkle contains additional
@@ -24,6 +24,12 @@ the same five direct dependencies and neither contained the removed Semaphore
 package. Both still identify LaunchAtLogin using its older project name and URL;
 this is attribution-compatible but should be corrected to LaunchAtLogin-Modern
 when acknowledgements are next regenerated.
+
+On 2026-09-11 the Sparkle 2.9.6 license at the pinned revision was re-inspected.
+It carries the same bsdiff, sais-lite, orlp/ed25519, and SUSignatureVerifier
+notices, and the bundled acknowledgements already name each of them. Release
+packaging removes Sparkle's x86_64 slices so every distributed binary is
+arm64-only.
 
 ## Asset provenance
 

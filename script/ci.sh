@@ -220,6 +220,7 @@ run_fast() {
     run_step "installed-evidence-writer" bash ./script/test-evidence-writer.sh
     run_step "platform-lane-classification" bash ./script/test-platform-lane.sh
     run_step "installed-app-pause" bash ./script/test-installed-app-pause.sh
+    run_step "apple-silicon-bundle" bash ./script/test-arm64-bundle.sh
     run_step "repository-hygiene" ./script/ci/repo_hygiene.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "project-resolution" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \

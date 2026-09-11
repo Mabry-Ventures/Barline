@@ -18,7 +18,7 @@ under ignored `.artifacts/ci/<sha>/` directories.
 | Support-bundle privacy | Encoder content probes plus static logging/credential checks | Passes on the exact-head full gate |
 | Performance smoke | Shelf responsiveness and app-owned production reopen probes | Exact-head 20-cycle shelf and 20-cycle reopen presentation budgets pass in the unlocked interactive session |
 | Soak | Repeated Core cycles plus XPC interruption and responsiveness | Prior integration evidence exists; the release-duration soak is explicitly deferred |
-| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Build 35 requires exact-head signed packaging plus build-34-to-35 update and clean-install validation before publication |
+| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Build 36 requires exact-head signed packaging plus build-34-to-36 update and clean-install validation before publication |
 
 The fail-closed full gate runs these scripts and reports unavailable permissions
 or missing product behavior instead of silently treating them as passed.

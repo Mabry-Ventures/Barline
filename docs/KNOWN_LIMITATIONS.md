@@ -38,7 +38,7 @@ validation requirements; see [search architecture](SEARCH_AND_APPLE_INTELLIGENCE
 
 ## Current reliability and distribution boundary
 
-Before publication, build 35 must pass source-bound open, close, native-menu,
+Before publication, build 36 must pass source-bound open, close, native-menu,
 popover, restoration, helper-recovery, clean-install, signed-update,
 notarization, Gatekeeper, and bounded performance gates on macOS 26.6.2.
 Historical failed attempts remain in local evidence and are not overwritten by
@@ -50,7 +50,7 @@ when Barline's WindowServer confirmation for that presentation times out. The
 shelf stays open and the next click closes it. Automated rapid open/close
 testing observed this in about 1 of 300 cycles; ordinary click timing is
 expected to reach that window far less often. Its cause is still under
-investigation.
+investigation, and it is accepted as a known limitation for 1.0.11.
 
 The public support site and hosted Stripe checkout do not qualify the app and do
 not unlock features.
