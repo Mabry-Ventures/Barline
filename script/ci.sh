@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 # shellcheck source=script/lib/platform_lane.sh
 source "${SCRIPT_DIR}/lib/platform_lane.sh"
+# shellcheck source=script/lib/installed-app.sh
+source "${SCRIPT_DIR}/lib/installed-app.sh"
 
 MODE="${1:-}"
 [[ -n "$MODE" ]] || barline_die "usage: ./script/ci.sh {fast|nonfocus|full|release|xcode27|soak} [--installed] [--release] [--publish-status] [--xcode PATH]"
@@ -169,7 +171,12 @@ write_summary() {
     '
 }
 
-trap write_summary EXIT
+ci_exit() {
+    barline_restore_installed_app
+    write_summary
+}
+
+trap ci_exit EXIT
 
 if "$PUBLISH_STATUS"; then
     [[ "$MODE" == full || "$MODE" == xcode27 ]] || barline_die "--publish-status is supported only for full and xcode27"
@@ -212,6 +219,7 @@ run_fast() {
     run_step "installed-evidence-validator" bash ./script/test-installed-evidence.sh
     run_step "installed-evidence-writer" bash ./script/test-evidence-writer.sh
     run_step "platform-lane-classification" bash ./script/test-platform-lane.sh
+    run_step "installed-app-pause" bash ./script/test-installed-app-pause.sh
     run_step "repository-hygiene" ./script/ci/repo_hygiene.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "project-resolution" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \
@@ -301,6 +309,16 @@ run_nonfocus() {
     run_step "permission-refresh" bash ./script/test-permission-refresh.sh
     run_step "bounded-icon-import" bash ./script/test-bounded-icon-import.sh
 }
+
+# Production lanes launch a local build under the installed app's bundle
+# identifier. Pause an installed copy for the run; `ci_exit` relaunches it.
+# The installed-candidate lane validates that running copy, so leave it alone.
+case "$MODE" in
+    full|release|xcode27|soak)
+        "$INSTALLED_CANDIDATE" || barline_pause_installed_app
+        ;;
+    *) ;;
+esac
 
 case "$MODE" in
     fast)
