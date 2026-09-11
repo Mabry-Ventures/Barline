@@ -3,6 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# shellcheck source=script/lib/common.sh
+source "$ROOT/script/lib/common.sh"
+barline_require_command rg
+
 failures=0
 MODULE_CACHE="${TMPDIR:-/tmp}/barline-support-privacy-module-cache"
 BINARY="${TMPDIR:-/tmp}/barline-support-privacy-tests"

@@ -1,4 +1,5 @@
 brew "actionlint"
+brew "ripgrep"
 brew "shellcheck"
 brew "swiftformat"
 brew "swiftlint"

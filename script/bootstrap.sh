@@ -58,7 +58,7 @@ if "$INSTALL_TOOLS"; then
     brew bundle --file "$ROOT/Brewfile"
 else
     missing=()
-    for tool in actionlint shellcheck swiftformat swiftlint; do
+    for tool in actionlint rg shellcheck swiftformat swiftlint; do
         command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
     done
     ((${#missing[@]} == 0)) || barline_die "missing tools: ${missing[*]}; rerun with --install-tools"

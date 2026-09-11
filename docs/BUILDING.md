@@ -9,7 +9,7 @@ source for a release.
 
 - An Apple Silicon Mac running macOS 26 or later
 - Xcode 26.6 with its command-line tools installed
-- Homebrew only when installing the development lint tools from `Brewfile`
+- Homebrew only when installing the development and gate tools from `Brewfile`
 
 Xcode 27 is an additional compatibility lane when that toolchain and runtime
 are available; it is not a substitute for the production Xcode 26.6 lane.
@@ -24,7 +24,7 @@ cd mv-barline
 ./script/bootstrap.sh
 ```
 
-To install the pinned lint tools and configure the repository-local Git hooks:
+To install the pinned development tools and configure the repository-local Git hooks:
 
 ```bash
 ./script/bootstrap.sh --install-tools --install-hooks

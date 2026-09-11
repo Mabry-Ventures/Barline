@@ -3,6 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# shellcheck source=script/lib/common.sh
+source "$ROOT/script/lib/common.sh"
+barline_require_command rg
+
 DERIVED_DATA="$(mktemp -d "${TMPDIR:-/tmp}/barline-accessibility.XXXXXX")"
 APP="$DERIVED_DATA/Build/Products/Debug/BarlineFixture.app"
 MODULE_CACHE="${TMPDIR:-/tmp}/barline-accessibility-module-cache"
