@@ -8,6 +8,8 @@ SHA="$(git -C "$ROOT" rev-parse HEAD)"
 RELEASE_ROOT="$ROOT/.artifacts/release/$SHA"
 # shellcheck source=script/lib/arm64-bundle.sh
 source "$ROOT/script/lib/arm64-bundle.sh"
+# shellcheck source=script/lib/release-notes.sh
+source "$ROOT/script/lib/release-notes.sh"
 ARCHIVE="$RELEASE_ROOT/Barline.xcarchive"
 RELEASE_DERIVED_DATA="$RELEASE_ROOT/DerivedData"
 SIGNING_SCRATCH=""
@@ -324,7 +326,9 @@ SPARKLE_BIN="$RELEASE_DERIVED_DATA/SourcePackages/artifacts/sparkle/Sparkle/bin"
 }
 "$SPARKLE_BIN/sign_update" --account "$SPARKLE_ACCOUNT" "$ZIP" > "$ZIP.sparkle-signature.txt"
 
-cp "$ROOT/CHANGELOG.md" "$DIST/Barline-$VERSION.md"
+# Sparkle embeds these notes in its update dialog. Publish only the list items
+# from this exact version and build's CHANGELOG section.
+barline_extract_release_notes "$ROOT/CHANGELOG.md" "$VERSION" "$BUILD" "$DIST/Barline-$VERSION.md"
 "$SPARKLE_BIN/generate_appcast" --account "$SPARKLE_ACCOUNT" \
     --download-url-prefix "https://github.com/Mabry-Ventures/mv-barline/releases/download/v$VERSION/" \
     --link 'https://github.com/Mabry-Ventures/mv-barline' --embed-release-notes -o "$DIST/appcast.xml" "$DIST"

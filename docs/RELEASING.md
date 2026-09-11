@@ -27,6 +27,11 @@ Application
 signing, Hardened Runtime, release entitlements, absence of `get-task-allow`,
 `codesign --verify --deep --strict`, notarization, stapling, and `spctl`.
 
+The appcast embeds release notes that Sparkle shows in its update dialog. The
+pipeline extracts only the list items from the CHANGELOG section for the exact
+version and build, and fails if that section is missing, names a different
+build, or has no list items.
+
 The Sparkle private key is stored in Keychain account
 `mabry-ventures-barline`; only its public key is committed. The canonical feed
 is the `appcast.xml` asset on the latest GitHub release.
