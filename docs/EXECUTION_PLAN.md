@@ -40,6 +40,17 @@ failures are retained and never overwritten by a later pass. Findings are
 retained in the gate worktree under ignored
 `.artifacts/bln17-close-rate/284fce8-2026-09-11T02-40-32Z/`.
 
+The follow-up full gate on `11f44ad` failed the reopen burst when the opening
+click of cycle 13 never reached the control item: 24 control actions for 12
+presentations, with no observer failure. The maintainer briefly used the Mac
+during that run, so the miss is not attributed to BLN-17. Production gate
+cleanup also stopped the maintainer's installed Barline by process name and
+never relaunched it. `ci.sh` now pauses an installed `/Applications/Barline.app`
+only for production lanes and relaunches it on exit, leaving the
+installed-candidate lane untouched. Direct script runs still stop processes by
+name. `docs/LOCAL_CI.md` now states that `ci.sh release` takes the credentialed
+notarization path rather than an unsigned dry run.
+
 ## Repository rename to `mv-barline` — September 9, 2026
 
 The canonical repository is now `Mabry-Ventures/mv-barline` and the local

@@ -24,10 +24,18 @@ hooks. Bootstrap never uses `sudo` or changes the global Xcode selection.
 - `./script/ci.sh full` adds production XPC interruption, UI smoke, performance,
   and reopen-burst gates. These gates can present or activate production
   Barline and require an interactive validation session where focus changes are
-  acceptable.
-- `./script/ci.sh release` runs full and then the clean-candidate unsigned
-  archive/topology release dry run. Credentialed signing and publication remain
-  separate external gates.
+  acceptable. An installed Barline running from `/Applications/Barline.app`
+  (override with `BARLINE_INSTALLED_APP`) is paused for `full`, `release`,
+  `xcode27`, and `soak` and relaunched in the background when `ci.sh` exits.
+  `full --installed` leaves it running because it is the candidate under test.
+  Running production gate scripts directly still stops every process named
+  Barline and does not relaunch an installed copy.
+- `./script/ci.sh release` runs full and then `script/release.sh` on its default
+  credentialed path: Developer ID export, notarization submission to Apple,
+  stapling, Gatekeeper assessment, and Sparkle signing. It requires
+  `BARLINE_NOTARY_PROFILE` and signing values in `Config/Local.xcconfig`, and it
+  does not publish. For a non-distributable archive/topology dry run, run
+  `./script/release.sh --unsigned` on a clean candidate.
 - `./script/ci.sh xcode27 --xcode /Applications/Xcode-27.app` requires an
   explicit Xcode 27. It reports runtime support as unverified unless the host is
   actually running macOS 27.
