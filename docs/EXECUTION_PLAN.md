@@ -1,5 +1,32 @@
 # Barline execution plan
 
+## Barline 1.0.11 published — September 11, 2026
+
+Barline 1.0.11 (build 36) is published as GitHub release `v1.0.11`, marked
+latest at 2026-09-11T21:22:33Z. The annotated tag points at `3c5328f`, the
+source of the signed package. That credentialed release passed the full gate and
+Apple notarization (`Accepted`, submission
+`df1bda06-58ba-43ac-bd5f-b4f0db20fe9c`). Independent verification of the
+packaged zip passed all 23 checks: build 36 throughout, arm64-only code in all
+eight Mach-O files, strict signatures with the team identifier, Hardened
+Runtime, and secure timestamps, a stapled ticket, Gatekeeper `Notarized
+Developer ID`, matching checksums, and an appcast that embeds exactly the
+approved 1.0.11 notes. Draft assets were re-downloaded and matched byte for byte
+before publication. The live `releases/latest/download/appcast.xml` feed is
+identical to the verified appcast, and its enclosure matches the notarized zip.
+
+A signed Sparkle update from the maintainer's installed build 34 to build 36
+through a loopback feed passed. The updated executable matches the notarized
+zip, the feed URL is the `mv-barline` production feed, preference and recovery
+digests including saved layouts are unchanged, and signature, Gatekeeper,
+staple, App Intents topology, status item, and a cold relaunch all passed. The
+build 34 backup and digests are retained in ignored release evidence.
+
+The maintainer chose to publish without the four installed click journeys and
+`ci.sh full --installed`; that evidence class remains open. Clean installation
+on a separate Mac, the second notched device, accessibility, macOS 27, and the
+release-duration soak also remain open.
+
 ## Signed build 36 superseded for release notes — September 11, 2026
 
 The credentialed release on `9ace0c8` passed. `ci.sh release` completed the

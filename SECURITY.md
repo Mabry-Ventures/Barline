@@ -19,6 +19,8 @@ layouts, or diagnostic data are in scope. General feature requests and ordinary
 UI bugs belong in [GitHub Issues](https://github.com/Mabry-Ventures/mv-barline/issues)
 without sensitive attachments.
 
-No public binary release is available yet. The first qualified release and its
-security-support policy will be listed here when published. Development builds
-and unqualified macOS versions should not be mistaken for supported releases.
+The latest published release, currently
+[Barline 1.0.11](https://github.com/Mabry-Ventures/mv-barline/releases/tag/v1.0.11),
+is the supported version. Report issues against that release or the current
+`main` branch. Development builds and unqualified macOS versions are not
+supported releases.

@@ -38,12 +38,16 @@ validation requirements; see [search architecture](SEARCH_AND_APPLE_INTELLIGENCE
 
 ## Current reliability and distribution boundary
 
-Before publication, build 36 must pass source-bound open, close, native-menu,
-popover, restoration, helper-recovery, clean-install, signed-update,
-notarization, Gatekeeper, and bounded performance gates on macOS 26.6.2.
-Historical failed attempts remain in local evidence and are not overwritten by
-later passes. Physical configuration, accessibility, and release-duration soak
-remain distinct evidence classes.
+Barline 1.0.11 (build 36) was published on September 11, 2026. Before
+publication it passed its source-bound local macOS 26.6.2 gate, which covers
+shelf open and close timing, helper recovery, and fixture native-menu and
+popover journeys on a local build; Developer ID signing; notarization; stapling;
+Gatekeeper; and a signed Sparkle update from build 34 followed by a cold launch.
+Installed click journeys against the signed app and the installed-candidate gate
+were not run before publication and remain open. Historical failed attempts
+remain in local evidence and are not overwritten by later passes. Clean
+installation on a separate Mac, physical configuration, accessibility, and
+release-duration soak remain distinct evidence classes.
 
 A click that closes the shelf within about 300 ms of opening it can be ignored
 when Barline's WindowServer confirmation for that presentation times out. The
