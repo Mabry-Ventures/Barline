@@ -1,5 +1,45 @@
 # Barline execution plan
 
+## Merged rename, gate harness permissions, and BLN-17 close miss — September 10, 2026
+
+PR #12 merged by rebase as `765e0b3`, `9ac2619`, and `62e17bc` after the
+exact-head full gate on `284fce8` passed (`full-2026-09-11T02-35-11Z`), including
+all four fixture XCUITests, UI smoke, the 20-cycle performance probe, and the
+reopen burst with one forced helper recovery. `main` has an identical tree but a
+different SHA, so build 35 release evidence must be regenerated on the final
+`main` commit.
+
+Earlier attempts on the same source failed for environment reasons and remain
+retained: a locked screen (`08c4890`), an undeclared ripgrep dependency (fixed by
+`62e17bc`), and a gate host without Screen Recording. The Claude Code agent runs
+as `com.anthropic.claude-code` through Claude.app's disclaiming helper, so the
+desktop app's grant does not apply; without it CGWindowList hides other
+processes' window titles and the window-title probes report no Barline window.
+Granting Screen Recording to that bundle resolved the three production lanes.
+
+The `full-2026-09-11T02-25-20Z` attempt failed the reopen burst with
+`closeTimedOut` on cycle 11. A bounded follow-up ran 15 traced 20-cycle
+status-item probes against one Release process: 14 passed and 1 missed a close,
+about one miss per 300 open/close cycles, with passing p95 between 66.5 and
+85.2 ms. In both misses the shelf commit verifier timed out after 300 ms with
+`missingWindowServerWindow` while CGWindowList showed the shelf visible, and the
+close click posted during that wait produced no `Control action delivered` log
+and was never delivered late. Observer failures occurred on exactly those two of
+384 presentations. A slow close, panel overlap with the control item, the
+pending-commit hide guards, a main-thread hang, and Sparkle's `-spks` look-ups
+were ruled out. Where the click was delivered and why the observer missed a
+visible window remain unattributed. The commit wait predates build 35
+(`1714f09`); whether build 35 changed the rate is not established.
+
+BLN-17 stays open. Further attribution is deferred: a missed close recovers on
+the next click, human close clicks are expected to land well after the 300 ms
+commit wait, and changing the shelf path again before first publication carries
+regression risk. At the measured rate, the roughly 45 status-item cycles in a
+full gate imply about one failed full gate in seven from this cause alone; such
+failures are retained and never overwritten by a later pass. Findings are
+retained in the gate worktree under ignored
+`.artifacts/bln17-close-rate/284fce8-2026-09-11T02-40-32Z/`.
+
 ## Repository rename to `mv-barline` — September 9, 2026
 
 The canonical repository is now `Mabry-Ventures/mv-barline` and the local
