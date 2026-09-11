@@ -45,6 +45,13 @@ Historical failed attempts remain in local evidence and are not overwritten by
 later passes. Physical configuration, accessibility, and release-duration soak
 remain distinct evidence classes.
 
+A click that closes the shelf within about 300 ms of opening it can be ignored
+when Barline's WindowServer confirmation for that presentation times out. The
+shelf stays open and the next click closes it. Automated rapid open/close
+testing observed this in about 1 of 300 cycles; ordinary click timing is
+expected to reach that window far less often. Its cause is still under
+investigation.
+
 The public support site and hosted Stripe checkout do not qualify the app and do
 not unlock features.
 
