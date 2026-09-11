@@ -81,12 +81,12 @@ the application Accessibility window list, so build 34 was not published.
 - Make the shelf timing probe reject failed closes immediately and reacquire
   its target before each click, so later samples cannot hide a failed cycle.
 
-Before publication, build 36 must pass the complete local macOS 26 gate,
-Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, a
-signed build-34-to-36 update, clean installation, installed target interaction,
-helper recovery, and bounded shelf-performance checks. macOS 27 runtime
-qualification and the extended soak remain deliberately deferred and are not
-claimed by this release.
+Published September 11, 2026 as `v1.0.11`, Barline's first public release,
+after the local macOS 26 gate, Developer ID signing, Apple notarization,
+stapling, Gatekeeper assessment, and a signed update from build 34. Installed
+click journeys against the signed app were not run before publication. macOS 27
+runtime qualification and the extended soak remain deliberately deferred and are
+not claimed by this release.
 
 ## 1.0.10 (build 19) — candidate
 

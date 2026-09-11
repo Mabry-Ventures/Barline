@@ -1,8 +1,8 @@
 # Reliability-first feature qualification
 
-Release candidate: **1.0.11, build 36** (September 11, 2026).
-On publication, its exact source is the commit referenced by the `v1.0.11` tag
-and release receipts; those external objects do not exist before publication.
+Published release: **1.0.11, build 36** (September 11, 2026), tag `v1.0.11` at
+`3c5328f`. Installed click journeys and the installed-candidate gate were not run
+before publication and remain open.
 Installed build 34 is the update-source runtime evidence baseline.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
@@ -144,15 +144,14 @@ missed. Requalify the final candidate with retained raw cycle results.
 ## Visitor prerequisites
 
 Private GitHub vulnerability reporting is enabled. The maintainer-confirmed
-private conduct contact is dev@mabryventures.com. Preserve the current
-development/download disclosure
-until publication is authorized by passing release gates. Marketing drafts and
+private conduct contact is dev@mabryventures.com. The README's pre-release
+disclosure was replaced with the published 1.0.11 download on September 11. Marketing drafts and
 unrelated work must not be swept into a release commit.
 
 The September 8 public-surface preflight verified the staging site, About and
 Privacy pages, and contribution-link reachability. Staging remains `noindex`;
 link reachability is not a new payment-processing test. The public repository
-has no releases. Canonical-domain activation remains pending: `usebarline.com`
+had no releases then; `v1.0.11` was published on September 11. Canonical-domain activation remains pending: `usebarline.com`
 returned no A/AAAA answers and `www.usebarline.com` returned NXDOMAIN in the
 preflight. Verify DNS, HTTPS, versioned downloads, the update feed and support
 delivery again when the final public candidate is authorized.
