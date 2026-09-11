@@ -1,6 +1,14 @@
 # Changelog
 
-## 1.0.11 (build 35) — September 9, 2026
+## 1.0.11 (build 36) — September 11, 2026
+
+- Ship Sparkle's update framework and helpers as arm64-only. Barline supports
+  Apple Silicon only, so release packaging removes non-arm64 code from prebuilt
+  dependencies before signing and rejects any executable code in the app that
+  is not arm64.
+
+- Known limitation: a click that closes the shelf within about 300 ms of opening
+  it can be ignored. The shelf stays open and the next click closes it.
 
 - Move the canonical repository to `Mabry-Ventures/mv-barline`. The Sparkle
   update feed, About links, issue templates, release tooling, SBOM namespace,
@@ -73,9 +81,9 @@ the application Accessibility window list, so build 34 was not published.
 - Make the shelf timing probe reject failed closes immediately and reacquire
   its target before each click, so later samples cannot hide a failed cycle.
 
-Before publication, build 35 must pass the complete local macOS 26 gate,
+Before publication, build 36 must pass the complete local macOS 26 gate,
 Developer ID signing, Apple notarization, stapling, Gatekeeper assessment, a
-signed build-34-to-35 update, clean installation, installed target interaction,
+signed build-34-to-36 update, clean installation, installed target interaction,
 helper recovery, and bounded shelf-performance checks. macOS 27 runtime
 qualification and the extended soak remain deliberately deferred and are not
 claimed by this release.

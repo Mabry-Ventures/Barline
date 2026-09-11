@@ -1,9 +1,9 @@
 # Reliability-first feature qualification
 
-Release candidate: **1.0.11, build 35** (September 9, 2026).
+Release candidate: **1.0.11, build 36** (September 11, 2026).
 On publication, its exact source is the commit referenced by the `v1.0.11` tag
 and release receipts; those external objects do not exist before publication.
-Installed build 33 is the update-source runtime evidence baseline.
+Installed build 34 is the update-source runtime evidence baseline.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
@@ -81,11 +81,13 @@ Its independent clean-package run still exposed a root-publication failure:
 the shelf remained directly hit-testable but absent from the application's
 Accessibility window list. Build 35 retains the panel's AppKit registration
 while hidden and uses the standard nonactivating order path; earlier evidence
-cannot certify it.
+cannot certify it. Build 36 carries that change, ships Sparkle arm64-only, and
+accepts the BLN-17 shelf close miss as a documented known limitation. It needs
+its own exact-source evidence.
 
 Build 31's local receipts are retained under ignored `.artifacts/ci/`,
 `.artifacts/release/` and `.artifacts/build31-installed-evidence/` paths in its
-frozen qualification worktree. Do not substitute them for build 35 receipts.
+frozen qualification worktree. Do not substitute them for build 36 receipts.
 
 ## Historical findings and evidence
 

@@ -1,5 +1,28 @@
 # Barline execution plan
 
+## Build 36 Apple Silicon packaging and release decisions — September 11, 2026
+
+Build 36 advances all shipping targets from build 35 for the signed 1.0.11
+candidate. Release packaging now removes non-arm64 slices from prebuilt
+dependencies inside the archive before Developer ID export, and rejects any
+Mach-O file in the app that contains non-Apple Silicon code. The unsigned
+`bd8a3d6` dry run had shown Barline's app, helper, and Intents extension as
+arm64-only while Sparkle's framework and four helpers were universal; the
+previous check covered only the main executable.
+
+The maintainer accepted the BLN-17 shelf close miss as a documented known
+limitation for 1.0.11. Notarization uses the existing `barline-notary` login
+Keychain profile, which authenticates with an Apple ID app-specific password
+and was confirmed by a read-only notary history request on September 11. A
+validated team App Store Connect API key was also stored under that profile
+name; notarytool does not select it while the app-specific-password item
+exists.
+
+Build 36 requires the full gate, signed packaging, notarization, stapling,
+Gatekeeper, a signed build-34-to-36 update, clean-install cold launch,
+installed target journeys, helper recovery, and bounded performance on its
+exact source.
+
 ## Merged rename, gate harness permissions, and BLN-17 close miss — September 10, 2026
 
 PR #12 merged by rebase as `765e0b3`, `9ac2619`, and `62e17bc` after the
