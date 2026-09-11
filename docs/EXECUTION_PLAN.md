@@ -1,5 +1,24 @@
 # Barline execution plan
 
+## Signed build 36 superseded for release notes — September 11, 2026
+
+The credentialed release on `9ace0c8` passed. `ci.sh release` completed the
+full gate, Developer ID export, and Apple notarization (`Accepted`, submission
+`988a800c-b6fb-4e0b-b6bd-15a33669e6d6`), with stapling and Gatekeeper passing.
+Independent verification of the packaged zip confirmed build 36 in the app,
+helper, and Intents extension; arm64-only code in all eight Mach-O files,
+including Sparkle; strict signature verification with the team identifier,
+Hardened Runtime, and secure timestamps on all nested code; a valid stapled
+ticket; Gatekeeper `Notarized Developer ID`; matching SHA-256 sums; and an
+appcast requiring macOS 26.0 and arm64.
+
+That appcast embedded the entire CHANGELOG as Sparkle update-dialog notes,
+including unpublished candidate and unreleased sections and release-process
+paragraphs. The package was not published. Release packaging now embeds only
+the list items from the exact version's CHANGELOG section. The signed
+`9ace0c8` evidence cannot certify the changed source; build 36 requires a new
+credentialed release on the resulting main commit.
+
 ## Build 36 Apple Silicon packaging and release decisions — September 11, 2026
 
 Build 36 advances all shipping targets from build 35 for the signed 1.0.11
