@@ -19,7 +19,7 @@ struct BarlineSlider<Value: BinaryFloatingPoint, ValueLabel: View>: View {
         step: Value? = nil,
         @ViewBuilder valueLabel: () -> ValueLabel
     ) {
-        self._value = value
+        _value = value
         self.bounds = bounds
         self.step = step
         self.valueLabel = valueLabel()
@@ -31,10 +31,10 @@ struct BarlineSlider<Value: BinaryFloatingPoint, ValueLabel: View>: View {
         in bounds: ClosedRange<Value>,
         step: Value? = nil
     ) where ValueLabel == Text {
-        self._value = value
+        _value = value
         self.bounds = bounds
         self.step = step
-        self.valueLabel = Text(valueLabelKey)
+        valueLabel = Text(valueLabelKey)
     }
 
     private var borderShape: some InsettableShape {
@@ -46,27 +46,40 @@ struct BarlineSlider<Value: BinaryFloatingPoint, ValueLabel: View>: View {
     }
 
     private var height: CGFloat {
-        if #available(macOS 26.0, *) { 24 } else { 22 }
+        if #available(macOS 26.0, *) {
+            24
+        } else {
+            22
+        }
     }
 
     var body: some View {
-        CompactSlider(
-            value: $value,
-            in: bounds,
-            step: step ?? 0,
-            handleVisibility: .hovering(width: 0),
-            minHeight: 0,
-            gestureOptions: .default.subtracting([.scrollWheel])
-        ) {
-            valueLabel
-                .frame(height: height)
-        }
-        .compactSliderDisabledHapticFeedback(true)
-        .compactSliderSecondaryColor(
-            progressColor: .accentColor.opacity(0.5),
-            focusedProgressColor: .accentColor.opacity(0.75)
-        )
-        .clipShape(borderShape)
-        .contentShape([.interaction, .focusEffect], borderShape)
+        // CompactSlider 2 builds its content from style components instead of a
+        // trailing closure: the handle, progress fill, and label are supplied
+        // through modifiers. Haptic feedback is opt-in, so the previous
+        // explicit disable is no longer required.
+        //
+        // The progress closure receives the style configuration, whose
+        // focusState is set while hovering, dragging, or wheel-scrolling. That
+        // reproduces the brighter fill the removed compactSliderSecondaryColor
+        // modifier supplied through focusedProgressColor.
+        CompactSlider(value: $value, in: bounds, step: step ?? 0)
+            .compactSliderHandleStyle(.hidden())
+            .compactSliderOptionsByRemoving(.scrollWheel)
+            .compactSliderProgress { configuration in
+                Rectangle()
+                    .fill(
+                        Color.accentColor
+                            .opacity(configuration.focusState.isFocused ? 0.75 : 0.5)
+                    )
+            }
+            .overlay {
+                valueLabel
+                    .frame(height: height)
+                    .allowsHitTesting(false)
+            }
+            .frame(height: height)
+            .clipShape(borderShape)
+            .contentShape([.interaction, .focusEffect], borderShape)
     }
 }

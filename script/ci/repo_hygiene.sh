@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+# shellcheck source=script/lib/common.sh
+source "$ROOT/script/lib/common.sh"
 
 require() {
     command -v "$1" >/dev/null 2>&1 || { printf 'error: missing %s\n' "$1" >&2; exit 1; }

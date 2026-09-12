@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+# shellcheck source=script/lib/common.sh
+source "$ROOT/script/lib/common.sh"
 failures=0
 
 report_matches() {

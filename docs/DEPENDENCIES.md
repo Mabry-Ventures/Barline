@@ -7,7 +7,7 @@ The Xcode workspace lockfile is
 | Dependency | Pinned version | Revision | License | Purpose |
 | --- | --- | --- | --- | --- |
 | AXSwift | 0.3.2 | `81dcc36aced905d6464cc25e35f8d13184bbf21c` | MIT | Accessibility API wrapper |
-| CompactSlider | 1.2.1 | `e5219ff353613b6493bfe5a3333c3bfa2d1e4d57` | MIT | Native compact slider control |
+| CompactSlider | 2.1.0 | `52a01bd09156152881c53ba235c862e3bf5690b1` | MIT | Native compact slider control |
 | Ifrit | 2.0.6 | `3f961f6d39cd2188305671f2ec65914d297571d0` | MIT | Collection/sequence utilities |
 | LaunchAtLogin-Modern | 1.1.0 | `a04ec1c363be3627734f6dad757d82f5d4fa8fcc` | MIT | Login-item integration |
 | Sparkle | 2.9.6 | `ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a` | MIT plus bundled notices | Direct-update framework; enabled in Release builds and distributed arm64-only |
@@ -30,6 +30,31 @@ It carries the same bsdiff, sais-lite, orlp/ed25519, and SUSignatureVerifier
 notices, and the bundled acknowledgements already name each of them. Release
 packaging removes Sparkle's x86_64 slices so every distributed binary is
 arm64-only.
+
+On 2026-09-12 CompactSlider moved to 2.1.0 and the license at the pinned
+revision is Copyright (c) 2025 Alexey Bukhtin, so
+`Barline/Resources/Acknowledgements.rtf` was corrected from the 2022 line it
+carried, and `Barline/Resources/Acknowledgements.pdf` was regenerated from it.
+The PDF is the artifact `AboutSettingsPane` shows the user; the RTF is excluded
+from the app bundle and is the source of truth. Regenerate with:
+
+```
+swift script/generate_acknowledgements.swift \
+    Barline/Resources/Acknowledgements.rtf \
+    Barline/Resources/Acknowledgements.pdf
+```
+
+The generator lays the RTF out at a 504 pt content width and emits it as a
+single page through `NSPrintOperation.pdfOperation`, so it never paginates.
+Always regenerate through this script rather than re-rendering by hand: a
+paginating render duplicates a license paragraph across the page break.
+
+Its output is stable in content but not byte-identical across runs. Quartz
+stamps `CreationDate` and `ModDate` into the PDF, so two runs over an unchanged
+RTF differ in 68 bytes covering only those timestamps, with identical extracted
+text, font table, geometry, and total size. Regenerating therefore always
+produces a diff; compare `pdftotext -layout` output, not checksums, when
+deciding whether a regeneration actually changed anything.
 
 ## Asset provenance
 
