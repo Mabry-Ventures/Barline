@@ -37,7 +37,9 @@ enum WelcomePresenter {
 
     /// Opens the walkthrough from the beginning at the user's request.
     static func showAgain(appState: AppState) {
-        appState.welcome.replay()
+        // Development builds share the installed app's preferences domain, so
+        // their replays must not record progress the installed app would resume.
+        appState.welcome.replay(persistingProgress: isEligibleBuild)
         appState.activate(withPolicy: .regular)
         appState.openWindow(.welcome)
     }
