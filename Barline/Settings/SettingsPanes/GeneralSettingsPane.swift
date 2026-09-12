@@ -70,6 +70,10 @@ struct GeneralSettingsPane: View {
         LaunchAtLogin.Toggle()
         Toggle("Hide Dock icon", isOn: $settings.hideDockIcon)
             .annotation("Keep Barline out of the Dock, including while Settings is open.")
+        Button("Show Welcome Again") {
+            WelcomePresenter.showAgain(appState: appState)
+        }
+        .annotation("Walk through permissions and setting up your bar.")
     }
 
     // MARK: Barline Icon Options

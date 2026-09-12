@@ -48,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenProbeHideSettingsNotification = Notification.Name(
         "\(notificationPrefix).reopen-probe.hide-settings"
     )
+    /// Whether this install is still owed the first-run walkthrough. Declared
+    /// before `appState` because stored properties initialize in declaration
+    /// order and `AppState` may write preferences as it starts.
+    private let isFreshInstall = AppDelegate.recordFreshInstall()
+
     /// The shared app state.
     let appState = AppState()
 
@@ -129,16 +134,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Offer to move Barline into Applications before anything can request a
         // permission grant, because macOS ties grants to the app's location.
         // Development builds skip the offer and continue synchronously.
-        ApplicationRelocator.offerIfNeeded { [appState] in
+        ApplicationRelocator.offerIfNeeded { [appState, isFreshInstall] in
             // The settings, saved profiles, search metadata, and diagnostics remain
             // available without Accessibility. Features that manage other apps'
             // status items request that grant only when the user chooses them.
             appState.performSetup()
+            // A fresh install gets the first-run walkthrough, which requests each
+            // permission only when the user clicks to allow it. Upgrades and
+            // development builds are not interrupted.
+            WelcomePresenter.presentAtLaunchIfNeeded(
+                appState: appState,
+                isFreshInstall: isFreshInstall
+            )
         }
         // Permission checks can transiently report missing while macOS is
-        // reconnecting a newly installed signed build. Launch remains an
-        // accessory-only operation; permission UI is presented contextually
-        // when the user chooses a feature that needs it.
+        // reconnecting a newly installed signed build. Launch never shows a
+        // system permission dialog on its own.
+    }
+
+    /// Marks a fresh install before anything else writes preferences, and
+    /// reports whether the walkthrough is still owed. An empty preferences
+    /// domain is only trustworthy on the very first launch: migrations and the
+    /// move-to-Applications relaunch write values before the relocated copy
+    /// starts. The marker survives that handoff and is cleared when the
+    /// walkthrough ends. Upgrading users never receive it.
+    private nonisolated static func recordFreshInstall() -> Bool {
+        // Development builds share the installed app's preferences domain and
+        // never present the walkthrough, so they must not write the marker, or
+        // the next distributed copy would treat that domain as a fresh install.
+        guard isDistributedBuild else {
+            return false
+        }
+        let defaults = UserDefaults.standard
+        let key = Defaults.Key.welcomePending.rawValue
+        guard
+            let identifier = Bundle.main.bundleIdentifier,
+            let domain = defaults.persistentDomain(forName: identifier),
+            !domain.isEmpty
+        else {
+            defaults.set(true, forKey: key)
+            return true
+        }
+        return defaults.bool(forKey: key)
+    }
+
+    /// Copies distributed to users: not a development build, and signed with
+    /// Barline's Developer ID, matching walkthrough eligibility.
+    private nonisolated static var isDistributedBuild: Bool {
+        #if DEBUG
+            false
+        #else
+            DistributionIdentity.isDeveloperIDSigned
+        #endif
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {

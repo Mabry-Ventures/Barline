@@ -11,6 +11,6 @@ struct BarlineApp: App {
 
     var body: some Scene {
         SettingsWindow(appState: appDelegate.appState)
-        PermissionsWindow(appState: appDelegate.appState)
+        WelcomeWindow(appState: appDelegate.appState)
     }
 }

@@ -26,6 +26,9 @@ final class AppState: ObservableObject {
     /// Model for app-wide navigation.
     let navigationState = AppNavigationState()
 
+    /// Model for the first-run walkthrough.
+    let welcome = WelcomeModel()
+
     /// Manager for the state of the menu bar.
     let menuBarManager = MenuBarManager()
 
@@ -183,6 +186,17 @@ final class AppState: ObservableObject {
             }
             .store(in: &c)
 
+        publisherForWindow(.welcome)
+            .removeNil()
+            .flatMap { $0.publisher(for: \.isVisible) }
+            .replaceEmpty(with: false)
+            .throttle(for: 0.1, scheduler: DispatchQueue.main, latest: true)
+            .removeDuplicates()
+            .sink { [weak self] isPresented in
+                self?.navigationState.isWelcomePresented = isPresented
+            }
+            .store(in: &c)
+
         hidEventManager.$isDraggingMenuBarItem
             .removeDuplicates()
             .sink { [weak self] isDragging in
@@ -210,12 +224,13 @@ final class AppState: ObservableObject {
         // controls are visible, a low-frequency nonprompting preflight also
         // notices changes made while System Settings stays frontmost. Stop the
         // timer completely when Barline has no visible UI.
-        Publishers.CombineLatest3(
+        Publishers.CombineLatest4(
             navigationState.$isBarlineShelfPresented,
             navigationState.$isSearchPresented,
-            navigationState.$isSettingsPresented
+            navigationState.$isSettingsPresented,
+            navigationState.$isWelcomePresented
         )
-        .map { $0 || $1 || $2 }
+        .map { $0 || $1 || $2 || $3 }
         .removeDuplicates()
         .map { isVisible -> AnyPublisher<Void, Never> in
             guard isVisible else { return Empty().eraseToAnyPublisher() }
