@@ -1,5 +1,47 @@
 # Barline execution plan
 
+## Barline 1.0.12 published — September 12, 2026
+
+Barline 1.0.12 (build 37) is published as GitHub release `v1.0.12`, marked
+latest at 2026-09-12T22:55:11Z. The annotated tag points at `fcafa20`, the
+source of the signed package.
+
+`ci.sh release` on `fcafa20` passed every full-gate lane; its release step then
+failed before signing because the freshly created release worktree lacked the
+ignored `Config/Local.xcconfig`. After copying that file in, leaving the worktree
+clean, `script/release.sh` ran directly on the same commit and passed: Developer
+ID export, notarization of the zip (`Accepted`, submission
+`986af9e1-2ce2-43fa-b9b7-20b653ddc57c`) with the app stapled, a zip-only appcast
+enclosure check, and the disk image built, signed, notarized (`Accepted`,
+submission `9906d9a6-98e6-45ab-ab0f-fdd1854d242f`), stapled, and
+Gatekeeper-assessed.
+
+Independent verification passed all 34 checks: build 37 throughout, arm64-only
+code in all eight Mach-O files, strict signatures with the team identifier,
+Hardened Runtime, and secure timestamps on all nested code, stapled tickets and
+Gatekeeper `Notarized Developer ID` for both the app and the disk image, the
+disk image layout, an app inside the image byte-identical to the notarized zip,
+matching checksums that include the image, and an appcast whose single
+enclosure is the zip and which embeds exactly the approved 1.0.12 notes. All six
+draft assets were re-downloaded and matched byte for byte before publication.
+The live `releases/latest/download/appcast.xml` feed is identical to the
+verified appcast, and the public disk image and zip match the verified files.
+
+A signed Sparkle update from the maintainer's installed build 36 to build 37
+through a loopback feed passed with no failures. The updated executable matches
+the notarized zip, the feed URL is the production feed, preference and recovery
+digests including saved layouts are unchanged, and signature, Gatekeeper,
+staple, App Intents topology, status item, helper, and a cold relaunch passed.
+After the update and after the cold launch, no first-run marker or walkthrough
+progress was written and no move offer or walkthrough window appeared. The build
+36 backup is retained in ignored release evidence.
+
+Clean installation on a Mac that has never run Barline, which alone exercises
+the disk image install, the move-to-Applications offer, and the walkthrough's
+real permission grants, remains open. Installed click journeys, the second
+notched device, accessibility, macOS 27, and the release-duration soak also
+remain open.
+
 ## Build 37 release candidate for 1.0.12 — September 12, 2026
 
 Build 37 advances the app, helper, and Intents extension from build 36 as the

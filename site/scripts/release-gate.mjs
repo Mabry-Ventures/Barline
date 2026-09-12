@@ -16,7 +16,7 @@ export function validateProduction({ release, pages, headers, robots }) {
   const prefix = `${repository}/releases/download/v${version}`;
   const expected = {
     canonicalOrigin: canonical,
-    downloadURL: `${prefix}/Barline-${version}.zip`,
+    downloadURL: `${prefix}/Barline-${version}.dmg`,
     sourceURL: `${prefix}/Barline-${version}-source.tar.gz`,
     checksumsURL: `${prefix}/SHA256SUMS`,
     releaseURL: `${repository}/releases/tag/v${version}`,

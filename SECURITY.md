@@ -20,7 +20,7 @@ UI bugs belong in [GitHub Issues](https://github.com/Mabry-Ventures/mv-barline/i
 without sensitive attachments.
 
 The latest published release, currently
-[Barline 1.0.11](https://github.com/Mabry-Ventures/mv-barline/releases/tag/v1.0.11),
+[Barline 1.0.12](https://github.com/Mabry-Ventures/mv-barline/releases/tag/v1.0.12),
 is the supported version. Report issues against that release or the current
 `main` branch. Development builds and unqualified macOS versions are not
 supported releases.

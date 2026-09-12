@@ -1,13 +1,10 @@
 # Reliability-first feature qualification
 
-Release candidate: **1.0.12, build 37** (September 12, 2026). It adds the
-drag-to-Applications disk image, the move-to-Applications offer, and the
-first-run walkthrough, and needs its own exact-source evidence.
-
-Published release: **1.0.11, build 36** (September 11, 2026), tag `v1.0.11` at
-`3c5328f`. Installed click journeys and the installed-candidate gate were not run
-before publication and remain open.
-Installed build 34 is the update-source runtime evidence baseline.
+Published release: **1.0.12, build 37** (September 12, 2026), tag `v1.0.12` at
+`fcafa20`. Clean installation on a Mac that has never run Barline, installed
+click journeys, and the installed-candidate gate were not run before publication
+and remain open.
+Installed build 36 is the update-source runtime evidence baseline.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
 Failed attempts remain in local evidence; do not replace them with a later pass.
