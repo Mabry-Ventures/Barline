@@ -12,11 +12,6 @@ AXSwift 0.3.2 is MIT-licensed. Copyright (c) 2017 Tyler Mandry.
 
 CompactSlider 2.1.0 is MIT-licensed. Copyright (c) 2025 Alexey Bukhtin.
 
-## Ifrit
-
-Ifrit 2.0.6 is MIT-licensed. Copyright (c) 2024 Andrii Vynnychenko and Kirollos
-Risk (original `fuse-swift` repository code).
-
 ## LaunchAtLogin-Modern
 
 LaunchAtLogin-Modern 1.1.0 is MIT-licensed. Copyright (c) Sindre Sorhus
