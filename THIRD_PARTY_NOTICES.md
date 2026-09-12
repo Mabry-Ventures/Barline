@@ -30,7 +30,8 @@ Corporation, and Big Nerd Ranch. Sparkle also incorporates separately noticed
 code from bsdiff, sais-lite, orlp/ed25519, and Mark Hamlin. The complete notices
 ship in `Barline/Resources/Acknowledgements.rtf` and must
 be regenerated into Barline's shipping acknowledgements when dependencies are
-changed.
+changed, by running `script/generate_acknowledgements.swift` over the RTF to
+produce `Barline/Resources/Acknowledgements.pdf`.
 
 ## Assets inherited from Ice
 

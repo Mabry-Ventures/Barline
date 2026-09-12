@@ -34,15 +34,27 @@ arm64-only.
 On 2026-09-12 CompactSlider moved to 2.1.0 and the license at the pinned
 revision is Copyright (c) 2025 Alexey Bukhtin, so
 `Barline/Resources/Acknowledgements.rtf` was corrected from the 2022 line it
-carried. The bundled `Barline/Resources/Acknowledgements.pdf` is the artifact
-`AboutSettingsPane` actually shows the user, and it was NOT regenerated: it
-still names CompactSlider under the 2022 copyright, and it still carries a
-full Ifrit section. Its producer metadata is `Quartz PDFContext` at a custom
-504x2574 pt page, and the settings that produced it are not recorded here.
-Re-rendering it from the RTF with NSPrintOperation reproduces the text but not
-the pagination, duplicating a license paragraph across a page break, so the
-stale PDF was left in place rather than replaced with a mis-rendered one.
-Regenerating it faithfully is outstanding work and blocks nothing else.
+carried, and `Barline/Resources/Acknowledgements.pdf` was regenerated from it.
+The PDF is the artifact `AboutSettingsPane` shows the user; the RTF is excluded
+from the app bundle and is the source of truth. Regenerate with:
+
+```
+swift script/generate_acknowledgements.swift \
+    Barline/Resources/Acknowledgements.rtf \
+    Barline/Resources/Acknowledgements.pdf
+```
+
+The generator lays the RTF out at a 504 pt content width and emits it as a
+single page through `NSPrintOperation.pdfOperation`, so it never paginates.
+Always regenerate through this script rather than re-rendering by hand: a
+paginating render duplicates a license paragraph across the page break.
+
+Its output is stable in content but not byte-identical across runs. Quartz
+stamps `CreationDate` and `ModDate` into the PDF, so two runs over an unchanged
+RTF differ in 68 bytes covering only those timestamps, with identical extracted
+text, font table, geometry, and total size. Regenerating therefore always
+produces a diff; compare `pdftotext -layout` output, not checksums, when
+deciding whether a regeneration actually changed anything.
 
 ## Asset provenance
 
