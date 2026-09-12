@@ -159,6 +159,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// starts. The marker survives that handoff and is cleared when the
     /// walkthrough ends. Upgrading users never receive it.
     private nonisolated static func recordFreshInstall() -> Bool {
+        // Development builds share the installed app's preferences domain and
+        // never present the walkthrough, so they must not write the marker, or
+        // the next distributed copy would treat that domain as a fresh install.
+        guard isDistributedBuild else {
+            return false
+        }
         let defaults = UserDefaults.standard
         let key = Defaults.Key.welcomePending.rawValue
         guard
@@ -170,6 +176,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         return defaults.bool(forKey: key)
+    }
+
+    /// Copies distributed to users: not a development build, and signed with
+    /// Barline's Developer ID, matching walkthrough eligibility.
+    private nonisolated static var isDistributedBuild: Bool {
+        #if DEBUG
+            false
+        #else
+            DistributionIdentity.isDeveloperIDSigned
+        #endif
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
