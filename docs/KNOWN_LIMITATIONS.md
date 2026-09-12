@@ -52,8 +52,10 @@ second Mac in a fresh Standard user account on September 12, 2026: the disk
 image install, the move-to-Applications guidance when opened from Downloads,
 and the walkthrough's real Accessibility and Screen Recording grants, including
 resuming after Quit & Reopen. That result is manual and did not record the
-macOS build. Installed click journeys against the signed app, physical configuration, accessibility, and release-duration soak
-also remain distinct open evidence classes. Historical failed attempts remain in
+macOS build. The maintainer also reported installed click journeys against the
+signed app, a notched second Mac, and VoiceOver with Full Keyboard Access
+passing, likewise as manual results. Remaining open evidence classes are macOS 27 runtime qualification and the
+release-duration soak. Historical failed attempts remain in
 local evidence and are not overwritten by later passes.
 
 A click that closes the shelf within about 300 ms of opening it can be ignored

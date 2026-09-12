@@ -1,6 +1,6 @@
 # Barline execution plan
 
-## 1.0.12 clean installation reported — September 12, 2026
+## 1.0.12 clean installation and manual qualification reported — September 12, 2026
 
 The maintainer reported a clean installation of the published `v1.0.12` (build
 37) passing on a second Mac in a fresh Standard user account, which has no
@@ -13,8 +13,10 @@ the move-to-Applications guidance appeared before any permission prompt, and the
 walkthrough started after moving. This is a manual result; the macOS build was
 not recorded. It closes BLN-26.
 
-Installed click journeys, the second notched device, accessibility, macOS 27,
-and the release-duration soak remain open.
+The maintainer also reported, as manual results on the published build,
+installed click journeys, Barline on a notched second Mac, and VoiceOver with
+Full Keyboard Access passing. macOS 27 runtime qualification, the
+release-duration soak, and the automated installed-candidate gate remain open.
 
 ## Barline 1.0.12 published — September 12, 2026
 
