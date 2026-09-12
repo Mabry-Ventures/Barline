@@ -1,5 +1,9 @@
 # Reliability-first feature qualification
 
+Release candidate: **1.0.12, build 37** (September 12, 2026). It adds the
+drag-to-Applications disk image, the move-to-Applications offer, and the
+first-run walkthrough, and needs its own exact-source evidence.
+
 Published release: **1.0.11, build 36** (September 11, 2026), tag `v1.0.11` at
 `3c5328f`. Installed click journeys and the installed-candidate gate were not run
 before publication and remain open.

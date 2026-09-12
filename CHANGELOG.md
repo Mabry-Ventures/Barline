@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.12 (build 37) — September 12, 2026
+
+- Download Barline as a disk image. Open it and drag Barline onto the
+  Applications shortcut. The zip remains the update package, so updating from an
+  earlier version works as before.
+
+- When Barline is opened from outside an Applications folder, it offers to move
+  itself there before asking for any permission. macOS ties Accessibility and
+  Screen Recording permission to where an app runs, so permission granted from
+  Downloads could otherwise be lost after moving the app.
+
+- New installs open a short walkthrough. It explains Accessibility and Screen
+  Recording, asks for each only when you click, shows how the visible, hidden,
+  and always-hidden sections work, and opens the layout editor. Every step can be
+  skipped, and Settings › General can show it again. People updating from an
+  earlier version are not shown it.
+
+- Update the CompactSlider control library to 2.1.0 and remove the unused Ifrit
+  library. The acknowledgements in About now match the libraries Barline ships.
+
+- Known limitation: a click that closes the shelf within about 300 ms of opening
+  it can be ignored. The shelf stays open and the next click closes it.
+
 ## 1.0.11 (build 36) — September 11, 2026
 
 - Ship Sparkle's update framework and helpers as arm64-only. Barline supports
