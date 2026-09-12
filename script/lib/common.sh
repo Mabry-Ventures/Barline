@@ -34,20 +34,40 @@ for barline_utf8_locale in en_US.UTF-8 C.UTF-8; do
     fi
 done
 unset barline_utf8_locale barline_available_locales
-# Normalize rather than append. Ruby rejects a second, conflicting encoding
-# option outright -- `RUBYOPT="-EUS-ASCII -EUTF-8"` aborts every invocation with
-# `default_external already set to US-ASCII (RuntimeError)` -- and the same is
-# true of the `--encoding=` and `--external-encoding=` spellings. Appending
-# would therefore break every Ruby lane for anyone whose environment already
-# pins a different encoding. Strip any existing encoding option first, then set
+# Normalize rather than append. Ruby rejects a second, conflicting external
+# encoding outright -- `RUBYOPT="-EUS-ASCII -EUTF-8"` aborts every invocation
+# with `default_external already set to US-ASCII (RuntimeError)`. Appending
+# would therefore break every Ruby lane for anyone whose environment pins
+# another encoding. Strip any existing external-encoding option, then set
 # exactly one. This also keeps the value stable when common.sh is sourced more
 # than once per run, which it is: ci.sh sources it and so does each gate script
 # it invokes.
-RUBYOPT="$(
-    printf '%s' "${RUBYOPT:-}" |
-        sed -E 's/(^|[[:space:]])(-E[^[:space:]]*|--encoding=[^[:space:]]*|--external-encoding=[^[:space:]]*)/\1/g' |
-        sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
-)"
+#
+# Three option names set the external encoding, each in three spellings:
+# attached (-EUS-ASCII), equals (--encoding=US-ASCII), and space-separated
+# (--encoding US-ASCII), all of which Ruby accepts from RUBYOPT. The space
+# forms must drop the following argument too, or a bare `US-ASCII` token is
+# left behind that Ruby still reads as an encoding.
+#
+# --internal-encoding is deliberately preserved: it does not conflict with a
+# later -E, so removing it would discard a setting the caller chose.
+barline_normalize_rubyopt() {
+    awk '
+        BEGIN { out = "" }
+        {
+            for (i = 1; i <= NF; i++) {
+                word = $i
+                if (word ~ /^(-E|--encoding|--external-encoding)$/) { i++; continue }
+                if (word ~ /^-E./) { continue }
+                if (word ~ /^--encoding=/) { continue }
+                if (word ~ /^--external-encoding=/) { continue }
+                out = (out == "" ? word : out " " word)
+            }
+        }
+        END { print out }
+    ' <<<"${1-}"
+}
+RUBYOPT="$(barline_normalize_rubyopt "${RUBYOPT:-}")"
 export RUBYOPT="${RUBYOPT:+$RUBYOPT }-EUTF-8"
 
 barline_die() {
