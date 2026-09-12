@@ -49,6 +49,13 @@ remain in local evidence and are not overwritten by later passes. Clean
 installation on a separate Mac, physical configuration, accessibility, and
 release-duration soak remain distinct evidence classes.
 
+Barline 1.0.12 (build 37) is the release candidate. Before publication it must
+pass its exact-head local gate, Developer ID signing, notarization and stapling
+of both the zip and the disk image, Gatekeeper, and a signed Sparkle update from
+the installed 1.0.11 (build 36) followed by a cold launch. Clean installation,
+including the move-to-Applications offer and the first-run walkthrough, is
+qualified separately on a Mac that has never run Barline.
+
 A click that closes the shelf within about 300 ms of opening it can be ignored
 when Barline's WindowServer confirmation for that presentation times out. The
 shelf stays open and the next click closes it. Automated rapid open/close
