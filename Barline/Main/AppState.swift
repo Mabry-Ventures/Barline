@@ -26,6 +26,9 @@ final class AppState: ObservableObject {
     /// Model for app-wide navigation.
     let navigationState = AppNavigationState()
 
+    /// Model for the first-run walkthrough.
+    let welcome = WelcomeModel()
+
     /// Manager for the state of the menu bar.
     let menuBarManager = MenuBarManager()
 

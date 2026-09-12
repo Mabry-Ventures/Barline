@@ -174,6 +174,8 @@ extension Defaults {
         // MARK: First Run
 
         case applicationLocationOfferDeclined = "ApplicationLocationOfferDeclined"
+        case welcomeCompleted = "WelcomeCompleted"
+        case welcomeStep = "WelcomeStep"
 
         // MARK: Migration
 

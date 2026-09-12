@@ -48,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let reopenProbeHideSettingsNotification = Notification.Name(
         "\(notificationPrefix).reopen-probe.hide-settings"
     )
+    /// Whether Barline's preferences held any value before this launch wrote
+    /// one. Declared before `appState` because stored properties initialize in
+    /// declaration order and `AppState` may write preferences as it starts.
+    private let hadPreferencesBeforeLaunch = AppDelegate.preferencesExist()
+
     /// The shared app state.
     let appState = AppState()
 
@@ -129,16 +134,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Offer to move Barline into Applications before anything can request a
         // permission grant, because macOS ties grants to the app's location.
         // Development builds skip the offer and continue synchronously.
-        ApplicationRelocator.offerIfNeeded { [appState] in
+        ApplicationRelocator.offerIfNeeded { [appState, hadPreferencesBeforeLaunch] in
             // The settings, saved profiles, search metadata, and diagnostics remain
             // available without Accessibility. Features that manage other apps'
             // status items request that grant only when the user chooses them.
             appState.performSetup()
+            // A fresh install gets the first-run walkthrough, which requests each
+            // permission only when the user clicks to allow it. Upgrades and
+            // development builds are not interrupted.
+            WelcomePresenter.presentAtLaunchIfNeeded(
+                appState: appState,
+                hadPreferencesBeforeLaunch: hadPreferencesBeforeLaunch
+            )
         }
         // Permission checks can transiently report missing while macOS is
-        // reconnecting a newly installed signed build. Launch remains an
-        // accessory-only operation; permission UI is presented contextually
-        // when the user chooses a feature that needs it.
+        // reconnecting a newly installed signed build. Launch never shows a
+        // system permission dialog on its own.
+    }
+
+    /// Reads the preferences domain directly rather than through `Defaults`, so
+    /// the check has no dependency on app state that may not exist yet.
+    private nonisolated static func preferencesExist() -> Bool {
+        guard
+            let identifier = Bundle.main.bundleIdentifier,
+            let domain = UserDefaults.standard.persistentDomain(forName: identifier)
+        else {
+            return false
+        }
+        return !domain.isEmpty
     }
 
     func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {

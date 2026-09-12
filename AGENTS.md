@@ -45,8 +45,11 @@ hygiene workflow; never add `macos-*`, `self-hosted`, or
 
 - One product and one feature set: no account, subscription, tier, analytics,
   advertising, cloud service, remote AI, or hidden payment gate.
-- Request permissions contextually. Do not prompt for Accessibility or Screen
-  Recording at first launch merely to enter the app.
+- Request permissions contextually. Never show an Accessibility or Screen
+  Recording dialog the user did not ask for, and never make a permission a
+  condition of using the app. The first-run walkthrough may explain both
+  permissions and request each one only when the user clicks to allow it;
+  every step must be skippable.
 - Never log secrets, user content, screen images, usernames, full paths, raw
   process inventories, signing identities, or private profile names.
 - Keep identity in `Config/*.xcconfig`. Keep credentials and

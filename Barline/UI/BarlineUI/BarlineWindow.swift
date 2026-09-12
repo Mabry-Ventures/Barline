@@ -41,13 +41,15 @@ struct BarlineWindow<Content: View>: Scene {
         }
     }
 
-    @ViewBuilder
     private var windowContentView: some View {
         content.onWindowChange { window in
             window?.collectionBehavior.insert(.moveToActiveSpace)
         }
     }
 
+    // The branches return different opaque scene types, which an `if`
+    // expression cannot unify, so the explicit returns are required.
+    // swiftformat:disable redundantReturn
     private var windowScene: some Scene {
         if #available(macOS 15.0, *) {
             return windowSceneModern
@@ -55,6 +57,8 @@ struct BarlineWindow<Content: View>: Scene {
             return windowSceneLegacy
         }
     }
+
+    // swiftformat:enable redundantReturn
 
     @available(macOS 15.0, *)
     private var windowSceneModern: some Scene {
@@ -83,8 +87,8 @@ enum BarlineWindowIdentifier: String, Sendable, CustomStringConvertible {
     /// The identifier for Barline's main settings window.
     case settings = "SettingsWindow"
 
-    /// The identifier for Barline's permissions window.
-    case permissions = "PermissionsWindow"
+    /// The identifier for Barline's first-run walkthrough window.
+    case welcome = "WelcomeWindow"
 
     /// The non-localized title of the corresponding window.
     ///
@@ -92,7 +96,7 @@ enum BarlineWindowIdentifier: String, Sendable, CustomStringConvertible {
     var titleString: String {
         switch self {
         case .settings: "Barline"
-        case .permissions: "Permissions"
+        case .welcome: "Welcome to Barline"
         }
     }
 
