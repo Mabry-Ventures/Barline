@@ -34,6 +34,20 @@ for barline_utf8_locale in en_US.UTF-8 C.UTF-8; do
     fi
 done
 unset barline_utf8_locale barline_available_locales
+# Normalize rather than append. Ruby rejects a second, conflicting encoding
+# option outright -- `RUBYOPT="-EUS-ASCII -EUTF-8"` aborts every invocation with
+# `default_external already set to US-ASCII (RuntimeError)` -- and the same is
+# true of the `--encoding=` and `--external-encoding=` spellings. Appending
+# would therefore break every Ruby lane for anyone whose environment already
+# pins a different encoding. Strip any existing encoding option first, then set
+# exactly one. This also keeps the value stable when common.sh is sourced more
+# than once per run, which it is: ci.sh sources it and so does each gate script
+# it invokes.
+RUBYOPT="$(
+    printf '%s' "${RUBYOPT:-}" |
+        sed -E 's/(^|[[:space:]])(-E[^[:space:]]*|--encoding=[^[:space:]]*|--external-encoding=[^[:space:]]*)/\1/g' |
+        sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+)"
 export RUBYOPT="${RUBYOPT:+$RUBYOPT }-EUTF-8"
 
 barline_die() {
