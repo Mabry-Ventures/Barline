@@ -126,10 +126,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         #endif
 
-        // The settings, saved profiles, search metadata, and diagnostics remain
-        // available without Accessibility. Features that manage other apps'
-        // status items request that grant only when the user chooses them.
-        appState.performSetup()
+        // Offer to move Barline into Applications before anything can request a
+        // permission grant, because macOS ties grants to the app's location.
+        // Development builds skip the offer and continue synchronously.
+        ApplicationRelocator.offerIfNeeded { [appState] in
+            // The settings, saved profiles, search metadata, and diagnostics remain
+            // available without Accessibility. Features that manage other apps'
+            // status items request that grant only when the user chooses them.
+            appState.performSetup()
+        }
         // Permission checks can transiently report missing while macOS is
         // reconnecting a newly installed signed build. Launch remains an
         // accessory-only operation; permission UI is presented contextually

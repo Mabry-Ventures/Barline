@@ -222,6 +222,9 @@ run_fast() {
     run_step "installed-app-pause" bash ./script/test-installed-app-pause.sh
     run_step "apple-silicon-bundle" bash ./script/test-arm64-bundle.sh
     run_step "release-notes-extraction" bash ./script/test-release-notes.sh
+    if [[ "$(uname -s)" == Darwin ]]; then
+        run_step "dmg-layout" bash ./script/test-dmg-layout.sh
+    fi
     run_step "repository-hygiene" ./script/ci/repo_hygiene.sh
     if [[ "$(uname -s)" == Darwin ]]; then
         run_step "project-resolution" env DEVELOPER_DIR="${DEVELOPER_PATH:-$(xcode-select -p)}" xcodebuild \

@@ -5,7 +5,8 @@ Barline binary releases are produced only by the local credentialed pipeline.
 diagnostic. The default path validates
 nested Developer ID signatures and App Group profiles, rejects
 `get-task-allow`, notarizes, staples, runs Gatekeeper, signs the update, and
-generates an appcast, checksums, SPDX SBOM, and exact source archive.
+generates an appcast, checksums, SPDX SBOM, exact source archive, and a signed,
+notarized drag-to-Applications disk image.
 
 ## Preconditions
 
@@ -35,6 +36,25 @@ build, or has no list items.
 The Sparkle private key is stored in Keychain account
 `mabry-ventures-barline`; only its public key is committed. The canonical feed
 is the `appcast.xml` asset on the latest GitHub release.
+
+## Download artifacts
+
+`Barline-<version>.dmg` is the first-install download: a read-only image
+holding the stapled app beside an `Applications` shortcut. It is built with the
+system `hdiutil` rather than a third-party packaging tool, signed with the same
+Developer ID certificate that signed the app, notarized, stapled, and assessed
+with `spctl`. `script/test-dmg-layout.sh` verifies the layout in the fast gate.
+
+`Barline-<version>.zip` remains the Sparkle update payload. `generate_appcast`
+scans every archive in the distribution folder, so the pipeline builds the disk
+image only after the appcast exists and fails if the appcast enclosure is
+anything but the zip.
+
+The publication commit for a release that ships a disk image must move the
+README download link, `site/src/index.html`, and the site release gate
+(`site/scripts/release-gate.mjs` and `site/tests/`) from the zip to that
+version's `.dmg` together. The site gate binds the homepage to the published
+release, so this switch cannot land before the disk image exists on GitHub.
 
 ## Credentials
 

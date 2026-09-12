@@ -171,6 +171,10 @@ extension Defaults {
 
         case menuBarAppearanceConfigurationV2 = "MenuBarAppearanceConfigurationV2"
 
+        // MARK: First Run
+
+        case applicationLocationOfferDeclined = "ApplicationLocationOfferDeclined"
+
         // MARK: Migration
 
         case hasMigrated0_8_0

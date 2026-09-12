@@ -10,6 +10,8 @@ RELEASE_ROOT="$ROOT/.artifacts/release/$SHA"
 source "$ROOT/script/lib/arm64-bundle.sh"
 # shellcheck source=script/lib/release-notes.sh
 source "$ROOT/script/lib/release-notes.sh"
+# shellcheck source=script/lib/dmg.sh
+source "$ROOT/script/lib/dmg.sh"
 ARCHIVE="$RELEASE_ROOT/Barline.xcarchive"
 RELEASE_DERIVED_DATA="$RELEASE_ROOT/DerivedData"
 SIGNING_SCRATCH=""
@@ -78,7 +80,7 @@ if ! "$UNSIGNED"; then
     EXPORT_OPTIONS="$SIGNING_SCRATCH/ExportOptions.plist"
 fi
 
-for command in xcodebuild codesign ditto plutil ruby shasum security openssl base64 date; do
+for command in xcodebuild codesign ditto hdiutil plutil ruby shasum security openssl base64 date; do
     command -v "$command" >/dev/null 2>&1 || { printf 'error: missing %s\n' "$command" >&2; exit 1; }
 done
 for required in LICENSE NOTICE.md THIRD_PARTY_NOTICES.md PRIVACY.md SECURITY.md docs/PROVENANCE.md docs/BUILDING.md; do
@@ -333,11 +335,31 @@ barline_extract_release_notes "$ROOT/CHANGELOG.md" "$VERSION" "$BUILD" "$DIST/Ba
     --download-url-prefix "https://github.com/Mabry-Ventures/mv-barline/releases/download/v$VERSION/" \
     --link 'https://github.com/Mabry-Ventures/mv-barline' --embed-release-notes -o "$DIST/appcast.xml" "$DIST"
 
+# The disk image is the first-install download; the zip stays the Sparkle
+# update payload. generate_appcast scans every archive in the folder, so the
+# image is built only after the appcast exists, and the enclosure is checked so
+# a later reordering cannot silently hand updates a disk image. Only enclosure
+# URLs are inspected: embedded release notes may legitimately mention the .dmg.
+EXPECTED_ENCLOSURE="https://github.com/Mabry-Ventures/mv-barline/releases/download/v$VERSION/Barline-$VERSION.zip"
+barline_require_zip_enclosures "$DIST/appcast.xml" "$EXPECTED_ENCLOSURE" || exit 1
+DMG="$DIST/Barline-$VERSION.dmg"
+barline_build_dmg "$APP" "$DMG" Barline || exit 1
+barline_require_dmg_layout "$DMG" Barline.app || exit 1
+codesign --sign "$SIGNING_CERT_FINGERPRINT" --timestamp "$DMG"
+codesign --verify --strict --verbose=2 "$DMG"
+env DEVELOPER_DIR="$DEVELOPER_PATH" xcrun notarytool submit "$DMG" \
+    --keychain-profile "$NOTARY_PROFILE" --keychain "$NOTARY_KEYCHAIN" \
+    --wait --output-format json > "$RELEASE_ROOT/dmg-notarization.json"
+grep -Eq '"status"[[:space:]]*:[[:space:]]*"Accepted"' "$RELEASE_ROOT/dmg-notarization.json" || { printf 'error: disk image notarization was not accepted\n' >&2; exit 1; }
+env DEVELOPER_DIR="$DEVELOPER_PATH" xcrun stapler staple "$DMG"
+env DEVELOPER_DIR="$DEVELOPER_PATH" xcrun stapler validate "$DMG"
+spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+
 validate_exact_candidate
 git -C "$ROOT" archive --format=tar.gz --prefix="Barline-$VERSION/" -o "$DIST/Barline-$VERSION-source.tar.gz" "$SHA"
 "$ROOT/script/generate-spdx-sbom.rb" "$ROOT" "$VERSION" "$BUILD" "$SHA" "$DIST/Barline-$VERSION.spdx.json"
 validate_exact_candidate
-(cd "$DIST" && shasum -a 256 "Barline-$VERSION.zip" "Barline-$VERSION-source.tar.gz" "Barline-$VERSION.spdx.json" appcast.xml > SHA256SUMS)
+(cd "$DIST" && shasum -a 256 "Barline-$VERSION.dmg" "Barline-$VERSION.zip" "Barline-$VERSION-source.tar.gz" "Barline-$VERSION.spdx.json" appcast.xml > SHA256SUMS)
 
-printf 'PASS: signed, notarized, stapled, Gatekeeper-assessed release package generated at %s\n' "$DIST"
+printf 'PASS: signed, notarized, stapled, Gatekeeper-assessed release package and disk image generated at %s\n' "$DIST"
 printf 'MANUAL RELEASE EVIDENCE STILL REQUIRED: clean install and update from the previous public Barline version\n'
