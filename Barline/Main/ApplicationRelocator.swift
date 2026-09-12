@@ -38,13 +38,14 @@ enum ApplicationRelocator {
         }
     }
 
-    /// Development and test builds run from build products and must never be
-    /// interrupted, so only release builds are eligible.
+    /// Only copies distributed to users are eligible. Development builds and
+    /// locally built Release products, including the gate lanes that launch a
+    /// Release build from build products, must never be interrupted.
     private static var isEligibleBuild: Bool {
         #if DEBUG
             false
         #else
-            true
+            DistributionIdentity.isDeveloperIDSigned
         #endif
     }
 
@@ -143,8 +144,13 @@ enum ApplicationRelocator {
         let alert = NSAlert()
         alert.messageText = "Replace the Barline already in Applications?"
         alert.informativeText = "The copy in your Applications folder will be replaced with this one."
-        alert.addButton(withTitle: "Replace")
-        alert.addButton(withTitle: "Cancel")
+        // Replacing overwrites the installed copy, so it must take a deliberate
+        // click. Return chooses Cancel instead of the destructive action.
+        let replace = alert.addButton(withTitle: "Replace")
+        replace.hasDestructiveAction = true
+        replace.keyEquivalent = ""
+        let cancel = alert.addButton(withTitle: "Cancel")
+        cancel.keyEquivalent = "\r"
         NSApp.activate()
         return alert.runModal() == .alertFirstButtonReturn
     }
