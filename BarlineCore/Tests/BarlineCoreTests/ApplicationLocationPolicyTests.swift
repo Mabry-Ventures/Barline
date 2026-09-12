@@ -23,6 +23,15 @@ struct ApplicationLocationPolicyTests {
         #expect(location("//Applications///Barline.app") == .applicationsFolder)
     }
 
+    @Test("Folder checks ignore case, as macOS volumes do by default")
+    func caseInsensitiveFolders() {
+        #expect(location("/applications/Barline.app") == .applicationsFolder)
+        #expect(location("/APPLICATIONS/Utilities/Barline.app") == .applicationsFolder)
+        #expect(location("/Users/Person/applications/Barline.app") == .applicationsFolder)
+        #expect(location("/volumes/Barline/Barline.app") == .mountedVolume)
+        #expect(location("/applicationsbackup/Barline.app") == .elsewhere)
+    }
+
     @Test("A home directory with a trailing slash still matches ~/Applications")
     func homeDirectoryTrailingSlash() {
         #expect(

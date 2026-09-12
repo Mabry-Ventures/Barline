@@ -69,7 +69,13 @@ enum ApplicationRelocator {
             return
         }
 
-        let destination = moveDestination(for: source)
+        let destination = moveDestination()
+        if isSameItem(source, destination) {
+            // Another spelling of the installed copy's own path. Moving it would
+            // replace the app with itself and then trash the result.
+            continueLaunch()
+            return
+        }
         if FileManager.default.fileExists(atPath: destination.path), !confirmReplacement() {
             continueLaunch()
             return
@@ -89,6 +95,10 @@ enum ApplicationRelocator {
                 // The relocated copy is running. Moving the old copy to the Trash,
                 // rather than deleting it, keeps the move recoverable.
                 _ = await Task.detached(priority: .userInitiated) {
+                    // Never trash the copy that was just launched.
+                    guard !isSameItem(source, destination) else {
+                        return
+                    }
                     try? FileManager.default.trashItem(at: source, resultingItemURL: nil)
                 }.value
                 logger.info("Moved Barline into Applications and relaunched it")
@@ -108,11 +118,12 @@ enum ApplicationRelocator {
         let alert = NSAlert()
         alert.messageText = "Move Barline to your Applications folder"
         if location == .mountedVolume {
+            // Covers both the release disk image and ordinary external drives,
+            // which have no Applications shortcut.
             alert.informativeText = """
-            Barline is running from its disk image. Quit Barline, drag it onto the \
-            Applications shortcut in the disk image window, then open it from \
-            Applications. macOS ties Accessibility and Screen Recording permission \
-            to where an app runs.
+            Barline is running from another disk. Quit Barline, drag it into your \
+            Applications folder, then open it from there. macOS ties Accessibility \
+            and Screen Recording permission to where an app runs.
             """
         } else {
             alert.informativeText = """
@@ -176,13 +187,30 @@ enum ApplicationRelocator {
     /// System Applications when this account can write to it; otherwise the
     /// user's own Applications folder, which standard accounts can write and the
     /// location policy already treats as installed.
-    private static func moveDestination(for source: URL) -> URL {
+    ///
+    /// The bundle is installed under Barline's canonical name rather than the
+    /// running copy's file name, so a renamed copy such as `Barline 2.app` still
+    /// finds and offers to replace an existing `Barline.app`.
+    private static func moveDestination() -> URL {
         let fileManager = FileManager.default
         let systemApplications = URL(fileURLWithPath: "/Applications", isDirectory: true)
         let folder = fileManager.isWritableFile(atPath: systemApplications.path)
             ? systemApplications
             : fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
-        return folder.appendingPathComponent(source.lastPathComponent, isDirectory: true)
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Barline"
+        return folder.appendingPathComponent("\(name).app", isDirectory: true)
+    }
+
+    /// Whether two URLs name the same file, by file system identity rather than
+    /// path text, so case differences and links cannot disguise one copy as two.
+    private nonisolated static func isSameItem(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard
+            let left = try? lhs.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier,
+            let right = try? rhs.resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
+        else {
+            return false
+        }
+        return left.isEqual(right)
     }
 
     /// Copies to a hidden staging name first so a failed copy never leaves a

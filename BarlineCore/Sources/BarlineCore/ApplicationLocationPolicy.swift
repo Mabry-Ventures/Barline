@@ -84,8 +84,11 @@ public enum ApplicationLocationPolicy {
     }
 
     /// Requires a separator after the folder, so `/ApplicationsBackup` is not
-    /// treated as being inside `/Applications`.
+    /// treated as being inside `/Applications`. Compares without regard to case:
+    /// macOS volumes are case-insensitive by default, so `/applications` names
+    /// the same folder, and misclassifying it would offer to move an installed
+    /// copy onto itself.
     private static func isWithin(_ path: String, folder: String) -> Bool {
-        path.hasPrefix(folder + "/")
+        path.lowercased().hasPrefix(folder.lowercased() + "/")
     }
 }
