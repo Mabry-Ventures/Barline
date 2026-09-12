@@ -32,6 +32,14 @@ final class WelcomeModel: ObservableObject {
         move(to: step)
     }
 
+    /// Replays the walkthrough from the beginning. Clears completion so a replay
+    /// interrupted by a relaunch resumes, as the walkthrough promises.
+    func replay() {
+        persistsProgress = true
+        Defaults.removeObject(forKey: .welcomeCompleted)
+        move(to: .welcome)
+    }
+
     func advance() {
         move(to: WelcomeFlow.step(after: step))
     }
@@ -51,6 +59,7 @@ final class WelcomeModel: ObservableObject {
         }
         Defaults.set(true, forKey: .welcomeCompleted)
         Defaults.removeObject(forKey: .welcomeStep)
+        Defaults.removeObject(forKey: .welcomePending)
     }
 
     private func move(to newStep: WelcomeStep) {

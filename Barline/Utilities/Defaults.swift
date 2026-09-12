@@ -176,6 +176,7 @@ extension Defaults {
         case applicationLocationOfferDeclined = "ApplicationLocationOfferDeclined"
         case welcomeCompleted = "WelcomeCompleted"
         case welcomeStep = "WelcomeStep"
+        case welcomePending = "WelcomePending"
 
         // MARK: Migration
 

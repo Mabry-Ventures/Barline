@@ -21,14 +21,17 @@ public enum WelcomeFlow {
     /// - Parameters:
     ///   - isEligible: `false` for development and test builds, which must never
     ///     open a window on their own.
-    ///   - hadPreferencesBeforeLaunch: Barline's preferences domain held values
-    ///     before this launch wrote anything. Users upgrading from an earlier
-    ///     version already set Barline up, so they are not shown the walkthrough.
+    ///   - isFreshInstall: This install has not yet finished the walkthrough
+    ///     since Barline first found its preferences empty. The marker is written
+    ///     before anything else touches preferences and survives the relaunch
+    ///     after moving into Applications, which runs migrations first. Users
+    ///     upgrading from an earlier version never have it, so they are not
+    ///     shown the walkthrough.
     ///   - isCompleted: The user finished, skipped, or closed the walkthrough.
     ///   - savedStep: The step recorded when the walkthrough was last left open.
     public static func shouldPresentAtLaunch(
         isEligible: Bool,
-        hadPreferencesBeforeLaunch: Bool,
+        isFreshInstall: Bool,
         isCompleted: Bool,
         savedStep: WelcomeStep?
     ) -> Bool {
@@ -41,7 +44,7 @@ public enum WelcomeFlow {
         if let savedStep, savedStep != .done {
             return true
         }
-        return !hadPreferencesBeforeLaunch
+        return isFreshInstall
     }
 
     /// The step to show when the walkthrough opens.

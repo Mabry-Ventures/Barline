@@ -14,7 +14,7 @@ enum WelcomePresenter {
     /// Presents the walkthrough on a fresh install, or resumes one that a
     /// relaunch interrupted. Call after the move-to-Applications check, so any
     /// permission granted here attaches to where Barline keeps running.
-    static func presentAtLaunchIfNeeded(appState: AppState, hadPreferencesBeforeLaunch: Bool) {
+    static func presentAtLaunchIfNeeded(appState: AppState, isFreshInstall: Bool) {
         let model = appState.welcome
         let savedStep = model.savedStep
         if let forcedStep {
@@ -24,7 +24,7 @@ enum WelcomePresenter {
         guard
             WelcomeFlow.shouldPresentAtLaunch(
                 isEligible: isEligibleBuild,
-                hadPreferencesBeforeLaunch: hadPreferencesBeforeLaunch,
+                isFreshInstall: isFreshInstall,
                 isCompleted: model.isCompleted,
                 savedStep: savedStep
             )
@@ -37,7 +37,9 @@ enum WelcomePresenter {
 
     /// Opens the walkthrough from the beginning at the user's request.
     static func showAgain(appState: AppState) {
-        present(appState: appState, at: .welcome, persistingProgress: true)
+        appState.welcome.replay()
+        appState.activate(withPolicy: .regular)
+        appState.openWindow(.welcome)
     }
 
     private static func present(appState: AppState, at step: WelcomeStep, persistingProgress: Bool) {

@@ -13,7 +13,22 @@ struct WelcomeFlowTests {
         #expect(
             WelcomeFlow.shouldPresentAtLaunch(
                 isEligible: true,
-                hadPreferencesBeforeLaunch: false,
+                isFreshInstall: true,
+                isCompleted: false,
+                savedStep: nil
+            )
+        )
+    }
+
+    @Test("A fresh install relaunched after moving into Applications still presents")
+    func freshInstallSurvivesRelocationRelaunch() {
+        // The first process ran migrations before offering the move, so the
+        // relocated copy finds preferences. The first-run marker, not an empty
+        // domain, decides.
+        #expect(
+            WelcomeFlow.shouldPresentAtLaunch(
+                isEligible: true,
+                isFreshInstall: true,
                 isCompleted: false,
                 savedStep: nil
             )
@@ -25,7 +40,7 @@ struct WelcomeFlowTests {
         #expect(
             !WelcomeFlow.shouldPresentAtLaunch(
                 isEligible: true,
-                hadPreferencesBeforeLaunch: true,
+                isFreshInstall: false,
                 isCompleted: false,
                 savedStep: nil
             )
@@ -38,7 +53,7 @@ struct WelcomeFlowTests {
             #expect(
                 WelcomeFlow.shouldPresentAtLaunch(
                     isEligible: true,
-                    hadPreferencesBeforeLaunch: true,
+                    isFreshInstall: false,
                     isCompleted: false,
                     savedStep: step
                 )
@@ -50,11 +65,11 @@ struct WelcomeFlowTests {
     @Test("Completed, skipped, or closed walkthroughs never reappear on their own")
     func completedDoesNotPresent() {
         for savedStep in [nil, WelcomeStep.screenRecording, .done] {
-            for hadPreferences in [false, true] {
+            for isFreshInstall in [false, true] {
                 #expect(
                     !WelcomeFlow.shouldPresentAtLaunch(
                         isEligible: true,
-                        hadPreferencesBeforeLaunch: hadPreferences,
+                        isFreshInstall: isFreshInstall,
                         isCompleted: true,
                         savedStep: savedStep
                     )
@@ -68,7 +83,7 @@ struct WelcomeFlowTests {
         #expect(
             !WelcomeFlow.shouldPresentAtLaunch(
                 isEligible: false,
-                hadPreferencesBeforeLaunch: false,
+                isFreshInstall: true,
                 isCompleted: false,
                 savedStep: .accessibility
             )
@@ -80,7 +95,7 @@ struct WelcomeFlowTests {
         #expect(
             WelcomeFlow.shouldPresentAtLaunch(
                 isEligible: true,
-                hadPreferencesBeforeLaunch: true,
+                isFreshInstall: false,
                 isCompleted: false,
                 savedStep: .done
             ) == false
