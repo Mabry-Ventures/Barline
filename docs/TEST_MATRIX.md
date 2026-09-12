@@ -18,7 +18,7 @@ under ignored `.artifacts/ci/<sha>/` directories.
 | Support-bundle privacy | Encoder content probes plus static logging/credential checks | Passes on the exact-head full gate |
 | Performance smoke | Shelf responsiveness and app-owned production reopen probes | Exact-head 20-cycle shelf and 20-cycle reopen presentation budgets pass in the unlocked interactive session |
 | Soak | Repeated Core cycles plus XPC interruption and responsiveness | Prior integration evidence exists; the release-duration soak is explicitly deferred |
-| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Build 37 passed exact-head signed packaging including the disk image, notarization, independent verification, and a signed build-36-to-37 Sparkle update with cold launch, and was published as `v1.0.12`; clean installation on a Mac that has never run Barline and installed click journeys were not run |
+| Release/install/update | Clean archive, signing, notarization, stapling, Gatekeeper, Sparkle, and SBOM gates | Build 37 passed exact-head signed packaging including the disk image, notarization, independent verification, and a signed build-36-to-37 Sparkle update with cold launch, and was published as `v1.0.12`; clean installation, installed click journeys, a notched second Mac, and VoiceOver with Full Keyboard Access were maintainer-reported passing after publication as manual results; the automated installed-candidate gate was not run |
 
 The fail-closed full gate runs these scripts and reports unavailable permissions
 or missing product behavior instead of silently treating them as passed.

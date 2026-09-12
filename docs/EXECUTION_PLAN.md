@@ -1,5 +1,23 @@
 # Barline execution plan
 
+## 1.0.12 clean installation and manual qualification reported — September 12, 2026
+
+The maintainer reported a clean installation of the published `v1.0.12` (build
+37) passing on a second Mac in a fresh Standard user account, which has no
+Barline preferences or permission grants. From the disk image, the layout was
+correct and the first-run walkthrough opened on first launch. The Accessibility
+and Screen Recording prompts appeared only after clicking, status updated live,
+Quit & Reopen resumed the walkthrough, Open Layout Editor worked without moving
+items, Done ended it, and Show Welcome Again reopened it. Opened from Downloads,
+the move-to-Applications guidance appeared before any permission prompt, and the
+walkthrough started after moving. This is a manual result; the macOS build was
+not recorded. It closes BLN-26.
+
+The maintainer also reported, as manual results on the published build,
+installed click journeys, Barline on a notched second Mac, and VoiceOver with
+Full Keyboard Access passing. macOS 27 runtime qualification, the
+release-duration soak, and the automated installed-candidate gate remain open.
+
 ## Barline 1.0.12 published — September 12, 2026
 
 Barline 1.0.12 (build 37) is published as GitHub release `v1.0.12`, marked
