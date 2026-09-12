@@ -58,11 +58,20 @@ struct BarlineSlider<Value: BinaryFloatingPoint, ValueLabel: View>: View {
         // trailing closure: the handle, progress fill, and label are supplied
         // through modifiers. Haptic feedback is opt-in, so the previous
         // explicit disable is no longer required.
+        //
+        // The progress closure receives the style configuration, whose
+        // focusState is set while hovering, dragging, or wheel-scrolling. That
+        // reproduces the brighter fill the removed compactSliderSecondaryColor
+        // modifier supplied through focusedProgressColor.
         CompactSlider(value: $value, in: bounds, step: step ?? 0)
             .compactSliderHandleStyle(.hidden())
             .compactSliderOptionsByRemoving(.scrollWheel)
-            .compactSliderProgress { _ in
-                Rectangle().fill(Color.accentColor.opacity(0.5))
+            .compactSliderProgress { configuration in
+                Rectangle()
+                    .fill(
+                        Color.accentColor
+                            .opacity(configuration.focusState.isFocused ? 0.75 : 0.5)
+                    )
             }
             .overlay {
                 valueLabel

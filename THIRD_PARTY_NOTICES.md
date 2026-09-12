@@ -10,7 +10,7 @@ AXSwift 0.3.2 is MIT-licensed. Copyright (c) 2017 Tyler Mandry.
 
 ## CompactSlider
 
-CompactSlider 1.2.1 is MIT-licensed. Copyright (c) 2022 Alexey Bukhtin.
+CompactSlider 2.1.0 is MIT-licensed. Copyright (c) 2025 Alexey Bukhtin.
 
 ## Ifrit
 

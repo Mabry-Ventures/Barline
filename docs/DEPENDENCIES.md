@@ -7,7 +7,7 @@ The Xcode workspace lockfile is
 | Dependency | Pinned version | Revision | License | Purpose |
 | --- | --- | --- | --- | --- |
 | AXSwift | 0.3.2 | `81dcc36aced905d6464cc25e35f8d13184bbf21c` | MIT | Accessibility API wrapper |
-| CompactSlider | 1.2.1 | `e5219ff353613b6493bfe5a3333c3bfa2d1e4d57` | MIT | Native compact slider control |
+| CompactSlider | 2.1.0 | `52a01bd09156152881c53ba235c862e3bf5690b1` | MIT | Native compact slider control |
 | Ifrit | 2.0.6 | `3f961f6d39cd2188305671f2ec65914d297571d0` | MIT | Collection/sequence utilities |
 | LaunchAtLogin-Modern | 1.1.0 | `a04ec1c363be3627734f6dad757d82f5d4fa8fcc` | MIT | Login-item integration |
 | Sparkle | 2.9.6 | `ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a` | MIT plus bundled notices | Direct-update framework; enabled in Release builds and distributed arm64-only |
