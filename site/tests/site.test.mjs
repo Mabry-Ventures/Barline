@@ -52,8 +52,8 @@ test('every local link and asset resolves, every local fragment exists', async (
 });
 test('production links the qualified release and states the OS boundary', async () => {
   const html = await readFile(join(output, 'index.html'), 'utf8');
-  assert.match(html, /Download Barline 1\.0\.11/);
-  assert.match(html, /Barline 1\.0\.11 release notes/);
+  assert.match(html, /Download Barline 1\.0\.12/);
+  assert.match(html, /Barline 1\.0\.12 release notes/);
   assert.match(html, /Corresponding source/);
   assert.match(html, /Checksums/);
   assert.match(html, /macOS 27 compatibility has not yet been qualified\./);
