@@ -1,5 +1,29 @@
 # Barline execution plan
 
+## Build 37 release candidate for 1.0.12 — September 12, 2026
+
+Build 37 advances the app, helper, and Intents extension from build 36 as the
+1.0.12 candidate. It ships the drag-to-Applications disk image and the
+move-to-Applications offer (#19), the first-run walkthrough (#20), and the
+earlier CompactSlider 2.1.0 port (#17) and Ifrit removal (#18). The source has
+changed since `v1.0.11`, so no build 36 receipt certifies build 37.
+
+On its exact `main` source, build 37 requires the full gate and a credentialed
+`ci.sh release`: Developer ID export, notarization of the zip, stapling of the
+app it contains, and Gatekeeper; the disk image built after the appcast with a
+zip-only enclosure check, then signed, notarized, stapled, and assessed.
+Independent verification must cover the disk image layout and confirm its app
+matches the notarized zip. The update baseline is the maintainer's installed
+build 36: a signed Sparkle update to build 37 with a cold launch must leave
+preferences and saved layouts unchanged and show neither the move offer nor the
+walkthrough, writing no onboarding state.
+
+Clean installation on a Mac that has never run Barline, covering the disk image
+install, the move offer, and the walkthrough's real permission grants, is
+tracked separately and remains open. Installed click journeys, the second
+notched device, accessibility, macOS 27, and the release-duration soak also
+remain open.
+
 ## Barline 1.0.11 published — September 11, 2026
 
 Barline 1.0.11 (build 36) is published as GitHub release `v1.0.11`, marked

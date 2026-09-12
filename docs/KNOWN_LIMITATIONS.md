@@ -50,8 +50,9 @@ installation on a separate Mac, physical configuration, accessibility, and
 release-duration soak remain distinct evidence classes.
 
 Barline 1.0.12 (build 37) is the release candidate. Before publication it must
-pass its exact-head local gate, Developer ID signing, notarization and stapling
-of both the zip and the disk image, Gatekeeper, and a signed Sparkle update from
+pass its exact-head local gate, Developer ID signing, notarization of the zip and
+stapling of the app it contains, notarization and stapling of the disk image,
+Gatekeeper, and a signed Sparkle update from
 the installed 1.0.11 (build 36) followed by a cold launch. Clean installation,
 including the move-to-Applications offer and the first-run walkthrough, is
 qualified separately on a Mac that has never run Barline.
