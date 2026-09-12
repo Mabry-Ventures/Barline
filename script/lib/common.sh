@@ -15,8 +15,26 @@ set -euo pipefail
 # LC_ALL=C or LC_CTYPE=C is precisely the condition that breaks the scanners, so
 # honouring it would leave the gate broken in the case worth defending against.
 # Gate results must not depend on the locale of whichever shell invoked them.
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
+#
+# Hardcoding en_US.UTF-8 is not portable: the repository-hygiene lane runs on
+# Linux, where a minimal image commonly provides C.UTF-8 and no en_US.UTF-8.
+# Exporting a locale the host lacks silently leaves Ruby at US-ASCII, so probe
+# for one that exists, and set RUBYOPT as well. RUBYOPT fixes Ruby's external
+# encoding directly, independently of any locale, and is inherited by nested
+# child processes.
+# Capture the locale list rather than piping it into `grep -q`: under
+# `set -o pipefail`, grep exits at the first match and the SIGPIPE it delivers
+# makes the whole pipeline report failure, so the probe would never fire.
+barline_available_locales="$(locale -a 2>/dev/null || true)"
+for barline_utf8_locale in en_US.UTF-8 C.UTF-8; do
+    if printf '%s\n' "$barline_available_locales" | grep -qix "$barline_utf8_locale"; then
+        export LANG="$barline_utf8_locale"
+        export LC_ALL="$barline_utf8_locale"
+        break
+    fi
+done
+unset barline_utf8_locale barline_available_locales
+export RUBYOPT="${RUBYOPT:+$RUBYOPT }-EUTF-8"
 
 barline_die() {
     printf 'error: %s\n' "$*" >&2

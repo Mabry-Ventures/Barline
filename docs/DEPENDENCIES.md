@@ -31,6 +31,19 @@ notices, and the bundled acknowledgements already name each of them. Release
 packaging removes Sparkle's x86_64 slices so every distributed binary is
 arm64-only.
 
+On 2026-09-12 CompactSlider moved to 2.1.0 and the license at the pinned
+revision is Copyright (c) 2025 Alexey Bukhtin, so
+`Barline/Resources/Acknowledgements.rtf` was corrected from the 2022 line it
+carried. The bundled `Barline/Resources/Acknowledgements.pdf` is the artifact
+`AboutSettingsPane` actually shows the user, and it was NOT regenerated: it
+still names CompactSlider under the 2022 copyright, and it still carries a
+full Ifrit section. Its producer metadata is `Quartz PDFContext` at a custom
+504x2574 pt page, and the settings that produced it are not recorded here.
+Re-rendering it from the RTF with NSPrintOperation reproduces the text but not
+the pagination, duplicating a license paragraph across a page break, so the
+stale PDF was left in place rather than replaced with a mis-rendered one.
+Regenerating it faithfully is outstanding work and blocks nothing else.
+
 ## Asset provenance
 
 The application icon, `Resources/BarlineIcon.png`, and Barline control-item
