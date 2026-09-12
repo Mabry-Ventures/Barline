@@ -47,10 +47,12 @@ signed Sparkle update from the installed 1.0.11 (build 36) followed by a cold
 launch. That update left preferences and saved layouts unchanged and showed
 neither the move-to-Applications offer nor the first-run walkthrough.
 
-Clean installation on a Mac that has never run Barline has not been run. It is
-the only way to exercise the disk image install, the move-to-Applications offer,
-and the walkthrough's real permission grants. Installed click journeys against
-the signed app, physical configuration, accessibility, and release-duration soak
+The maintainer reported a clean installation of the published 1.0.12 passing on a
+second Mac in a fresh Standard user account on September 12, 2026: the disk
+image install, the move-to-Applications guidance when opened from Downloads,
+and the walkthrough's real Accessibility and Screen Recording grants, including
+resuming after Quit & Reopen. That result is manual and did not record the
+macOS build. Installed click journeys against the signed app, physical configuration, accessibility, and release-duration soak
 also remain distinct open evidence classes. Historical failed attempts remain in
 local evidence and are not overwritten by later passes.
 

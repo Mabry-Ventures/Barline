@@ -1,9 +1,9 @@
 # Reliability-first feature qualification
 
 Published release: **1.0.12, build 37** (September 12, 2026), tag `v1.0.12` at
-`fcafa20`. Clean installation on a Mac that has never run Barline, installed
-click journeys, and the installed-candidate gate were not run before publication
-and remain open.
+`fcafa20`. Clean installation on a second Mac was maintainer-reported passing
+after publication; installed click journeys and the installed-candidate gate
+were not run and remain open.
 Installed build 36 is the update-source runtime evidence baseline.
 Implementation is not a release certificate.
 Use the final source SHA and signed executable hash for every installed receipt.
