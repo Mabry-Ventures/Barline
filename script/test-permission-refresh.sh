@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=script/lib/common.sh
+source "$ROOT/script/lib/common.sh"
 TEST_DIR="$(mktemp -d /private/tmp/barline-permission-tests.XXXXXX)"
 xcrun swiftc -swift-version 6 -strict-concurrency=complete -warnings-as-errors \
     "$ROOT/Barline/Permissions/Permission.swift" \
