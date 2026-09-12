@@ -20,6 +20,24 @@ barline_build_dmg() {
     /bin/rm -rf "$staging"
 }
 
+# Requires at least one appcast enclosure and every enclosure URL to be exactly
+# the expected zip. Release-note prose is ignored, so notes that mention the
+# disk image cannot fail a valid release.
+barline_require_zip_enclosures() {
+    local appcast="$1" expected="$2"
+    local urls url count=0
+    urls="$(grep -oE '<enclosure[^>]*[[:space:]]url="[^"]*"' "$appcast" | sed -E 's/.*[[:space:]]url="([^"]*)"$/\1/' || true)"
+    while IFS= read -r url; do
+        [[ -n "$url" ]] || continue
+        count=$((count + 1))
+        if [[ "$url" != "$expected" ]]; then
+            printf 'error: appcast enclosure is not the notarized zip: %s\n' "$url" >&2
+            return 1
+        fi
+    done <<<"$urls"
+    ((count > 0)) || { printf 'error: appcast has no enclosure\n' >&2; return 1; }
+}
+
 # Mounts the image read-only and requires exactly the app bundle and an
 # Applications shortcut resolving to /Applications. Hidden volume metadata such
 # as .fseventsd is not part of the visible layout and is ignored.

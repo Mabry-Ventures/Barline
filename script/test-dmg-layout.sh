@@ -89,4 +89,32 @@ pass
 [[ -z "$(/usr/bin/hdiutil info | grep -F "$WORK" || true)" ]] || fail "a fixture image was left mounted"
 pass
 
-printf 'PASS: DMG layout builds the app beside an Applications shortcut and rejects %d malformed or unsafe cases\n' "$((cases - 2))"
+# Appcast enclosure checks. Release notes are embedded in the appcast, and the
+# release that introduces the disk image will mention it, so prose must never
+# fail an otherwise valid appcast.
+ZIP_URL="https://github.com/Mabry-Ventures/mv-barline/releases/download/v9.8.7/Barline-9.8.7.zip"
+appcast() {
+    printf '<?xml version="1.0"?><rss><channel><item><title>9.8.7</title>%s</item></channel></rss>\n' "$1"
+}
+enclosure_cases=0
+appcast "<description><![CDATA[<li>Download Barline-9.8.7.dmg to install.</li>]]></description><enclosure url=\"$ZIP_URL\" sparkle:version=\"1\" length=\"1\" type=\"application/octet-stream\"/>" >"$WORK/notes.xml"
+barline_require_zip_enclosures "$WORK/notes.xml" "$ZIP_URL" || fail "release notes mentioning the disk image failed a valid appcast"
+enclosure_cases=$((enclosure_cases + 1))
+
+appcast "<enclosure sparkle:version=\"1\" url=\"$ZIP_URL\" length=\"1\"/>" >"$WORK/reordered.xml"
+barline_require_zip_enclosures "$WORK/reordered.xml" "$ZIP_URL" || fail "an enclosure with url after other attributes was rejected"
+enclosure_cases=$((enclosure_cases + 1))
+
+for bad in \
+    "<enclosure url=\"${ZIP_URL%.zip}.dmg\" length=\"1\"/>" \
+    "<enclosure url=\"$ZIP_URL\" length=\"1\"/><enclosure url=\"${ZIP_URL%.zip}.dmg\" length=\"1\"/>" \
+    "<enclosure url=\"https://github.com/Mabry-Ventures/mv-barline/releases/download/v9.8.6/Barline-9.8.6.zip\" length=\"1\"/>" \
+    "<description>No enclosure at all.</description>"; do
+    appcast "$bad" >"$WORK/bad.xml"
+    if barline_require_zip_enclosures "$WORK/bad.xml" "$ZIP_URL" 2>/dev/null; then
+        fail "an unsafe appcast enclosure was accepted: $bad"
+    fi
+    enclosure_cases=$((enclosure_cases + 1))
+done
+
+printf 'PASS: DMG layout builds the app beside an Applications shortcut and rejects %d malformed or unsafe cases; %d appcast enclosure cases\n' "$((cases - 2))" "$enclosure_cases"

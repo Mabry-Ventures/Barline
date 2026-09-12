@@ -338,15 +338,10 @@ barline_extract_release_notes "$ROOT/CHANGELOG.md" "$VERSION" "$BUILD" "$DIST/Ba
 # The disk image is the first-install download; the zip stays the Sparkle
 # update payload. generate_appcast scans every archive in the folder, so the
 # image is built only after the appcast exists, and the enclosure is checked so
-# a later reordering cannot silently hand updates a disk image.
-grep -Fq "url=\"https://github.com/Mabry-Ventures/mv-barline/releases/download/v$VERSION/Barline-$VERSION.zip\"" "$DIST/appcast.xml" || {
-    printf 'error: appcast enclosure is not the notarized zip\n' >&2
-    exit 1
-}
-if grep -Fq '.dmg' "$DIST/appcast.xml"; then
-    printf 'error: appcast references a disk image\n' >&2
-    exit 1
-fi
+# a later reordering cannot silently hand updates a disk image. Only enclosure
+# URLs are inspected: embedded release notes may legitimately mention the .dmg.
+EXPECTED_ENCLOSURE="https://github.com/Mabry-Ventures/mv-barline/releases/download/v$VERSION/Barline-$VERSION.zip"
+barline_require_zip_enclosures "$DIST/appcast.xml" "$EXPECTED_ENCLOSURE" || exit 1
 DMG="$DIST/Barline-$VERSION.dmg"
 barline_build_dmg "$APP" "$DMG" Barline || exit 1
 barline_require_dmg_layout "$DMG" Barline.app || exit 1

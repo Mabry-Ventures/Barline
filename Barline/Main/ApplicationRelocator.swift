@@ -69,8 +69,7 @@ enum ApplicationRelocator {
             return
         }
 
-        let destination = URL(fileURLWithPath: "/Applications", isDirectory: true)
-            .appendingPathComponent(source.lastPathComponent, isDirectory: true)
+        let destination = moveDestination(for: source)
         if FileManager.default.fileExists(atPath: destination.path), !confirmReplacement() {
             continueLaunch()
             return
@@ -78,13 +77,20 @@ enum ApplicationRelocator {
 
         Task { @MainActor in
             do {
-                try copyReplacing(destination, with: source)
+                // Copying a whole app bundle can take a while on a slow or nearly
+                // full disk, so file work runs off the main actor and only AppKit
+                // presentation and relaunch return to it.
+                try await Task.detached(priority: .userInitiated) {
+                    try copyReplacing(destination, with: source)
+                }.value
                 let configuration = NSWorkspace.OpenConfiguration()
                 configuration.createsNewApplicationInstance = true
                 try await NSWorkspace.shared.openApplication(at: destination, configuration: configuration)
                 // The relocated copy is running. Moving the old copy to the Trash,
                 // rather than deleting it, keeps the move recoverable.
-                try? FileManager.default.trashItem(at: source, resultingItemURL: nil)
+                _ = await Task.detached(priority: .userInitiated) {
+                    try? FileManager.default.trashItem(at: source, resultingItemURL: nil)
+                }.value
                 logger.info("Moved Barline into Applications and relaunched it")
                 NSApp.terminate(nil)
             } catch {
@@ -167,14 +173,29 @@ enum ApplicationRelocator {
         alert.runModal()
     }
 
-    /// Copies to a hidden staging name first so a failed copy never leaves a
-    /// partial app at the destination, then swaps it into place.
-    private static func copyReplacing(_ destination: URL, with source: URL) throws {
+    /// System Applications when this account can write to it; otherwise the
+    /// user's own Applications folder, which standard accounts can write and the
+    /// location policy already treats as installed.
+    private static func moveDestination(for source: URL) -> URL {
         let fileManager = FileManager.default
-        let staged = destination.deletingLastPathComponent()
+        let systemApplications = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        let folder = fileManager.isWritableFile(atPath: systemApplications.path)
+            ? systemApplications
+            : fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
+        return folder.appendingPathComponent(source.lastPathComponent, isDirectory: true)
+    }
+
+    /// Copies to a hidden staging name first so a failed copy never leaves a
+    /// partial app at the destination, then swaps it into place. Any failure,
+    /// including a copy that stops partway, removes the staged bundle.
+    private nonisolated static func copyReplacing(_ destination: URL, with source: URL) throws {
+        let fileManager = FileManager.default
+        let folder = destination.deletingLastPathComponent()
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let staged = folder
             .appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString)", isDirectory: true)
-        try fileManager.copyItem(at: source, to: staged)
         do {
+            try fileManager.copyItem(at: source, to: staged)
             if fileManager.fileExists(atPath: destination.path) {
                 _ = try fileManager.replaceItemAt(destination, withItemAt: staged)
             } else {
